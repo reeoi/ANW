@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import argparse
 import html
 import logging
+import os
 from typing import Annotated
 
 from fastapi import FastAPI, Form, HTTPException, Request
@@ -202,7 +204,37 @@ def _render_story_card(story: Story) -> str:
 </article>"""
 
 
+def _parse_server_args() -> argparse.Namespace:
+    """Parse local server host/port without exposing application config values."""
+    parser = argparse.ArgumentParser(description="Start the local ANP human-review FastAPI app.")
+    parser.add_argument(
+        "--host",
+        default=os.getenv("ANP_REVIEW_HOST", "127.0.0.1"),
+        help="Bind host for the local review server (default: 127.0.0.1).",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=_server_port_from_env(),
+        help="Bind port for the local review server (default: 8000; override with ANP_REVIEW_PORT).",
+    )
+    args = parser.parse_args()
+    if not (1 <= args.port <= 65535):
+        parser.error("--port must be between 1 and 65535")
+    return args
+
+
+def _server_port_from_env() -> int:
+    raw_port = os.getenv("ANP_REVIEW_PORT", "8000")
+    try:
+        return int(raw_port)
+    except ValueError:
+        logger.warning("Invalid ANP_REVIEW_PORT value; falling back to 8000")
+        return 8000
+
+
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("queue.human_review:app", host="127.0.0.1", port=8000, reload=False)
+    args = _parse_server_args()
+    uvicorn.run("queue.human_review:app", host=args.host, port=args.port, reload=False)

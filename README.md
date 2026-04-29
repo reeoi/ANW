@@ -62,8 +62,11 @@ python -m cli.generate --theme 雨夜归人 --word-count 3000
 # dry-run 发布检查
 python -m cli.publish
 
-# 启动人工审核页面（http://localhost:8000）
+# 启动人工审核页面（默认 http://localhost:8000）
 python -m queue.human_review
+
+# 如果 8000 端口已被其他本地服务占用，可仅改绑定端口；默认仍是 8000
+python -m queue.human_review --port 18000
 
 # 语法检查
 python -m py_compile config_loader.py main.py scheduler.py generator/*.py queue/*.py publisher/*.py cli/*.py
@@ -77,7 +80,7 @@ python -m py_compile config_loader.py main.py scheduler.py generator/*.py queue/
 python -m queue.human_review
 ```
 
-然后在浏览器访问 `http://localhost:8000`。首页只列出 SQLite 中 `status='pending'` 或 `status='needs_human'` 的作品，并显示标题、内容、状态、分数、重试次数和审核备注。
+然后在浏览器访问 `http://localhost:8000`。`python -m queue.human_review` 默认绑定 `127.0.0.1:8000`；如本机 8000 已被其他服务占用，可使用 `python -m queue.human_review --port 18000` 或设置 `ANP_REVIEW_PORT=18000` 后访问对应端口。首页只列出 SQLite 中 `status='pending'` 或 `status='needs_human'` 的作品，并显示标题、内容、状态、分数、重试次数和审核备注。
 
 可执行操作：
 
