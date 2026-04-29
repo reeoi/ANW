@@ -1,6 +1,6 @@
 # ANP 全自动小说创作与发布流水线
 
-ANP 是本地运行的小说生成、审核、发布流水线。本仓库当前完成到 Sprint 4：可生成小说进入 SQLite 队列，通过本地 FastAPI 人工审核页面处理，也可运行 AI 七维评分、问题诊断与最多 3 次自动重写的质量闸门。
+ANP 是本地运行的小说生成、审核、发布流水线。本仓库当前完成到 Sprint 5：可生成小说进入 SQLite 队列，通过本地 FastAPI 人工审核页面处理，运行 AI 七维评分/自动重写，并通过 Playwright 发布基类与番茄小说适配器执行 dry-run 或安全暂停式发布。
 
 ## 本地安装
 
@@ -11,10 +11,11 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-如需后续使用 Playwright 浏览器自动化：
+发布层已使用 Playwright。安装浏览器运行时：
 
 ```bash
 python -m playwright install
+# 如只安装 Chromium：python -m playwright install chromium
 ```
 
 ## 配置密钥
@@ -62,8 +63,17 @@ python -m cli.generate --theme 雨夜归人 --word-count 3000
 # 对 pending 队列运行 AI 审核（七维评分、自动重写、转人工）
 python -m cli.ai_review --limit 20
 
-# dry-run 发布检查
-python -m cli.publish
+# dry-run 发布检查：读取一条 approved 作品，模拟成功；默认保留 approved 状态
+python -m cli.publish --dry-run --dry-run-outcome success
+
+# dry-run 模拟验证码/滑块/登录态缺失，保存截图并暂停；默认保留状态
+python -m cli.publish --dry-run --dry-run-outcome paused
+
+# 如需把 dry-run 结果写回 SQLite（例如 publish_paused）
+python -m cli.publish --dry-run --dry-run-outcome paused --commit-dry-run
+
+# 真实模式：需要提前准备 login_state_path；遇到登录/验证码/滑块/风控会暂停
+python -m cli.publish --real
 
 # 启动人工审核页面（默认 http://localhost:8000）
 python -m queue.human_review
@@ -148,7 +158,7 @@ anp/
 - 源码不硬编码 API key、密码或平台账号。
 - DeepSeek key 可由 `deepseek.api_key` 或 `DEEPSEEK_API_KEY` 提供。
 - 番茄账号、密码、登录态路径可由 `config.yaml` 或环境变量提供。
-- 发布自动化后续只做正常浏览器操作，遇到验证码、滑块、登录态缺失或风控页面必须暂停、截图、记录日志，不绕过。
+- 发布自动化只做正常浏览器操作，遇到验证码、滑块、登录态缺失或风控页面必须暂停、截图到 `logs/screenshots`、记录日志到 `logs/anp.log`，不绕过、不破解、不调用打码。
 
 ## Sprint 4 验证记录
 
@@ -163,6 +173,20 @@ python -m py_compile config_loader.py main.py scheduler.py generator/*.py queue/
 
 覆盖路径：mock 七维 JSON 评分、低分自动重写后通过、达到重写上限转人工、环境变量覆盖阈值/模型参数、CLI 批处理输出 reviewed/approved/needs_human/failed/failure_reasons。
 
+
+## Sprint 5 验证记录
+
+2026-04-29 本地验证通过：
+
+```bash
+pytest -q tests/test_sprint5.py
+# 5 passed
+python -m py_compile config_loader.py main.py scheduler.py generator/*.py queue/*.py publisher/*.py cli/*.py
+# exit code 0
+```
+
+覆盖路径：Playwright 发布基类日志/截图/暂停结果封装、番茄 dry-run 成功与暂停、真实模式登录态缺失安全暂停、CLI 读取一条 approved 记录、dry-run 默认保留状态与 `--commit-dry-run` 写入 `publish_paused`。
+
 ## Git 状态
 
-Sprint 1 已完成阶段性提交；若 evaluator 环境看不到提交，请运行 `git log --oneline -1` 确认。
+Sprint 5 已完成阶段性提交；若 evaluator 环境看不到提交，请运行 `git log --oneline -1` 确认。

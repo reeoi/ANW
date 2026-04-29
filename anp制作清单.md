@@ -76,11 +76,13 @@ anp/
 ---
 
 ## 3. Phase 3 – 番茄小说自动发布
-- [ ] **3.1 平台调研** `docs/fansq_workflow.md`
-- [ ] **3.2 基类** `publisher/base_publisher.py`
-- [ ] **3.3 番茄适配器** `publisher/fansq.py`
-- [ ] **3.4 发布脚本** `cli/publish.py`
-- [ ] **3.5 验证码/滑块处理**（暂停+日志通知）
+- [x] **3.1 平台调研** `docs/fansq_workflow.md`
+- [x] **3.2 基类** `publisher/base_publisher.py`
+- [x] **3.3 番茄适配器** `publisher/fansq.py`
+- [x] **3.4 发布脚本** `cli/publish.py`
+- [x] **3.5 验证码/滑块处理**（暂停+日志通知）
+  - Sprint 5 验证方式：`pytest -q tests/test_sprint5.py` 通过 5 项；`python -m py_compile config_loader.py main.py scheduler.py generator/*.py queue/*.py publisher/*.py cli/*.py` 退出码 0。dry-run 可模拟 success / paused，真实模式登录态缺失会保存截图并写日志安全暂停（2026-04-29）。
+
 
 ---
 
