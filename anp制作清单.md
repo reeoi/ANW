@@ -44,7 +44,9 @@ anp/
 - [x] **1.3 DeepSeek API 客户端** `generator/api_client.py`
 - [x] **1.4 短篇小说提示词构建** `generator/prompt_builder.py`
 - [x] **1.5 手动触发生成脚本** `cli/generate.py`
-- [ ] **验证**：运行生成 → 数据库中有一条 status='pending' 的记录
+- [x] **验证**：运行生成 → 数据库中有一条 status='pending' 的记录
+  - 实际命令：`ANP_SQLITE_PATH=data/sprint2_verify.sqlite3 python -m cli.generate --theme 海边旧书店 --word-count 800 --style 悬疑温情`
+  - 结果：命令退出码 0，输出 `Generated story ID: 1`，SQLite `stories` 表新增记录且 `status='pending'`（2026-04-29 验证）。
 
 ---
 
