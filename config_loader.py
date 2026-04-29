@@ -58,6 +58,11 @@ GENERAL_ENV_OVERRIDES: dict[tuple[str, ...], str] = {
     ("deepseek", "mock"): "ANP_MOCK_DEEPSEEK",
     ("logging", "level"): "ANP_LOG_LEVEL",
     ("database", "sqlite_path"): "ANP_SQLITE_PATH",
+    ("audit", "approval_threshold"): "ANP_AI_REVIEW_THRESHOLD",
+    ("audit", "max_rewrite_attempts"): "ANP_MAX_REWRITE_ATTEMPTS",
+    ("audit", "model"): "ANP_AI_REVIEW_MODEL",
+    ("audit", "temperature"): "ANP_AI_REVIEW_TEMPERATURE",
+    ("audit", "timeout_seconds"): "ANP_AI_REVIEW_TIMEOUT_SECONDS",
 }
 
 TRUE_VALUES = {"1", "true", "yes", "y", "on"}

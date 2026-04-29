@@ -1,6 +1,6 @@
 # ANP 全自动小说创作与发布流水线
 
-ANP 是本地运行的小说生成、审核、发布流水线。本仓库当前完成到 Sprint 3：可生成小说进入 SQLite 队列，并通过本地 FastAPI 人工审核页面批准、拒绝、编辑或触发 dry-run AI 审核批次。
+ANP 是本地运行的小说生成、审核、发布流水线。本仓库当前完成到 Sprint 4：可生成小说进入 SQLite 队列，通过本地 FastAPI 人工审核页面处理，也可运行 AI 七维评分、问题诊断与最多 3 次自动重写的质量闸门。
 
 ## 本地安装
 
@@ -59,6 +59,9 @@ python main.py --mode auto
 # dry-run 生成示例文本
 python -m cli.generate --theme 雨夜归人 --word-count 3000
 
+# 对 pending 队列运行 AI 审核（七维评分、自动重写、转人工）
+python -m cli.ai_review --limit 20
+
 # dry-run 发布检查
 python -m cli.publish
 
@@ -71,6 +74,21 @@ python -m queue.human_review --port 18000
 # 语法检查
 python -m py_compile config_loader.py main.py scheduler.py generator/*.py queue/*.py publisher/*.py cli/*.py
 ```
+
+
+## AI 自动审核配置
+
+`queue/ai_review.py` 会从 `config.yaml` 的 `audit` 与 `deepseek` 段读取阈值、最大重写次数和模型参数；也支持环境变量覆盖：
+
+```bash
+set ANP_AI_REVIEW_THRESHOLD=80
+set ANP_MAX_REWRITE_ATTEMPTS=3
+set ANP_AI_REVIEW_MODEL=deepseek-chat
+set ANP_AI_REVIEW_TEMPERATURE=0.3
+set ANP_AI_REVIEW_TIMEOUT_SECONDS=60
+```
+
+默认通过阈值为 80/100，默认最大重写次数为 3。审核 JSON 至少包含 `total_score`、`dimension_scores`、`issues`、`suggestions`、`decision`；7 个维度为 `plot`、`character`、`pacing`、`language`、`originality`、`safety`、`platform_fit`。低于阈值时系统会自动重写并增加 `retry_count`，通过后写入 `status='approved'`；达到最大重写次数仍失败时写入 `status='needs_human'`，并在 `review_notes` 保存问题列表。无 DeepSeek key 时会使用稳定 mock/dry-run 路径模拟评分、通过、重写和转人工。
 
 ## 人工审核页面
 
@@ -115,6 +133,7 @@ anp/
 │   ├── __init__.py
 │   ├── generate.py
 │   ├── batch_generate.py
+│   ├── ai_review.py
 │   └── publish.py
 ├── docs/
 │   └── fansq_workflow.md
@@ -130,6 +149,19 @@ anp/
 - DeepSeek key 可由 `deepseek.api_key` 或 `DEEPSEEK_API_KEY` 提供。
 - 番茄账号、密码、登录态路径可由 `config.yaml` 或环境变量提供。
 - 发布自动化后续只做正常浏览器操作，遇到验证码、滑块、登录态缺失或风控页面必须暂停、截图、记录日志，不绕过。
+
+## Sprint 4 验证记录
+
+2026-04-29 本地验证通过：
+
+```bash
+pytest -q tests/test_sprint4.py
+# 5 passed
+python -m py_compile config_loader.py main.py scheduler.py generator/*.py queue/*.py publisher/*.py cli/*.py
+# exit code 0
+```
+
+覆盖路径：mock 七维 JSON 评分、低分自动重写后通过、达到重写上限转人工、环境变量覆盖阈值/模型参数、CLI 批处理输出 reviewed/approved/needs_human/failed/failure_reasons。
 
 ## Git 状态
 

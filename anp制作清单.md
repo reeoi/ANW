@@ -58,11 +58,20 @@ anp/
   - 验证方式：使用本地 ASGI/TestClient 等价请求验证 `GET /` 可列出待审作品，`POST /stories/{id}/approve` 可更新 SQLite 状态；`pytest -q` 通过 7 项测试（2026-04-29）。
 
 ### 2.2 AI 自动审核（打分 + 重写）
-- [ ] **2.2.1** `queue/ai_review.py` 实现评分函数（7个维度）
-- [ ] **2.2.2** 调用 DeepSeek 进行评分输出 JSON
-- [ ] **2.2.3** 重写逻辑：最多3次
-- [ ] **2.2.4** 超过重试次数标记 `status='needs_human'`
-- [x] **2.2.5** Web界面增加「运行 AI 审核批次」按钮（Sprint 3 已接入 dry-run/mock 批处理占位；完整 7 维评分与重写留待 Sprint 4）
+
+- [x] **2.2.1** `queue/ai_review.py` 实现评分函数（7个维度）
+
+- [x] **2.2.2** 调用 DeepSeek 进行评分输出 JSON
+
+- [x] **2.2.3** 重写逻辑：最多3次
+
+- [x] **2.2.4** 超过重试次数标记 `status='needs_human'`
+
+- [x] **2.2.5** Web界面增加「运行 AI 审核批次」按钮（Sprint 3 已接入，Sprint 4 已接入完整七维评分、自动重写与转人工逻辑）
+
+- 验证方式：`pytest -q tests/test_sprint4.py` 通过 5 项；`python -m py_compile config_loader.py main.py scheduler.py generator/*.py queue/*.py publisher/*.py cli/*.py` 退出码 0（2026-04-29）。
+
+- CLI 验证：`python -m cli.ai_review --limit 20` 可输出 `reviewed/approved/needs_human/failed/failure_reasons`。
 
 ---
 
