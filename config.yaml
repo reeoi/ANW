@@ -1,0 +1,65 @@
+# ANP default configuration template
+# Sensitive values may be left empty here and supplied via environment variables.
+
+deepseek:
+  api_key: ""                 # env: DEEPSEEK_API_KEY
+  base_url: "https://api.deepseek.com"
+  model: "deepseek-chat"
+  timeout_seconds: 60
+  max_retries: 3
+  mock: true                  # automatically enabled when api_key is missing
+
+runtime:
+  mode: "semi-auto"           # auto | semi-auto; env: ANP_MODE
+  dry_run: true               # env: ANP_DRY_RUN
+  project_root: "."
+
+audit:
+  approval_threshold: 85
+  rewrite_threshold: 70
+  max_rewrite_attempts: 3
+  dimensions:
+    plot: 0.20
+    character: 0.15
+    pacing: 0.15
+    language: 0.15
+    originality: 0.15
+    safety: 0.10
+    platform_fit: 0.10
+
+publisher:
+  default_platform: "fansq"
+  platforms:
+    - "fansq"
+  fansq:
+    enabled: true
+    username: ""             # env: FANSQ_USERNAME
+    password: ""             # env: FANSQ_PASSWORD
+    login_state_path: "data/browser/fansq_state.json" # env: FANSQ_LOGIN_STATE_PATH
+    draft_url: "https://fanqienovel.com/"
+    min_publish_interval_minutes: 5
+    max_publish_interval_minutes: 15
+    pause_on_risk_control: true
+
+scheduler:
+  enabled: false
+  timezone: "Asia/Shanghai"
+  generate_cron: "0 9 * * *"
+  review_cron: "30 9 * * *"
+  publish_cron: "0 10 * * *"
+
+logging:
+  level: "INFO"               # env: ANP_LOG_LEVEL
+  file: "logs/anp.log"
+  json: false
+  screenshot_dir: "logs/screenshots"
+
+database:
+  sqlite_path: "data/anp.sqlite3" # env: ANP_SQLITE_PATH
+  backup_dir: "data/backups"
+  daily_backup: true
+
+cost_limits:
+  monthly_budget_cny: 100
+  daily_token_limit: 200000
+  stop_when_exceeded: true

@@ -1,0 +1,14 @@
+# Local runtime artifacts
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local secrets and generated data
+.env
+.env.*
+data/
+logs/
+
+# Alma workspace snapshots
+.alma-snapshots/
