@@ -3,7 +3,14 @@
 from __future__ import annotations
 
 import sqlite3
+import sys
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+if "queue" in sys.modules and not hasattr(sys.modules["queue"], "__path__"):
+    del sys.modules["queue"]
 
 from config_loader import LoadedConfig
 from generator.api_client import DeepSeekClient

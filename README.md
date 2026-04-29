@@ -1,6 +1,6 @@
 # ANP 全自动小说创作与发布流水线
 
-ANP 是本地运行的小说生成、审核、发布流水线。本仓库当前完成 Sprint 1：项目骨架、配置安全边界、SQLite/日志/CLI 基础设施。
+ANP 是本地运行的小说生成、审核、发布流水线。本仓库当前完成到 Sprint 3：可生成小说进入 SQLite 队列，并通过本地 FastAPI 人工审核页面批准、拒绝、编辑或触发 dry-run AI 审核批次。
 
 ## 本地安装
 
@@ -62,12 +62,31 @@ python -m cli.generate --theme 雨夜归人 --word-count 3000
 # dry-run 发布检查
 python -m cli.publish
 
-# 启动人工审核 FastAPI 骨架
+# 启动人工审核页面（http://localhost:8000）
 python -m queue.human_review
 
 # 语法检查
 python -m py_compile config_loader.py main.py scheduler.py generator/*.py queue/*.py publisher/*.py cli/*.py
 ```
+
+## 人工审核页面
+
+启动本地审核服务：
+
+```bash
+python -m queue.human_review
+```
+
+然后在浏览器访问 `http://localhost:8000`。首页只列出 SQLite 中 `status='pending'` 或 `status='needs_human'` 的作品，并显示标题、内容、状态、分数、重试次数和审核备注。
+
+可执行操作：
+
+- **approve / 批准**：将作品状态更新为 `approved`，进入后续发布阶段。
+- **reject / 拒绝**：将作品状态更新为 `rejected`，并写入人工拒绝备注。
+- **保存编辑**：修改标题、内容和审核备注；标题和内容不能为空，页面输出会进行 HTML 转义。
+- **运行 AI 审核批次**：调用 `queue.ai_review.run_review_batch` 的 dry-run/mock 批处理逻辑；没有 `pending` 数据时页面会显示“没有可审核数据”的友好提示。
+
+页面不会展示 DeepSeek key、平台账号、密码或登录态路径。操作日志只记录动作类型和 story_id / 批次计数，不记录敏感配置值。
 
 ## 项目结构
 

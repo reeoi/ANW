@@ -52,16 +52,17 @@ anp/
 
 ## 2. Phase 2 – 审核模块
 ### 2.1 人工审核 Web 界面
-- [ ] **2.1.1** `queue/human_review.py` FastAPI 应用
-- [ ] **2.1.2** 启动命令 `python -m queue.human_review`
-- [ ] **2.1.3** 通过浏览器访问 `http://localhost:8000` 测试
+- [x] **2.1.1** `queue/human_review.py` FastAPI 应用
+- [x] **2.1.2** 启动命令 `python -m queue.human_review`
+- [x] **2.1.3** 通过浏览器访问 `http://localhost:8000` 测试
+  - 验证方式：使用本地 ASGI/TestClient 等价请求验证 `GET /` 可列出待审作品，`POST /stories/{id}/approve` 可更新 SQLite 状态；`pytest -q` 通过 7 项测试（2026-04-29）。
 
 ### 2.2 AI 自动审核（打分 + 重写）
 - [ ] **2.2.1** `queue/ai_review.py` 实现评分函数（7个维度）
 - [ ] **2.2.2** 调用 DeepSeek 进行评分输出 JSON
 - [ ] **2.2.3** 重写逻辑：最多3次
 - [ ] **2.2.4** 超过重试次数标记 `status='needs_human'`
-- [ ] **2.2.5** Web界面增加「运行 AI 审核批次」按钮
+- [x] **2.2.5** Web界面增加「运行 AI 审核批次」按钮（Sprint 3 已接入 dry-run/mock 批处理占位；完整 7 维评分与重写留待 Sprint 4）
 
 ---
 

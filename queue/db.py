@@ -8,7 +8,6 @@ from pathlib import Path
 from config_loader import LoadedConfig
 from queue.models import Story
 
-
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS stories (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -33,6 +32,8 @@ REQUIRED_COLUMNS: dict[str, str] = {
     "review_notes": "TEXT",
     "published_at": "TEXT",
 }
+
+REVIEWABLE_STATUSES = ("pending", "needs_human")
 
 
 def initialize_database(config: LoadedConfig) -> Path:
@@ -89,6 +90,69 @@ def get_story(db_path: str | Path, story_id: int) -> Story | None:
     return story_from_row(row)
 
 
+def list_reviewable_stories(db_path: str | Path) -> list[Story]:
+    """Return stories that need human or AI review, newest first."""
+    with sqlite3.connect(Path(db_path)) as connection:
+        connection.row_factory = sqlite3.Row
+        rows = connection.execute(
+            """
+            SELECT id, title, content, status, score, retry_count, review_notes,
+                   created_at, updated_at, published_at
+            FROM stories
+            WHERE status IN (?, ?)
+            ORDER BY created_at DESC, id DESC
+            """,
+            REVIEWABLE_STATUSES,
+        ).fetchall()
+    return [story_from_row(row) for row in rows]
+
+
+def update_story_status(
+    db_path: str | Path,
+    story_id: int,
+    status: str,
+    review_notes: str | None = None,
+    score: float | None = None,
+) -> bool:
+    """Update a story's review status and optional score/notes."""
+    with sqlite3.connect(Path(db_path)) as connection:
+        cursor = connection.execute(
+            """
+            UPDATE stories
+            SET status = ?,
+                review_notes = COALESCE(?, review_notes),
+                score = COALESCE(?, score),
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (status, review_notes, score, story_id),
+        )
+        return cursor.rowcount > 0
+
+
+def update_story_content(
+    db_path: str | Path,
+    story_id: int,
+    title: str,
+    content: str,
+    review_notes: str | None = None,
+) -> bool:
+    """Update editable story fields while preserving review status."""
+    with sqlite3.connect(Path(db_path)) as connection:
+        cursor = connection.execute(
+            """
+            UPDATE stories
+            SET title = ?,
+                content = ?,
+                review_notes = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (title, content, review_notes, story_id),
+        )
+        return cursor.rowcount > 0
+
+
 def story_from_row(row: sqlite3.Row) -> Story:
     """Convert a sqlite row from the stories table into a Story dataclass."""
     return Story(
@@ -113,10 +177,14 @@ def _ensure_required_columns(connection: sqlite3.Connection) -> None:
 
 
 __all__ = [
+    "REVIEWABLE_STATUSES",
     "SCHEMA",
     "get_database_path",
     "get_story",
     "initialize_database",
     "insert_story",
+    "list_reviewable_stories",
     "story_from_row",
+    "update_story_content",
+    "update_story_status",
 ]
