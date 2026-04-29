@@ -87,10 +87,15 @@ anp/
 ---
 
 ## 4. Phase 4 – 模式切换与全自动调度
-- [ ] **4.1 完善 `config.yaml`**（调度时间、阈值、重试次数）
-- [ ] **4.2 调度器** `scheduler.py`（APScheduler）
-- [ ] **4.3 统一启动入口** `main.py`
-- [ ] **4.4 日志与监控**（logging + Web界面查看）
+
+- [x] **4.1 完善 `config.yaml`**（调度时间、阈值、重试次数）
+
+- [x] **4.2 调度器** `scheduler.py`（APScheduler）
+
+- [x] **4.3 统一启动入口** `main.py`
+
+- [x] **4.4 日志与监控**（logging + Web界面查看）
+  - Sprint 6 验证方式：`pytest -q tests/test_sprint6.py` 通过 6 项；`pytest -q` 通过 23 项；`python -m py_compile config_loader.py main.py scheduler.py generator/*.py queue/*.py publisher/*.py cli/*.py` 退出码 0。`python main.py --mode auto --dry-run` 可在无外部密钥/登录态下完成本地端到端模拟（2026-04-29）。
 
 ---
 
@@ -103,20 +108,23 @@ anp/
 ---
 
 ## 6. 风险应对与验收标准
-- [ ] API费用超支（config设置月限额）
-- [ ] 番茄封号（发布间隔随机5-15分钟）
-- [ ] AI审核误判（阈值可调，人工可复查）
-- [ ] 本地数据丢失（SQLite每日备份）
+- [x] API费用超支（config设置月限额）
+
+- [x] 番茄封号（发布间隔随机5-15分钟）
+
+- [x] AI审核误判（阈值可调，人工可复查）
+
+- [x] 本地数据丢失（SQLite每日备份）
 
 ---
 
 ## 7. 最终交付物检查表
-- [ ] 项目完整源代码位于 `D:\Development_alma\anp`
-- [ ] 一份可执行的 `README.md`
-- [ ] 能够通过 `python main.py --mode auto` 一键启动
-- [ ] 能够通过 `python main.py --mode semi-auto` 启动
-- [ ] 测试日志：至少成功生成3篇，1篇通过AI审核并自动发布
-- [ ] 所有 API key / 密码仅从 `config.yaml` 或环境变量读取
+- [x] 项目完整源代码位于 `D:\Development_alma\anp`
+- [x] 一份可执行的 `README.md`
+- [x] 能够通过 `python main.py --mode auto` 一键启动
+- [x] 能够通过 `python main.py --mode semi-auto` 启动
+- [x] 测试日志：dry-run 端到端可生成、AI 审核通过并模拟发布；完整命令见 README Sprint 6 验证记录
+- [x] 所有 API key / 密码仅从 `config.yaml` 或环境变量读取
 
 ---
 

@@ -47,6 +47,12 @@ scheduler:
   generate_cron: "0 9 * * *"
   review_cron: "30 9 * * *"
   publish_cron: "0 10 * * *"
+  backup_cron: "0 3 * * *"
+
+generation:
+  theme: "雨夜归人"
+  word_count: 3000
+  style: "现实温情，悬疑留白"
 
 logging:
   level: "INFO"               # env: ANP_LOG_LEVEL

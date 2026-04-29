@@ -1,6 +1,6 @@
 # ANP 全自动小说创作与发布流水线
 
-ANP 是本地运行的小说生成、审核、发布流水线。本仓库当前完成到 Sprint 5：可生成小说进入 SQLite 队列，通过本地 FastAPI 人工审核页面处理，运行 AI 七维评分/自动重写，并通过 Playwright 发布基类与番茄小说适配器执行 dry-run 或安全暂停式发布。
+ANP 是本地运行的小说生成、审核、发布流水线。本仓库当前完成到 Sprint 6：可生成小说进入 SQLite 队列，通过本地 FastAPI 人工审核页面处理，运行 AI 七维评分/自动重写，通过 Playwright 发布基类与番茄小说适配器执行 dry-run 或安全暂停式发布，并可由 APScheduler 串联生成、AI 审核、随机延迟发布和 SQLite 备份。
 
 ## 本地安装
 
@@ -86,7 +86,116 @@ python -m py_compile config_loader.py main.py scheduler.py generator/*.py queue/
 ```
 
 
-## AI 自动审核配置
+## 统一启动（Sprint 6）
+
+
+
+```bash
+
+# 全自动模式：启动 APScheduler，按 config.yaml 串联生成、AI 审核、随机延迟发布、SQLite 备份
+
+python main.py --mode auto
+
+
+
+# 半自动模式：初始化本地环境，并给出人工审核服务启动方式
+
+python main.py --mode semi-auto
+
+python -m queue.human_review
+
+
+
+# 无 DeepSeek key、无番茄登录态也可跑通的本地端到端模拟
+
+python main.py --mode auto --dry-run
+
+
+
+# 只跑一次本地流水线后退出，便于验收/CI
+
+python main.py --mode auto --once
+
+
+
+# 手动执行 SQLite 备份
+
+python main.py --backup-now --mode semi-auto
+
+```
+
+
+
+关键日志写入 `config.yaml` 的 `logging.file`（默认 `logs/anp.log`）。人工审核首页底部会显示该日志文件位置与近期日志。
+
+
+
+## 调度与风险控制配置
+
+
+
+`config.yaml` 中与 Sprint 6 相关的配置项：
+
+
+
+```yaml
+
+scheduler:
+
+  enabled: false
+
+  timezone: "Asia/Shanghai"
+
+  generate_cron: "0 9 * * *"
+
+  review_cron: "30 9 * * *"
+
+  publish_cron: "0 10 * * *"
+
+  backup_cron: "0 3 * * *"
+
+
+
+publisher:
+
+  fansq:
+
+    min_publish_interval_minutes: 5
+
+    max_publish_interval_minutes: 15
+
+
+
+audit:
+
+  approval_threshold: 85
+
+  max_rewrite_attempts: 3
+
+
+
+database:
+
+  backup_dir: "data/backups"
+
+  daily_backup: true
+
+
+
+cost_limits:
+
+  monthly_budget_cny: 100
+
+  daily_token_limit: 200000
+
+```
+
+
+
+发布任务不会在 `publish_cron` 到点立即提交，而是在 `min_publish_interval_minutes` 到 `max_publish_interval_minutes` 范围内随机延迟（默认 5-15 分钟）。AI 通过阈值可用 `audit.approval_threshold` 或 `ANP_AI_REVIEW_THRESHOLD` 调整；API 月限额配置可用 `cost_limits.monthly_budget_cny` 或 `ANP_MONTHLY_BUDGET_CNY` 覆盖。
+
+
+
 
 `queue/ai_review.py` 会从 `config.yaml` 的 `audit` 与 `deepseek` 段读取阈值、最大重写次数和模型参数；也支持环境变量覆盖：
 
@@ -187,6 +296,23 @@ python -m py_compile config_loader.py main.py scheduler.py generator/*.py queue/
 
 覆盖路径：Playwright 发布基类日志/截图/暂停结果封装、番茄 dry-run 成功与暂停、真实模式登录态缺失安全暂停、CLI 读取一条 approved 记录、dry-run 默认保留状态与 `--commit-dry-run` 写入 `publish_paused`。
 
-## Git 状态
-
-Sprint 5 已完成阶段性提交；若 evaluator 环境看不到提交，请运行 `git log --oneline -1` 确认。
+## Sprint 6 验证记录
+
+2026-04-29 本地验证通过：
+
+```bash
+pytest -q tests/test_sprint6.py
+# 6 passed
+pytest -q
+# 23 passed
+python -m py_compile config_loader.py main.py scheduler.py generator/*.py queue/*.py publisher/*.py cli/*.py
+# exit code 0
+python main.py --mode auto --dry-run
+# 可在无 DeepSeek key、无番茄登录态下完成本地生成 -> AI 审核 -> dry-run 发布模拟
+```
+
+覆盖路径：APScheduler 生成/AI 审核/发布窗口/SQLite 备份任务注册，5-15 分钟随机发布延迟，API 月限额读取，SQLite 备份，`main.py --mode auto --dry-run` 本地端到端模拟，`main.py --mode semi-auto` 明确给出人工审核启动方式，关键阶段日志写入配置文件。
+
+## Git 状态
+
+Sprint 6 已完成阶段性提交；若 evaluator 环境看不到提交，请运行 `git log --oneline -1` 确认。

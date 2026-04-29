@@ -21,6 +21,7 @@ from queue.db import (
     update_story_content,
     update_story_status,
 )
+from scheduler import configure_logging, recent_log_lines
 from queue.models import Story
 
 logger = logging.getLogger(__name__)
@@ -92,8 +93,14 @@ def run_ai_review() -> HTMLResponse:
     return HTMLResponse(_render_index(list_reviewable_stories(_database_path()), message=result.message))
 
 
-def _database_path():
+def _load_config():
     config = load_from_environment()
+    configure_logging(config)
+    return config
+
+
+def _database_path():
+    config = _load_config()
     return initialize_database(config) or get_database_path(config)
 
 
@@ -137,6 +144,9 @@ def _render_index(stories: list[Story], message: str | None = None) -> str:
     if not story_cards:
         story_cards = '<section class="empty">当前没有 pending / needs_human 待审核作品。</section>'
     safe_message = f'<div class="message">{_e(message)}</div>' if message else ""
+    config = _load_config()
+    log_file, log_lines = recent_log_lines(config, max_lines=50)
+    safe_log_lines = "\n".join(_e(line) for line in log_lines) or "暂无日志内容。"
     return f"""<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -145,7 +155,7 @@ def _render_index(stories: list[Story], message: str | None = None) -> str:
   <title>ANP 人工审核队列</title>
   <style>
     body {{ font-family: system-ui, -apple-system, Segoe UI, sans-serif; margin: 2rem; background: #f7f7fb; color: #222; }}
-    header, .story, .empty, .message {{ background: white; border: 1px solid #ddd; border-radius: 12px; padding: 1rem; margin-bottom: 1rem; }}
+    header, .story, .empty, .message, .logs {{ background: white; border: 1px solid #ddd; border-radius: 12px; padding: 1rem; margin-bottom: 1rem; }}
     .meta {{ color: #555; display: flex; flex-wrap: wrap; gap: .75rem; margin: .5rem 0; }}
     textarea, input[type=text] {{ box-sizing: border-box; width: 100%; margin: .25rem 0 .75rem; padding: .5rem; }}
     textarea {{ min-height: 220px; }}
@@ -154,7 +164,7 @@ def _render_index(stories: list[Story], message: str | None = None) -> str:
     .reject {{ background: #b42318; color: white; }}
     .save, .ai {{ background: #2454d6; color: white; }}
     .message {{ border-color: #8fb5ff; background: #eef5ff; }}
-    .empty {{ color: #666; }}
+    pre {{ white-space: pre-wrap; max-height: 360px; overflow: auto; background: #111827; color: #e5e7eb; padding: .75rem; border-radius: 8px; }}
   </style>
 </head>
 <body>
@@ -167,6 +177,11 @@ def _render_index(stories: list[Story], message: str | None = None) -> str:
   </header>
   {safe_message}
   <main>{story_cards}</main>
+  <section class="logs">
+    <h2>近期日志</h2>
+    <p>日志文件位置：<code>{_e(log_file)}</code></p>
+    <pre>{safe_log_lines}</pre>
+  </section>
 </body>
 </html>"""
 

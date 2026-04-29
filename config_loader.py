@@ -63,6 +63,11 @@ GENERAL_ENV_OVERRIDES: dict[tuple[str, ...], str] = {
     ("audit", "model"): "ANP_AI_REVIEW_MODEL",
     ("audit", "temperature"): "ANP_AI_REVIEW_TEMPERATURE",
     ("audit", "timeout_seconds"): "ANP_AI_REVIEW_TIMEOUT_SECONDS",
+    ("cost_limits", "monthly_budget_cny"): "ANP_MONTHLY_BUDGET_CNY",
+    ("cost_limits", "daily_token_limit"): "ANP_DAILY_TOKEN_LIMIT",
+    ("publisher", "fansq", "min_publish_interval_minutes"): "ANP_MIN_PUBLISH_INTERVAL_MINUTES",
+    ("publisher", "fansq", "max_publish_interval_minutes"): "ANP_MAX_PUBLISH_INTERVAL_MINUTES",
+    ("scheduler", "enabled"): "ANP_SCHEDULER_ENABLED",
 }
 
 TRUE_VALUES = {"1", "true", "yes", "y", "on"}
