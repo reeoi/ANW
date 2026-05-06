@@ -1,13 +1,14 @@
 """AI review and bounded rewrite workflow for c_pipeline stories.
 
-Phase A note:
-    The previous Sprint 4 implementation rewrote the manuscript text in-place
-    via SQL ``UPDATE stories SET content = ?``. The c_pipeline refactor moves
-    full-text storage out of SQLite (PLAN §3.2 — content column is a NULL
-    compatibility field; canonical body lives at ``final_content_path``). Phase
-    E will re-implement R2 rewrite strategy (rerun Phase 4-5 only). For now,
-    the AI review pass is preserved for scoring + decision flow, and persists
-    its result via ``update_story_ai_review`` and ``update_story_status``.
+Phase E note:
+    Decision #31 (R2): when the 7-dimension review falls below the
+    approval threshold (decision T2 → 90), retry by re-running Phase 4
+    (polish) and Phase 5 (deslop) only — handled by
+    ``generator.c_pipeline.rewrite.rerun_phase_4_5``. Up to
+    ``audit.max_rewrite_attempts`` (=3) reruns are attempted; each
+    attempt re-reads the freshly written ``final_content_path`` before
+    re-reviewing. After all attempts fail the story is escalated to
+    ``status='needs_human'`` for human review.
 """
 
 from __future__ import annotations
@@ -59,6 +60,7 @@ class AIReviewSettings:
 
     approval_threshold: int = 90
     max_rewrite_attempts: int = 3
+    rewrite_strategy: str = "phase_4_5_only"
     model: str = "deepseek-v4-pro"
     temperature: float = 0.3
     timeout_seconds: int = 60
@@ -143,6 +145,11 @@ def load_ai_review_settings(config: LoadedConfig | None = None) -> AIReviewSetti
     return AIReviewSettings(
         approval_threshold=_env_int("ANP_AI_REVIEW_THRESHOLD", int(audit.get("approval_threshold") or 90)),
         max_rewrite_attempts=max(0, _env_int("ANP_MAX_REWRITE_ATTEMPTS", int(audit.get("max_rewrite_attempts") or 3))),
+        rewrite_strategy=str(
+            os.getenv("ANP_AI_REVIEW_REWRITE_STRATEGY")
+            or audit.get("rewrite_strategy")
+            or "phase_4_5_only"
+        ),
         model=os.getenv("ANP_AI_REVIEW_MODEL") or str(audit.get("model") or deepseek.get("model") or "deepseek-v4-pro"),
         temperature=_env_float("ANP_AI_REVIEW_TEMPERATURE", float(audit.get("temperature") or 0.3)),
         timeout_seconds=_env_int(
@@ -182,7 +189,19 @@ def review_story_in_database(
     story_id: int,
     config: LoadedConfig | None = None,
 ) -> StoryReviewSummary:
-    """Review one queued story and persist final state into c_pipeline schema."""
+    """Review one queued story and persist final state into c_pipeline schema.
+
+    Phase E (decision #31, R2):
+    - Run the 7-dimension review against the manuscript at
+      ``final_content_path``.
+    - If the decision is below threshold, rerun Phase 4-5 only via
+      ``rerun_phase_4_5`` (lighter than ``run_pipeline(resume_from='phase_4')``)
+      and re-review against the freshly written final manuscript. Loop
+      up to ``settings.max_rewrite_attempts`` (default 3) attempts.
+    - On approval at any attempt, persist ``status='approved'``.
+    - On all attempts failing (or rewrite exception), persist
+      ``status='needs_human'`` with the failure reason.
+    """
 
     settings = load_ai_review_settings(config)
     story = get_story(db_path, story_id)
@@ -192,12 +211,32 @@ def review_story_in_database(
     base_attempts = int(story.ai_review_attempts or 0)
     final_review = review_story(story, config=config, settings=settings)
     extra_attempts = 0
+    rewrite_failure: str | None = None
+
     while final_review.decision != "approved" and extra_attempts < settings.max_rewrite_attempts:
-        # Phase A: full R2 rewrite (rerun Phase 4-5) is implemented in Phase E.
-        # Until then, the loop terminates after the first review pass and the
-        # story is escalated to needs_human if the score is below threshold.
+        if settings.rewrite_strategy != "phase_4_5_only":
+            rewrite_failure = (
+                f"unsupported rewrite_strategy={settings.rewrite_strategy!r}; "
+                "only 'phase_4_5_only' (R2) is implemented"
+            )
+            break
+        try:
+            _do_rewrite_phase_4_5(story_id, config=config)
+        except Exception as exc:  # RewriteError or upstream LLM/IO failure
+            rewrite_failure = (
+                f"Phase 4-5 rerun #{extra_attempts + 1} failed: "
+                f"{exc.__class__.__name__}: {exc}"
+            )
+            extra_attempts += 1
+            break
+        # Re-fetch and re-review against the regenerated final manuscript.
+        story = get_story(db_path, story_id)
+        if story is None:
+            rewrite_failure = "story disappeared after rerun"
+            extra_attempts += 1
+            break
         extra_attempts += 1
-        break
+        final_review = review_story(story, config=config, settings=settings)
 
     total_attempts = base_attempts + extra_attempts
     if final_review.decision == "approved":
@@ -219,6 +258,7 @@ def review_story_in_database(
         "needs_human",
         summary="AI 审核未通过，转人工复查：" + final_review.to_json(),
     )
+    failure_text = rewrite_failure or ("; ".join(final_review.issues) or "score below threshold")
     return StoryReviewSummary(
         story_id=story_id,
         decision="needs_human",
@@ -226,8 +266,18 @@ def review_story_in_database(
         final_score=final_review.total_score,
         issues=final_review.issues,
         suggestions=final_review.suggestions,
-        failure_reason="; ".join(final_review.issues) or "score below threshold",
+        failure_reason=failure_text,
     )
+
+
+def _do_rewrite_phase_4_5(story_id: int, *, config: LoadedConfig | None) -> None:
+    """Indirection for tests: monkeypatch this to stub the c_pipeline rerun."""
+
+    from generator.c_pipeline.rewrite import rerun_phase_4_5
+
+    if config is None:
+        config = load_from_environment()
+    rerun_phase_4_5(story_id, config=config)
 
 
 def mock_review(content: str, threshold: int = 90) -> ReviewResult:
