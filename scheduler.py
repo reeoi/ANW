@@ -1,23 +1,34 @@
-"""APScheduler-based pipeline orchestration for ANP.
+"""APScheduler-based pipeline orchestration for ANP (Phase D).
 
-Phase A note:
-    The legacy ``scheduled_generate`` step relied on
-    ``generator.prompt_builder.build_short_story_prompt`` plus
-    ``DeepSeekClient.generate_story`` to produce a 3000-character draft per cron
-    tick. The c_pipeline refactor replaces that with the multi-phase
-    orchestrator + ``daily_publish_plan`` slots (PLAN §3.1, §7 Phase D). Until
-    Phase C and Phase D land, the scheduler keeps the AI review / publish /
-    backup jobs and stubs out the generate hook.
+Cron / trigger map after Phase D (PLAN §3.1, §7 Phase D, decisions #17-#21):
+
+- ``weekly_scan_cron``  Mon 03:00 -> ``scan.seed_evolver.run_weekly_scan``
+- ``plan_today_cron``   daily 03:00 -> ``scheduler_planner.plan_today_publishes``
+                                       then dynamically register a DateTrigger
+                                       for every slot in today's
+                                       ``daily_publish_plan``
+- ``review_cron``       configured (default 09:30) -> AI review batch
+- ``backup_cron``       daily 04:00 (or configured) -> SQLite copy
+- per-slot DateTriggers fired at ``slot_time`` -> ``scheduled_slot_trigger``,
+  which picks an approved story (FIFO + cross-day emotion balance), claims
+  the slot, and schedules ``scheduled_publish`` 5-15 minutes later (decision
+  #17 secondary jitter). Empty queue -> mark slot skipped (#18). Strict
+  cap (#19) is enforced by only registering as many DateTriggers as
+  ``daily_publish_plan`` contains.
+
+Legacy paths removed (decision L1/L2): ``generate_cron``,
+``scheduled_generate``, fixed ``publish_cron``.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import random
 import shutil
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -29,8 +40,16 @@ from apscheduler.triggers.interval import IntervalTrigger
 from config_loader import LoadedConfig
 from publisher.base_publisher import PublishStatus
 from review_queue.ai_review import run_review_batch
-from review_queue.db import initialize_database
+from review_queue.db import get_daily_publish_plan, initialize_database
 from review_queue.notification_bus import Severity, bus
+from scan.seed_evolver import WeeklyScanBlockedError, WeeklyScanResult, run_weekly_scan
+from scheduler_planner import (
+    mark_slot_published,
+    mark_slot_skipped,
+    mark_slot_story,
+    pick_story_for_slot,
+    plan_today_publishes,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +64,9 @@ class PipelineRunResult:
     needs_human: int = 0
     published: bool = False
     message: str = ""
+
+
+# ============================================================ logging / config
 
 
 def configure_logging(config: LoadedConfig) -> Path:
@@ -83,22 +105,48 @@ def scheduler_enabled(config: LoadedConfig) -> bool:
     return bool(config.data.get("scheduler", {}).get("enabled", False))
 
 
+# ============================================================ create_scheduler
+
+
 def create_scheduler(config: LoadedConfig) -> BackgroundScheduler:
-    """Create and populate the APScheduler instance from config.yaml."""
+    """Create and populate the APScheduler instance from config.yaml.
+
+    Phase D registrations (decisions #17 / #21 / L1):
+    - weekly_scan_cron  -> ``scheduled_weekly_scan``
+    - plan_today_cron   -> ``scheduled_plan_today`` (also registers slot
+                            DateTriggers for the freshly planned day)
+    - review_cron       -> ``scheduled_ai_review``
+    - backup_cron       -> ``backup_sqlite_database``
+    Legacy ``generate_cron`` / ``publish_cron`` are silently ignored even
+    if a config supplies them.
+    """
 
     scheduler_config = _mapping(config.data.get("scheduler"))
     timezone = str(scheduler_config.get("timezone") or "Asia/Shanghai")
     scheduler = BackgroundScheduler(timezone=timezone)
 
-    if scheduler_config.get("generate_cron"):
+    weekly_cron = str(scheduler_config.get("weekly_scan_cron") or "").strip()
+    if weekly_cron:
         scheduler.add_job(
-            scheduled_generate,
-            _cron_trigger(str(scheduler_config["generate_cron"]), timezone),
+            scheduled_weekly_scan,
+            _cron_trigger(weekly_cron, timezone),
             args=[config],
-            id="generate_story",
-            name="ANP generate story",
+            id="weekly_scan",
+            name="ANP weekly seed evolution",
             replace_existing=True,
         )
+
+    plan_cron = str(scheduler_config.get("plan_today_cron") or "").strip()
+    if plan_cron:
+        scheduler.add_job(
+            scheduled_plan_today,
+            _cron_trigger(plan_cron, timezone),
+            args=[scheduler, config],
+            id="plan_today",
+            name="ANP daily publish plan",
+            replace_existing=True,
+        )
+
     if scheduler_config.get("review_cron"):
         scheduler.add_job(
             scheduled_ai_review,
@@ -108,19 +156,10 @@ def create_scheduler(config: LoadedConfig) -> BackgroundScheduler:
             name="ANP AI review",
             replace_existing=True,
         )
-    if scheduler_config.get("publish_cron"):
-        scheduler.add_job(
-            schedule_publish_with_random_delay,
-            _cron_trigger(str(scheduler_config["publish_cron"]), timezone),
-            args=[scheduler, config],
-            id="publish_window",
-            name="ANP publish window with random delay",
-            replace_existing=True,
-        )
 
     backup_cron = str(scheduler_config.get("backup_cron") or "").strip()
     if not backup_cron and _mapping(config.data.get("database")).get("daily_backup", True):
-        backup_cron = "0 3 * * *"
+        backup_cron = "0 4 * * *"
     if backup_cron:
         scheduler.add_job(
             backup_sqlite_database,
@@ -135,32 +174,238 @@ def create_scheduler(config: LoadedConfig) -> BackgroundScheduler:
 
 
 def start_scheduler(config: LoadedConfig) -> BackgroundScheduler:
-    """Start configured APScheduler jobs and return the running scheduler."""
+    """Start configured APScheduler jobs and return the running scheduler.
+
+    After ``start()`` we re-register any unfired publish slots already
+    persisted for *today* — covers the case where the daemon restarts
+    between ``plan_today_cron`` and the day's last slot.
+    """
 
     configure_logging(config)
     scheduler = create_scheduler(config)
     scheduler.start()
+    try:
+        registered = register_publish_slots(scheduler, config)
+        if registered:
+            logger.info(
+                "register_publish_slots resumed %s pending slots for today", registered
+            )
+    except Exception as exc:  # pragma: no cover - defensive: do not block startup
+        logger.warning("register_publish_slots on startup failed: %s", exc)
     logger.info("APScheduler started with jobs=%s", [job.id for job in scheduler.get_jobs()])
     return scheduler
 
 
-def scheduled_generate(config: LoadedConfig) -> int | None:
-    """[Stub] Old single-shot generate step.
+# ============================================================ weekly scan
 
-    The c_pipeline orchestrator (Phase C) replaces this hook. Phase D will
-    rewire APScheduler to call ``plan_today_publishes`` and start orchestrator
-    runs based on ``daily_publish_plan`` slots; until then this remains a
-    no-op so existing crons do not break.
+
+def scheduled_weekly_scan(config: LoadedConfig) -> WeeklyScanResult | None:
+    """Cron callback for ``weekly_scan_cron`` (Mon 03:00)."""
+
+    logger.info("Pipeline stage started: weekly_scan")
+    try:
+        result = run_weekly_scan(config)
+    except WeeklyScanBlockedError as exc:
+        logger.error("weekly_scan blocked: %s", exc)
+        bus.publish(
+            Severity.CRITICAL,
+            "🚨 题材池演化被阻塞",
+            f"weekly_scan 失败且无 fallback theme_pool: {exc}",
+            source="scheduler.weekly_scan",
+        )
+        return None
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.exception("weekly_scan crashed")
+        bus.publish(
+            Severity.WARNING,
+            "⚠️ 题材池演化异常",
+            f"weekly_scan 抛出异常: {exc}",
+            source="scheduler.weekly_scan",
+        )
+        return None
+
+    severity = Severity.WARNING if result.used_fallback else Severity.INFO
+    title = "↩️ 题材池回退上周" if result.used_fallback else "✓ 题材池已演化"
+    bus.publish(
+        severity,
+        title,
+        f"iso_week={result.iso_week} items={result.item_count} "
+        f"fallback={result.used_fallback}",
+        source="scheduler.weekly_scan",
+    )
+    logger.info(
+        "Pipeline stage completed: weekly_scan iso_week=%s item_count=%s fallback=%s",
+        result.iso_week,
+        result.item_count,
+        result.used_fallback,
+    )
+    return result
+
+
+# ============================================================ plan today
+
+
+def scheduled_plan_today(
+    scheduler: BackgroundScheduler,
+    config: LoadedConfig,
+    *,
+    today: date | None = None,
+) -> int:
+    """Cron callback for ``plan_today_cron`` (daily 03:00).
+
+    Samples today's slots, persists ``daily_publish_plan``, and dynamically
+    registers a DateTrigger per slot. Returns the number of slot triggers
+    registered (== ``planned_count``).
     """
 
-    logger.info("scheduled_generate skipped: legacy single-shot path disabled in Phase A")
+    today = today or date.today()
+    logger.info("Pipeline stage started: plan_today date=%s", today.isoformat())
+    plan = plan_today_publishes(config, today=today)
+    registered = register_publish_slots(scheduler, config, today=today)
     bus.publish(
         Severity.INFO,
-        "ℹ️ 生成调度已停用",
-        "旧 generate_cron 在 c_pipeline 重构 Phase A 期间停用,等待 Phase C/D 接入",
-        source="scheduler.generate",
+        "✓ 当日发布计划已生成",
+        f"date={plan.date} planned={plan.planned_count} registered={registered}",
+        source="scheduler.plan_today",
     )
-    return None
+    logger.info(
+        "Pipeline stage completed: plan_today date=%s planned=%s registered=%s",
+        plan.date,
+        plan.planned_count,
+        registered,
+    )
+    return registered
+
+
+def register_publish_slots(
+    scheduler: BackgroundScheduler,
+    config: LoadedConfig,
+    *,
+    today: date | None = None,
+) -> int:
+    """Register a DateTrigger for each unfired slot in today's plan."""
+
+    today = today or date.today()
+    today_str = today.isoformat()
+    db_path = initialize_database(config)
+    plan = get_daily_publish_plan(db_path, today_str)
+    if plan is None:
+        return 0
+    try:
+        slots = json.loads(plan.slots_json)
+    except json.JSONDecodeError:
+        return 0
+    if not isinstance(slots, list):
+        return 0
+
+    timezone = getattr(scheduler, "timezone", None) or _scheduler_timezone(config)
+    now = datetime.now()
+    registered = 0
+    for index, slot in enumerate(slots):
+        if not isinstance(slot, dict):
+            continue
+        # Skip slots that already fired (claimed/published/skipped) so a
+        # restart never double-publishes.
+        if slot.get("story_id") or slot.get("published_at") or slot.get("skipped_reason"):
+            continue
+        slot_time_raw = slot.get("slot_time")
+        if not isinstance(slot_time_raw, str):
+            continue
+        try:
+            slot_dt = datetime.fromisoformat(slot_time_raw)
+        except ValueError:
+            continue
+        if slot_dt <= now:
+            continue
+        scheduler.add_job(
+            scheduled_slot_trigger,
+            DateTrigger(run_date=slot_dt, timezone=timezone),
+            kwargs={"scheduler": scheduler, "config": config, "slot_index": index, "today": today_str},
+            id=f"publish_slot_{today_str}_{index}",
+            name=f"ANP publish slot {today_str} #{index}",
+            replace_existing=True,
+        )
+        registered += 1
+    return registered
+
+
+# ============================================================ slot trigger
+
+
+def scheduled_slot_trigger(
+    scheduler: BackgroundScheduler | None,
+    config: LoadedConfig,
+    *,
+    slot_index: int,
+    today: str | None = None,
+) -> bool:
+    """At ``slot_time``, claim a story for the slot and schedule its publish.
+
+    Decisions #18/#19/#20:
+    - empty approved queue -> ``mark_slot_skipped(no_approved_story)`` and
+      return False (no carryover).
+    - non-empty -> ``pick_story_for_slot`` (FIFO + cross-day emotion
+      balance), then ``mark_slot_story`` and schedule the actual publish
+      via ``schedule_publish_with_random_delay`` (5-15 min secondary
+      jitter, decision #17). Returns True.
+    """
+
+    today = today or date.today().isoformat()
+    today_date = date.fromisoformat(today)
+    db_path = initialize_database(config)
+    logger.info(
+        "Pipeline stage started: slot_trigger date=%s slot_index=%s",
+        today,
+        slot_index,
+    )
+
+    story = pick_story_for_slot(db_path, today=today_date, slot_index=slot_index)
+    if story is None or story.id is None:
+        mark_slot_skipped(
+            db_path,
+            today=today,
+            slot_index=slot_index,
+            reason="no_approved_story",
+        )
+        bus.publish(
+            Severity.INFO,
+            "⏭ 发布 slot 跳过",
+            f"date={today} slot_index={slot_index} reason=no_approved_story",
+            source="scheduler.slot_trigger",
+        )
+        logger.info(
+            "Pipeline stage completed: slot_trigger date=%s slot_index=%s skipped=no_approved_story",
+            today,
+            slot_index,
+        )
+        return False
+
+    mark_slot_story(
+        db_path,
+        today=today,
+        slot_index=slot_index,
+        story_id=int(story.id),
+    )
+
+    if scheduler is not None:
+        schedule_publish_with_random_delay(
+            scheduler,
+            config,
+            story=story,
+            slot_index=slot_index,
+            today=today,
+        )
+
+    logger.info(
+        "Pipeline stage completed: slot_trigger date=%s slot_index=%s story_id=%s",
+        today,
+        slot_index,
+        story.id,
+    )
+    return True
+
+
+# ============================================================ ai review
 
 
 def scheduled_ai_review(config: LoadedConfig) -> Any:
@@ -206,8 +451,23 @@ def scheduled_ai_review(config: LoadedConfig) -> Any:
     return result
 
 
-def schedule_publish_with_random_delay(scheduler: BackgroundScheduler, config: LoadedConfig) -> int:
-    """Schedule a publish job after the configured 5-15 minute randomized delay."""
+# ============================================================ publish (slot-driven)
+
+
+def schedule_publish_with_random_delay(
+    scheduler: BackgroundScheduler,
+    config: LoadedConfig,
+    *,
+    story: Any | None = None,
+    slot_index: int | None = None,
+    today: str | None = None,
+) -> int:
+    """Schedule a publish job after the configured 5-15 minute randomized delay.
+
+    Phase D: ``story``/``slot_index``/``today`` thread the slot identity
+    through so ``scheduled_publish`` can mark ``slots_json[i].published_at``
+    on success.
+    """
 
     min_minutes, max_minutes = get_publish_delay_range(config)
     delay_seconds = random.randint(min_minutes * 60, max_minutes * 60)
@@ -215,32 +475,62 @@ def schedule_publish_with_random_delay(scheduler: BackgroundScheduler, config: L
     scheduler.add_job(
         scheduled_publish,
         DateTrigger(run_date=run_at, timezone=scheduler.timezone),
-        args=[config],
-        id=f"publish_once_{int(run_at.timestamp())}",
+        kwargs={
+            "config": config,
+            "story": story,
+            "slot_index": slot_index,
+            "today": today,
+        },
+        id=f"publish_once_{int(run_at.timestamp())}_{slot_index if slot_index is not None else 'na'}",
         name="ANP randomized publish attempt",
         replace_existing=False,
     )
     logger.info(
-        "Publish job scheduled with random delay: seconds=%s range_minutes=%s-%s run_at=%s",
+        "Publish job scheduled with random delay: seconds=%s range_minutes=%s-%s run_at=%s slot_index=%s",
         delay_seconds,
         min_minutes,
         max_minutes,
         run_at.isoformat(timespec="seconds"),
+        slot_index,
     )
     return delay_seconds
 
 
-def scheduled_publish(config: LoadedConfig) -> bool:
-    """Publish one approved story through the configured platform adapter."""
+def scheduled_publish(
+    config: LoadedConfig,
+    *,
+    story: Any | None = None,
+    slot_index: int | None = None,
+    today: str | None = None,
+) -> bool:
+    """Publish one approved story through the configured platform adapter.
+
+    When ``story`` is ``None`` we fall back to the FIFO picker (used by
+    ``run_dry_run_pipeline`` and ``cli/publish``). When ``slot_index``+
+    ``today`` are supplied (Phase D slot trigger), record the publish
+    timestamp in ``slots_json``.
+    """
 
     from cli.publish import apply_publish_result, find_one_approved_story
     from publisher.fansq import FansqPublisher
 
-    logger.info("Pipeline stage started: publish")
+    logger.info(
+        "Pipeline stage started: publish slot_index=%s today=%s",
+        slot_index,
+        today,
+    )
     db_path = initialize_database(config)
-    story = find_one_approved_story(db_path)
+    if story is None:
+        story = find_one_approved_story(db_path)
     if story is None:
         logger.info("Pipeline stage completed: publish skipped=no_approved_story")
+        if slot_index is not None and today is not None:
+            mark_slot_skipped(
+                db_path,
+                today=today,
+                slot_index=slot_index,
+                reason="no_approved_story",
+            )
         return False
 
     dry_run = bool(_mapping(config.data.get("runtime")).get("dry_run"))
@@ -262,6 +552,13 @@ def scheduled_publish(config: LoadedConfig) -> bool:
             story_id=story.id,
         )
     elif str(result.status) == str(PublishStatus.PUBLISHED):
+        if slot_index is not None and today is not None:
+            mark_slot_published(
+                db_path,
+                today=today,
+                slot_index=slot_index,
+                published_at=datetime.now().replace(microsecond=0).isoformat(),
+            )
         bus.publish(
             Severity.INFO,
             "✓ 发布成功",
@@ -270,6 +567,13 @@ def scheduled_publish(config: LoadedConfig) -> bool:
             story_id=story.id,
         )
     elif str(result.status) == str(PublishStatus.FAILED):
+        if slot_index is not None and today is not None:
+            mark_slot_skipped(
+                db_path,
+                today=today,
+                slot_index=slot_index,
+                reason=f"publish_failed:{result.message}",
+            )
         bus.publish(
             Severity.WARNING,
             "⚠️ 发布失败",
@@ -278,6 +582,9 @@ def scheduled_publish(config: LoadedConfig) -> bool:
             story_id=story.id,
         )
     return result.status == PublishStatus.PUBLISHED
+
+
+# ============================================================ backup
 
 
 def backup_sqlite_database(config: LoadedConfig) -> Path | None:
@@ -304,22 +611,24 @@ def backup_sqlite_database(config: LoadedConfig) -> Path | None:
     return target
 
 
+# ============================================================ dry-run helper
+
+
 def run_dry_run_pipeline(config: LoadedConfig) -> PipelineRunResult:
     """Run the available pipeline stages locally once for end-to-end verification.
 
-    Phase A note: ``scheduled_generate`` is currently a stub (see its docstring),
-    so the dry-run pipeline only exercises the AI review + publish path against
-    whatever stories already exist in the queue. Phase E will reconnect the
-    full c_pipeline orchestrator into this entrypoint.
+    Phase D: the scheduler no longer owns the generate step (Phase E will
+    reconnect c_pipeline.orchestrator into ``cli/generate``); the dry-run
+    pipeline therefore only exercises the AI review + publish path against
+    whatever stories already sit in the queue.
     """
 
     configure_logging(config)
     logger.info("Dry-run end-to-end pipeline started")
-    scheduled_generate(config)
     review_result = scheduled_ai_review(config)
     published = scheduled_publish(config)
     message = (
-        "dry-run pipeline completed (Phase A stub): generate=skipped "
+        "dry-run pipeline completed: generate=skipped(c_pipeline owns it) "
         f"reviewed={review_result.reviewed} approved={review_result.approved} published={published}"
     )
     logger.info(message)
@@ -331,6 +640,9 @@ def run_dry_run_pipeline(config: LoadedConfig) -> PipelineRunResult:
         published=published,
         message=message,
     )
+
+
+# ============================================================ small utilities
 
 
 def get_publish_delay_range(config: LoadedConfig) -> tuple[int, int]:
@@ -373,6 +685,10 @@ def count_stories_by_status(config: LoadedConfig) -> dict[str, int]:
     return {str(status): int(count) for status, count in rows}
 
 
+def _scheduler_timezone(config: LoadedConfig) -> str:
+    return str(_mapping(config.data.get("scheduler")).get("timezone") or "Asia/Shanghai")
+
+
 def _cron_trigger(expression: str, timezone: str) -> CronTrigger | IntervalTrigger:
     expression = expression.strip()
     if expression.startswith("interval:"):
@@ -405,11 +721,14 @@ __all__ = [
     "get_monthly_api_limit",
     "get_publish_delay_range",
     "recent_log_lines",
+    "register_publish_slots",
     "run_dry_run_pipeline",
     "schedule_publish_with_random_delay",
     "scheduled_ai_review",
-    "scheduled_generate",
+    "scheduled_plan_today",
     "scheduled_publish",
+    "scheduled_slot_trigger",
+    "scheduled_weekly_scan",
     "scheduler_enabled",
     "start_scheduler",
 ]
