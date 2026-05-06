@@ -3,18 +3,18 @@
 from __future__ import annotations
 
 import argparse
-import sys
+import sqlite3
 from pathlib import Path
 
 from config_loader import LoadedConfig, load_from_environment
 from publisher.base_publisher import PublishResult, PublishStatus
 from publisher.fansq import FansqPublisher
-from queue.db import get_database_path, initialize_database, story_from_row, update_story_status
-
-if "queue" in sys.modules and not hasattr(sys.modules["queue"], "__path__"):
-    del sys.modules["queue"]
-
-import sqlite3
+from review_queue.db import (
+    get_database_path,
+    initialize_database,
+    story_from_row,
+    update_story_status,
+)
 
 
 def find_one_approved_story(db_path: str | Path):
@@ -24,8 +24,11 @@ def find_one_approved_story(db_path: str | Path):
         connection.row_factory = sqlite3.Row
         row = connection.execute(
             """
-            SELECT id, title, content, status, score, retry_count, review_notes,
-                   created_at, updated_at, published_at
+            SELECT id, title, status, pipeline_version, work_dir, current_phase,
+                   final_content_path, pipeline_cost_cny, target_length,
+                   emotion, genre, hint_title, summary,
+                   ai_review_score, ai_review_attempts, content,
+                   created_at, updated_at
             FROM stories
             WHERE status = 'approved'
             ORDER BY created_at ASC, id ASC
@@ -48,7 +51,7 @@ def apply_publish_result(db_path: str | Path, result: PublishResult, commit_dry_
         return False
     if result.status not in {PublishStatus.PUBLISHED, PublishStatus.PAUSED, PublishStatus.FAILED}:
         return False
-    return update_story_status(db_path, result.story_id, str(result.status), result.message)
+    return update_story_status(db_path, result.story_id, str(result.status), summary=result.message)
 
 
 def build_parser() -> argparse.ArgumentParser:

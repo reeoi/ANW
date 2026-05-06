@@ -1,4 +1,14 @@
-"""APScheduler-based pipeline orchestration for ANP."""
+"""APScheduler-based pipeline orchestration for ANP.
+
+Phase A note:
+    The legacy ``scheduled_generate`` step relied on
+    ``generator.prompt_builder.build_short_story_prompt`` plus
+    ``DeepSeekClient.generate_story`` to produce a 3000-character draft per cron
+    tick. The c_pipeline refactor replaces that with the multi-phase
+    orchestrator + ``daily_publish_plan`` slots (PLAN §3.1, §7 Phase D). Until
+    Phase C and Phase D land, the scheduler keeps the AI review / publish /
+    backup jobs and stubs out the generate hook.
+"""
 
 from __future__ import annotations
 
@@ -17,12 +27,10 @@ from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 from config_loader import LoadedConfig
-from generator.api_client import DeepSeekClient
-from generator.prompt_builder import DEFAULT_STYLE, build_short_story_prompt
 from publisher.base_publisher import PublishStatus
-from queue.ai_review import run_review_batch
-from queue.db import initialize_database, insert_story
-from queue.models import Story
+from review_queue.ai_review import run_review_batch
+from review_queue.db import initialize_database
+from review_queue.notification_bus import Severity, bus
 
 logger = logging.getLogger(__name__)
 
@@ -136,20 +144,23 @@ def start_scheduler(config: LoadedConfig) -> BackgroundScheduler:
     return scheduler
 
 
-def scheduled_generate(config: LoadedConfig) -> int:
-    """Generate one story and enqueue it as pending."""
+def scheduled_generate(config: LoadedConfig) -> int | None:
+    """[Stub] Old single-shot generate step.
 
-    logger.info("Pipeline stage started: generate")
-    db_path = initialize_database(config)
-    generation = _mapping(config.data.get("generation"))
-    theme = str(generation.get("theme") or "雨夜归人")
-    word_count = int(generation.get("word_count") or 3000)
-    style = str(generation.get("style") or DEFAULT_STYLE)
-    prompt = build_short_story_prompt(theme, word_count, style)
-    story = DeepSeekClient(config).generate_story(prompt)
-    story_id = insert_story(db_path, story)
-    logger.info("Pipeline stage completed: generate story_id=%s db=%s", story_id, db_path)
-    return story_id
+    The c_pipeline orchestrator (Phase C) replaces this hook. Phase D will
+    rewire APScheduler to call ``plan_today_publishes`` and start orchestrator
+    runs based on ``daily_publish_plan`` slots; until then this remains a
+    no-op so existing crons do not break.
+    """
+
+    logger.info("scheduled_generate skipped: legacy single-shot path disabled in Phase A")
+    bus.publish(
+        Severity.INFO,
+        "ℹ️ 生成调度已停用",
+        "旧 generate_cron 在 c_pipeline 重构 Phase A 期间停用,等待 Phase C/D 接入",
+        source="scheduler.generate",
+    )
+    return None
 
 
 def scheduled_ai_review(config: LoadedConfig) -> Any:
@@ -171,6 +182,27 @@ def scheduled_ai_review(config: LoadedConfig) -> Any:
         result.needs_human,
         result.failed,
     )
+    if result.failed > 0:
+        bus.publish(
+            Severity.WARNING,
+            "⚠️ AI 审核部分失败",
+            f"reviewed={result.reviewed} failed={result.failed}",
+            source="scheduler.ai_review",
+        )
+    elif result.reviewed > 0 and result.needs_human == result.reviewed:
+        bus.publish(
+            Severity.WARNING,
+            "📋 审核全部需人工",
+            f"{result.reviewed} 篇全部需要人工复查",
+            source="scheduler.ai_review",
+        )
+    elif result.reviewed > 0:
+        bus.publish(
+            Severity.INFO,
+            "✓ AI 审核完成",
+            f"reviewed={result.reviewed} approved={result.approved} needs_human={result.needs_human}",
+            source="scheduler.ai_review",
+        )
     return result
 
 
@@ -221,6 +253,30 @@ def scheduled_publish(config: LoadedConfig) -> bool:
         changed,
         result.message,
     )
+    if str(result.status) == str(PublishStatus.PAUSED):
+        bus.publish(
+            Severity.CRITICAL,
+            "🚨 番茄发布暂停",
+            f"作品 #{story.id} 触发暂停：{result.message}",
+            source="scheduler.publish",
+            story_id=story.id,
+        )
+    elif str(result.status) == str(PublishStatus.PUBLISHED):
+        bus.publish(
+            Severity.INFO,
+            "✓ 发布成功",
+            f"作品 #{story.id} 已发布到番茄",
+            source="scheduler.publish",
+            story_id=story.id,
+        )
+    elif str(result.status) == str(PublishStatus.FAILED):
+        bus.publish(
+            Severity.WARNING,
+            "⚠️ 发布失败",
+            f"作品 #{story.id}：{result.message}",
+            source="scheduler.publish",
+            story_id=story.id,
+        )
     return result.status == PublishStatus.PUBLISHED
 
 
@@ -239,24 +295,36 @@ def backup_sqlite_database(config: LoadedConfig) -> Path | None:
     target = backup_dir / f"{Path(db_path).stem}_{timestamp}.sqlite3"
     shutil.copy2(db_path, target)
     logger.info("Pipeline stage completed: sqlite_backup source=%s target=%s", db_path, target)
+    bus.publish(
+        Severity.INFO,
+        "✓ 备份完成",
+        f"目标：{target.name}",
+        source="scheduler.backup",
+    )
     return target
 
 
 def run_dry_run_pipeline(config: LoadedConfig) -> PipelineRunResult:
-    """Run generate -> AI review -> publish locally once for end-to-end verification."""
+    """Run the available pipeline stages locally once for end-to-end verification.
+
+    Phase A note: ``scheduled_generate`` is currently a stub (see its docstring),
+    so the dry-run pipeline only exercises the AI review + publish path against
+    whatever stories already exist in the queue. Phase E will reconnect the
+    full c_pipeline orchestrator into this entrypoint.
+    """
 
     configure_logging(config)
     logger.info("Dry-run end-to-end pipeline started")
-    story_id = scheduled_generate(config)
+    scheduled_generate(config)
     review_result = scheduled_ai_review(config)
     published = scheduled_publish(config)
     message = (
-        f"dry-run pipeline completed: generated_story_id={story_id} "
+        "dry-run pipeline completed (Phase A stub): generate=skipped "
         f"reviewed={review_result.reviewed} approved={review_result.approved} published={published}"
     )
     logger.info(message)
     return PipelineRunResult(
-        generated_story_id=story_id,
+        generated_story_id=None,
         reviewed=review_result.reviewed,
         approved=review_result.approved,
         needs_human=review_result.needs_human,

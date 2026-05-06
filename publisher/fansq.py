@@ -12,7 +12,7 @@ from typing import Any
 
 from config_loader import LoadedConfig
 from publisher.base_publisher import BasePublisher, PublishResult, PublishStatus
-from queue.models import Story
+from review_queue.models import Story
 
 
 RISK_KEYWORDS = (
@@ -70,7 +70,10 @@ class FansqPublisher(BasePublisher):
     def publish(self, title: str, content: str) -> PublishResult:
         """Backward-compatible title/content publish entry point."""
 
-        return self.publish_story(Story(title=title, content=content, status="approved"))
+        return self.publish_story(
+            Story(title=title, status="approved"),
+            content_text=content,
+        )
 
     def publish_story(
         self,
@@ -78,6 +81,7 @@ class FansqPublisher(BasePublisher):
         dry_run: bool | None = None,
         dry_run_outcome: str = "success",
         wait_on_pause: bool = False,
+        content_text: str | None = None,
     ) -> PublishResult:
         """Publish one approved story or return a safe pause result.
 
@@ -87,6 +91,8 @@ class FansqPublisher(BasePublisher):
             dry_run_outcome: In dry-run, choose ``success`` or ``paused`` to verify
                 both status paths without opening a browser.
             wait_on_pause: If true, block for manual intervention after pausing.
+            content_text: Optional explicit story body. When omitted, the content
+                is read from ``story.final_content_path`` (c_pipeline manuscript).
         """
 
         if story.status != "approved":
@@ -102,6 +108,14 @@ class FansqPublisher(BasePublisher):
 
         if not self.settings.enabled:
             return self.result(PublishStatus.FAILED, "番茄小说发布器未启用", story_id=story.id)
+
+        body = content_text if content_text is not None else story.read_final_content()
+        if not body:
+            return self.pause_for_human(
+                "无法读取最终稿:final_content_path 缺失或文件不存在。请确认 c_pipeline 已完成 Phase 5。",
+                story_id=story.id,
+                wait=wait_on_pause,
+            )
 
         if not self.settings.login_state_path or not self.settings.login_state_path.exists():
             return self.pause_for_human(
@@ -138,7 +152,7 @@ class FansqPublisher(BasePublisher):
                 )
 
             title_box.fill(story.title)
-            content_box.fill(story.content)
+            content_box.fill(body)
             risk_reason = self.detect_risk_control(page)
             if risk_reason:
                 return self.pause_for_human(risk_reason, story_id=story.id, page=page, wait=wait_on_pause)

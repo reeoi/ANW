@@ -1,8 +1,13 @@
-"""AI review, diagnosis, and bounded rewrite workflow for queued stories.
+"""AI review and bounded rewrite workflow for c_pipeline stories.
 
-The module is intentionally safe in dry-run/mock mode: when no DeepSeek API key is
-configured, scoring and rewriting are deterministic local operations so batch
-review never waits on an external service and never loops forever.
+Phase A note:
+    The previous Sprint 4 implementation rewrote the manuscript text in-place
+    via SQL ``UPDATE stories SET content = ?``. The c_pipeline refactor moves
+    full-text storage out of SQLite (PLAN §3.2 — content column is a NULL
+    compatibility field; canonical body lives at ``final_content_path``). Phase
+    E will re-implement R2 rewrite strategy (rerun Phase 4-5 only). For now,
+    the AI review pass is preserved for scoring + decision flow, and persists
+    its result via ``update_story_ai_review`` and ``update_story_status``.
 """
 
 from __future__ import annotations
@@ -17,7 +22,12 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from config_loader import LoadedConfig, load_from_environment
-from queue.db import get_story, list_reviewable_stories, update_story_status
+from review_queue.db import (
+    get_story,
+    list_reviewable_stories,
+    update_story_ai_review,
+    update_story_status,
+)
 
 
 DIMENSIONS: tuple[str, ...] = (
@@ -47,15 +57,16 @@ UNSAFE_TERMS = ("色情", "暴力", "血腥", "赌博", "自杀", "仇恨", "违
 class AIReviewSettings:
     """Runtime controls for AI review and rewrite."""
 
-    approval_threshold: int = 80
+    approval_threshold: int = 90
     max_rewrite_attempts: int = 3
-    model: str = "deepseek-chat"
+    model: str = "deepseek-v4-pro"
     temperature: float = 0.3
     timeout_seconds: int = 60
     api_key: str = ""
     base_url: str = "https://api.deepseek.com"
     mock: bool = True
     dimension_weights: dict[str, float] | None = None
+    metrics_db_path: str | None = None
 
     @property
     def weights(self) -> dict[str, float]:
@@ -74,16 +85,13 @@ class ReviewResult:
 
     @property
     def score(self) -> int:
-        """Backward-compatible alias used by older Sprint 3 callers."""
         return self.total_score
 
     @property
     def passed(self) -> bool:
-        """Backward-compatible pass flag."""
         return self.decision == "approved"
 
     def to_json(self) -> str:
-        """Return parseable JSON with stable Chinese-safe encoding."""
         return json.dumps(asdict(self), ensure_ascii=False, sort_keys=True)
 
 
@@ -113,17 +121,7 @@ class BatchReviewResult:
 
 
 def load_ai_review_settings(config: LoadedConfig | None = None) -> AIReviewSettings:
-    """Load AI-review thresholds, rewrite limit, and model params.
-
-    Values come from ``config.yaml`` via ``LoadedConfig`` and may be overridden by
-    environment variables:
-
-    - ``ANP_AI_REVIEW_THRESHOLD``
-    - ``ANP_MAX_REWRITE_ATTEMPTS``
-    - ``ANP_AI_REVIEW_MODEL``
-    - ``ANP_AI_REVIEW_TEMPERATURE``
-    - ``ANP_AI_REVIEW_TIMEOUT_SECONDS``
-    """
+    """Load AI-review thresholds, rewrite limit, and model params."""
 
     if config is None:
         config = load_from_environment()
@@ -134,19 +132,28 @@ def load_ai_review_settings(config: LoadedConfig | None = None) -> AIReviewSetti
     api_key = str(deepseek.get("api_key") or os.getenv("DEEPSEEK_API_KEY") or "")
     mock = bool(deepseek.get("mock") or config.is_dry_run or not api_key)
 
+    db_path: str | None = None
+    try:
+        from review_queue.db import get_database_path
+
+        db_path = str(get_database_path(config))
+    except Exception:  # pragma: no cover - never block review
+        db_path = None
+
     return AIReviewSettings(
-        approval_threshold=_env_int("ANP_AI_REVIEW_THRESHOLD", int(audit.get("approval_threshold") or 80)),
+        approval_threshold=_env_int("ANP_AI_REVIEW_THRESHOLD", int(audit.get("approval_threshold") or 90)),
         max_rewrite_attempts=max(0, _env_int("ANP_MAX_REWRITE_ATTEMPTS", int(audit.get("max_rewrite_attempts") or 3))),
-        model=os.getenv("ANP_AI_REVIEW_MODEL") or str(audit.get("model") or deepseek.get("model") or "deepseek-chat"),
+        model=os.getenv("ANP_AI_REVIEW_MODEL") or str(audit.get("model") or deepseek.get("model") or "deepseek-v4-pro"),
         temperature=_env_float("ANP_AI_REVIEW_TEMPERATURE", float(audit.get("temperature") or 0.3)),
         timeout_seconds=_env_int(
             "ANP_AI_REVIEW_TIMEOUT_SECONDS",
-            int(audit.get("timeout_seconds") or deepseek.get("timeout_seconds") or 60),
+            int(audit.get("timeout_seconds") or deepseek.get("timeout_seconds") or 120),
         ),
         api_key=api_key,
         base_url=str(deepseek.get("base_url") or "https://api.deepseek.com").rstrip("/"),
         mock=mock,
         dimension_weights=weights,
+        metrics_db_path=db_path,
     )
 
 
@@ -154,12 +161,13 @@ def review_story(story, config: LoadedConfig | None = None, settings: AIReviewSe
     """Review a story and return a parseable JSON-compatible 7-dimension result."""
 
     settings = settings or load_ai_review_settings(config)
+    title, content = _extract_review_inputs(story)
     if settings.mock:
-        return _mock_review(story.title, story.content, settings)
+        return _mock_review(title, content, settings)
     try:
-        return _live_review(story.title, story.content, settings)
+        return _live_review(title, content, settings)
     except Exception as exc:  # keep auto mode non-blocking if remote review fails
-        result = _mock_review(story.title, story.content, settings)
+        result = _mock_review(title, content, settings)
         return ReviewResult(
             total_score=result.total_score,
             dimension_scores=result.dimension_scores,
@@ -169,95 +177,52 @@ def review_story(story, config: LoadedConfig | None = None, settings: AIReviewSe
         )
 
 
-def rewrite_story(
-    title: str,
-    content: str,
-    review: ReviewResult,
-    config: LoadedConfig | None = None,
-    settings: AIReviewSettings | None = None,
-) -> str:
-    """Rewrite one low-scoring story draft using DeepSeek or deterministic mock."""
-
-    settings = settings or load_ai_review_settings(config)
-    if settings.mock:
-        return _mock_rewrite(title, content, review)
-    try:
-        return _live_rewrite(title, content, review, settings)
-    except Exception:
-        return _mock_rewrite(title, content, review)
-
-
 def review_story_in_database(
     db_path: str | Path,
     story_id: int,
     config: LoadedConfig | None = None,
 ) -> StoryReviewSummary:
-    """Review one queued story, rewrite at most N times, and persist final state."""
+    """Review one queued story and persist final state into c_pipeline schema."""
 
     settings = load_ai_review_settings(config)
     story = get_story(db_path, story_id)
     if story is None:
         return StoryReviewSummary(story_id, "failed", 0, 0, [], [], "story not found")
 
-    attempts = 0
-    current_title = story.title
-    current_content = story.content
-    current_retry_count = int(story.retry_count or 0)
+    base_attempts = int(story.ai_review_attempts or 0)
     final_review = review_story(story, config=config, settings=settings)
+    extra_attempts = 0
+    while final_review.decision != "approved" and extra_attempts < settings.max_rewrite_attempts:
+        # Phase A: full R2 rewrite (rerun Phase 4-5) is implemented in Phase E.
+        # Until then, the loop terminates after the first review pass and the
+        # story is escalated to needs_human if the score is below threshold.
+        extra_attempts += 1
+        break
 
-    while final_review.decision != "approved" and attempts < settings.max_rewrite_attempts:
-        attempts += 1
-        current_retry_count += 1
-        current_content = rewrite_story(current_title, current_content, final_review, config=config, settings=settings)
-        _persist_review_attempt(
-            db_path,
-            story_id,
-            title=current_title,
-            content=current_content,
-            retry_count=current_retry_count,
-            score=final_review.total_score,
-            status="pending",
-            review_notes=f"AI 第 {attempts} 次重写；上轮问题：{json.dumps(final_review.issues, ensure_ascii=False)}",
-        )
-        refreshed = get_story(db_path, story_id)
-        final_review = review_story(refreshed or story, config=config, settings=settings)
-
+    total_attempts = base_attempts + extra_attempts
     if final_review.decision == "approved":
-        notes = "AI 审核通过：" + final_review.to_json()
-        _persist_review_attempt(
-            db_path,
-            story_id,
-            title=current_title,
-            content=current_content,
-            retry_count=current_retry_count,
-            score=final_review.total_score,
-            status="approved",
-            review_notes=notes,
-        )
+        update_story_ai_review(db_path, story_id, final_review.total_score, total_attempts, status="approved")
+        update_story_status(db_path, story_id, "approved", summary="AI 审核通过：" + final_review.to_json())
         return StoryReviewSummary(
             story_id=story_id,
             decision="approved",
-            attempts=attempts,
+            attempts=extra_attempts,
             final_score=final_review.total_score,
             issues=final_review.issues,
             suggestions=final_review.suggestions,
         )
 
-    notes = "AI 审核未通过，转人工复查：" + final_review.to_json()
-    _persist_review_attempt(
+    update_story_ai_review(db_path, story_id, final_review.total_score, total_attempts, status="needs_human")
+    update_story_status(
         db_path,
         story_id,
-        title=current_title,
-        content=current_content,
-        retry_count=current_retry_count,
-        score=final_review.total_score,
-        status="needs_human",
-        review_notes=notes,
+        "needs_human",
+        summary="AI 审核未通过，转人工复查：" + final_review.to_json(),
     )
     return StoryReviewSummary(
         story_id=story_id,
         decision="needs_human",
-        attempts=attempts,
+        attempts=extra_attempts,
         final_score=final_review.total_score,
         issues=final_review.issues,
         suggestions=final_review.suggestions,
@@ -265,7 +230,7 @@ def review_story_in_database(
     )
 
 
-def mock_review(content: str, threshold: int = 80) -> ReviewResult:
+def mock_review(content: str, threshold: int = 90) -> ReviewResult:
     """Backward-compatible deterministic mock review for dry-run workflows."""
 
     settings = AIReviewSettings(approval_threshold=threshold, mock=True)
@@ -278,7 +243,7 @@ def run_review_batch(
     limit: int = 20,
     config: LoadedConfig | None = None,
 ) -> BatchReviewResult:
-    """Review pending stories, auto-rewrite low scores, and update SQLite."""
+    """Review pending stories and update SQLite with c_pipeline AI review state."""
 
     config = config or load_from_environment()
     if threshold is not None:
@@ -319,8 +284,20 @@ def run_review_batch(
     return BatchReviewResult(reviewed, approved, needs_human, failed, failure_reasons, message)
 
 
+def _extract_review_inputs(story) -> tuple[str, str]:
+    """Return (title, content_text) from either inline content or final manuscript file."""
+
+    title = str(getattr(story, "title", "") or "")
+    content = getattr(story, "content", None)
+    if not content:
+        reader = getattr(story, "read_final_content", None)
+        if callable(reader):
+            content = reader() or ""
+    return title, str(content or "")
+
+
 def _mock_review(title: str, content: str, settings: AIReviewSettings) -> ReviewResult:
-    text = content.strip()
+    text = (content or "").strip()
     length = len(text)
     unsafe_hits = [term for term in UNSAFE_TERMS if term in text]
 
@@ -354,27 +331,6 @@ def _mock_review(title: str, content: str, settings: AIReviewSettings) -> Review
     return ReviewResult(total, scores, issues, suggestions, decision)
 
 
-def _mock_rewrite(title: str, content: str, review: ReviewResult) -> str:
-    if any("安全" in issue or "风险词" in issue for issue in review.issues):
-        # Deterministically leave unresolved risk text in place so dry-run can
-        # exercise the needs_human path after the configured retry limit.
-        return content + "\n\n【AI重写尝试】已尝试调整表达，但仍需人工判断高风险内容是否可保留。"
-
-    clean_title = title.strip("《》") or "雨夜归人"
-    return (
-        f"《{clean_title}》\n\n"
-        "雨停在凌晨两点，老街尽头的灯牌还亮着。主人公攥着一封没有寄出的信，"
-        "回到阔别多年的旧书店。书店老板没有追问，只把热茶推到他面前，像早就"
-        "知道这个夜晚需要一点安静的善意。\n\n"
-        "随着一张夹在书页里的旧车票被发现，他终于明白家人当年的沉默并非责备，"
-        "而是给他保留重新开始的位置。故事在雨声、茶香和未说出口的歉意中推进，"
-        "人物从逃避走向承担，冲突也由误解转为和解。\n\n"
-        "天亮时，他帮老板修好漏风的窗，又把门口积水扫向街边。第一束光落在门牌上，"
-        "他决定留下来，把错过的日子一点点补回。这个结尾呼应开头的雨夜，也让人物"
-        "完成清晰而温暖的转变。"
-    )
-
-
 def _live_review(title: str, content: str, settings: AIReviewSettings) -> ReviewResult:
     prompt = (
         "请从 plot、character、pacing、language、originality、safety、platform_fit "
@@ -385,16 +341,6 @@ def _live_review(title: str, content: str, settings: AIReviewSettings) -> Review
     raw = _call_deepseek(prompt, settings)
     data = _extract_json(raw)
     return _review_result_from_mapping(data, settings)
-
-
-def _live_rewrite(title: str, content: str, review: ReviewResult, settings: AIReviewSettings) -> str:
-    prompt = (
-        "请根据审核问题重写中文短篇小说，保留标题核心意象，提高情节、人物、节奏、语言、原创性、"
-        "安全和平台适配。只返回重写后的小说正文。\n"
-        f"标题：{title}\n问题：{json.dumps(review.issues, ensure_ascii=False)}\n"
-        f"建议：{json.dumps(review.suggestions, ensure_ascii=False)}\n原文：{content}"
-    )
-    return _call_deepseek(prompt, settings).strip()
 
 
 def _call_deepseek(prompt: str, settings: AIReviewSettings) -> str:
@@ -416,9 +362,60 @@ def _call_deepseek(prompt: str, settings: AIReviewSettings) -> str:
     try:
         with urlopen(request, timeout=settings.timeout_seconds) as response:
             response_data = json.loads(response.read().decode("utf-8"))
+        _record_review_usage(settings, response_data)
         return str(response_data["choices"][0]["message"]["content"])
     except (KeyError, IndexError, ValueError, HTTPError, URLError, TimeoutError) as exc:
+        _record_review_failure(settings, str(exc))
         raise RuntimeError(f"DeepSeek AI review request failed: {exc}") from exc
+
+
+def _record_review_usage(settings: "AIReviewSettings", response_data: dict[str, Any]) -> None:
+    try:
+        from review_queue.metrics import estimate_cost_cny, record_api_usage
+
+        db_path = getattr(settings, "metrics_db_path", None)
+        if not db_path:
+            return
+        usage = response_data.get("usage") or {}
+        prompt_tokens = int(usage.get("prompt_tokens") or 0)
+        completion_tokens = int(usage.get("completion_tokens") or 0)
+        total = int(usage.get("total_tokens") or (prompt_tokens + completion_tokens))
+        record_api_usage(
+            db_path,
+            provider="deepseek",
+            model=settings.model,
+            purpose="ai_review",
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=total,
+            cost_cny=estimate_cost_cny(prompt_tokens, completion_tokens),
+            success=True,
+        )
+    except Exception:  # pragma: no cover - never break review
+        pass
+
+
+def _record_review_failure(settings: "AIReviewSettings", error: str) -> None:
+    try:
+        from review_queue.metrics import record_api_usage
+
+        db_path = getattr(settings, "metrics_db_path", None)
+        if not db_path:
+            return
+        record_api_usage(
+            db_path,
+            provider="deepseek",
+            model=settings.model,
+            purpose="ai_review",
+            prompt_tokens=0,
+            completion_tokens=0,
+            total_tokens=0,
+            cost_cny=0.0,
+            success=False,
+            error=error[:500],
+        )
+    except Exception:  # pragma: no cover
+        pass
 
 
 def _extract_json(raw: str) -> dict[str, Any]:
@@ -445,36 +442,6 @@ def _review_result_from_mapping(data: dict[str, Any], settings: AIReviewSettings
     if total < settings.approval_threshold and decision == "approved":
         decision = "rewrite"
     return ReviewResult(_bounded(total), scores, issues, suggestions, decision)
-
-
-def _persist_review_attempt(
-    db_path: str | Path,
-    story_id: int,
-    *,
-    title: str,
-    content: str,
-    retry_count: int,
-    score: int,
-    status: str,
-    review_notes: str,
-) -> None:
-    import sqlite3
-
-    with sqlite3.connect(Path(db_path)) as connection:
-        connection.execute(
-            """
-            UPDATE stories
-            SET title = ?,
-                content = ?,
-                status = ?,
-                retry_count = ?,
-                score = ?,
-                review_notes = ?,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-            """,
-            (title, content, status, retry_count, score, review_notes, story_id),
-        )
 
 
 def _normalize_weights(raw: Any) -> dict[str, float]:
@@ -533,6 +500,5 @@ __all__ = [
     "mock_review",
     "review_story",
     "review_story_in_database",
-    "rewrite_story",
     "run_review_batch",
 ]
