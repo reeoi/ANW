@@ -16,8 +16,15 @@ from typing import Any
 
 import yaml
 
+try:
+    from dotenv import load_dotenv
+except ImportError:  # pragma: no cover - optional dependency
+    def load_dotenv(*_args: Any, **_kwargs: Any) -> bool:
+        return False
+
 
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent / "config.yaml"
+DEFAULT_DOTENV_PATH = Path(__file__).resolve().parent / ".env"
 
 
 class ConfigError(Exception):
@@ -47,6 +54,9 @@ class LoadedConfig:
 
 SENSITIVE_ENV_OVERRIDES: dict[tuple[str, ...], str] = {
     ("deepseek", "api_key"): "DEEPSEEK_API_KEY",
+    ("deepseek", "base_url"): "DEEPSEEK_BASE_URL",
+    ("deepseek", "model"): "DEEPSEEK_MODEL",
+    ("deepseek", "flash_model"): "DEEPSEEK_FLASH_MODEL",
     ("publisher", "fansq", "username"): "FANSQ_USERNAME",
     ("publisher", "fansq", "password"): "FANSQ_PASSWORD",
     ("publisher", "fansq", "login_state_path"): "FANSQ_LOGIN_STATE_PATH",
@@ -56,18 +66,32 @@ GENERAL_ENV_OVERRIDES: dict[tuple[str, ...], str] = {
     ("runtime", "mode"): "ANP_MODE",
     ("runtime", "dry_run"): "ANP_DRY_RUN",
     ("deepseek", "mock"): "ANP_MOCK_DEEPSEEK",
+    ("deepseek", "thinking_mode"): "ANP_DEEPSEEK_THINKING_MODE",
+    ("deepseek", "prompt_cache_enabled"): "ANP_DEEPSEEK_PROMPT_CACHE_ENABLED",
     ("logging", "level"): "ANP_LOG_LEVEL",
     ("database", "sqlite_path"): "ANP_SQLITE_PATH",
     ("audit", "approval_threshold"): "ANP_AI_REVIEW_THRESHOLD",
     ("audit", "max_rewrite_attempts"): "ANP_MAX_REWRITE_ATTEMPTS",
+    ("audit", "rewrite_strategy"): "ANP_AI_REVIEW_REWRITE_STRATEGY",
     ("audit", "model"): "ANP_AI_REVIEW_MODEL",
     ("audit", "temperature"): "ANP_AI_REVIEW_TEMPERATURE",
     ("audit", "timeout_seconds"): "ANP_AI_REVIEW_TIMEOUT_SECONDS",
     ("cost_limits", "monthly_budget_cny"): "ANP_MONTHLY_BUDGET_CNY",
     ("cost_limits", "daily_token_limit"): "ANP_DAILY_TOKEN_LIMIT",
+    ("cost_limits", "on_budget_exceeded"): "ANP_ON_BUDGET_EXCEEDED",
     ("publisher", "fansq", "min_publish_interval_minutes"): "ANP_MIN_PUBLISH_INTERVAL_MINUTES",
     ("publisher", "fansq", "max_publish_interval_minutes"): "ANP_MAX_PUBLISH_INTERVAL_MINUTES",
+    ("publisher", "daily_count_min"): "ANP_DAILY_COUNT_MIN",
+    ("publisher", "daily_count_max"): "ANP_DAILY_COUNT_MAX",
+    ("publisher", "slot_min_gap_minutes"): "ANP_SLOT_MIN_GAP_MINUTES",
     ("scheduler", "enabled"): "ANP_SCHEDULER_ENABLED",
+    ("scheduler", "weekly_scan_cron"): "ANP_WEEKLY_SCAN_CRON",
+    ("scheduler", "plan_today_cron"): "ANP_PLAN_TODAY_CRON",
+    ("scan", "pool_size"): "ANP_SCAN_POOL_SIZE",
+    ("scan", "seed_file"): "ANP_SCAN_SEED_FILE",
+    ("c_pipeline", "max_concurrent_pipelines"): "ANP_MAX_CONCURRENT_PIPELINES",
+    ("c_pipeline", "phase_2_max_retries"): "ANP_PHASE_2_MAX_RETRIES",
+    ("c_pipeline", "phase_3_section_max_retries"): "ANP_PHASE_3_SECTION_MAX_RETRIES",
 }
 
 TRUE_VALUES = {"1", "true", "yes", "y", "on"}
@@ -93,6 +117,10 @@ def load_config(path: str | Path | None = None) -> LoadedConfig:
             f"Configuration file not found: {config_path}. "
             "Create config.yaml or set ANP_CONFIG to a valid file."
         )
+
+    dotenv_path = Path(os.getenv("ANP_DOTENV") or DEFAULT_DOTENV_PATH)
+    if dotenv_path.exists():
+        load_dotenv(dotenv_path, override=False)
 
     try:
         raw = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}

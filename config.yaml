@@ -1,23 +1,27 @@
-# ANP default configuration template
+# ANP c_pipeline configuration template
 # Sensitive values may be left empty here and supplied via environment variables.
+# Spec: docs/c_pipeline_plan.md §5.1
 
 deepseek:
-  api_key: ""                 # env: DEEPSEEK_API_KEY
-  base_url: "https://api.deepseek.com"
-  model: "deepseek-chat"
-  timeout_seconds: 60
+  api_key: ""                                    # env: DEEPSEEK_API_KEY (preferred)
+  base_url: "https://api.deepseek.com"           # env: DEEPSEEK_BASE_URL
+  model: "deepseek-v4-pro"                       # M2: pro all the way (env: DEEPSEEK_MODEL)
+  flash_model: "deepseek-v4-flash"               # B2: budget-driven downgrade target
+  thinking_mode: true                            # pro reasoning mode toggle
+  prompt_cache_enabled: true                     # 1M-context prompt cache
+  timeout_seconds: 120                           # phase 4 polish runs long
   max_retries: 3
-  mock: true                  # automatically enabled when api_key is missing
+  mock: true                                     # auto-enabled by config_loader when api_key missing
 
 runtime:
-  mode: "semi-auto"           # auto | semi-auto; env: ANP_MODE
-  dry_run: true               # env: ANP_DRY_RUN
+  mode: "semi-auto"                              # auto | semi-auto; env: ANP_MODE
+  dry_run: true                                  # env: ANP_DRY_RUN
   project_root: "."
 
 audit:
-  approval_threshold: 85
-  rewrite_threshold: 70
-  max_rewrite_attempts: 3
+  approval_threshold: 90                         # T2: raised from 85
+  rewrite_strategy: "phase_4_5_only"             # R2: rerun Phase 4-5 only
+  max_rewrite_attempts: 3                        # R2 cap
   dimensions:
     plot: 0.20
     character: 0.15
@@ -31,41 +35,60 @@ publisher:
   default_platform: "fansq"
   platforms:
     - "fansq"
+  daily_count_distribution: "uniform"            # R3: uniform_int[0, 5]
+  daily_count_min: 0
+  daily_count_max: 5
+  operating_hours: ["09:00", "22:00"]
+  slot_min_gap_minutes: 30
   fansq:
     enabled: true
-    username: ""             # env: FANSQ_USERNAME
-    password: ""             # env: FANSQ_PASSWORD
-    login_state_path: "data/browser/fansq_state.json" # env: FANSQ_LOGIN_STATE_PATH
+    username: ""                                 # env: FANSQ_USERNAME
+    password: ""                                 # env: FANSQ_PASSWORD
+    login_state_path: "data/browser/fansq_state.json"  # env: FANSQ_LOGIN_STATE_PATH
     draft_url: "https://fanqienovel.com/"
-    min_publish_interval_minutes: 5
+    min_publish_interval_minutes: 5              # secondary jitter on each slot
     max_publish_interval_minutes: 15
     pause_on_risk_control: true
 
 scheduler:
-  enabled: false
+  enabled: true
   timezone: "Asia/Shanghai"
-  generate_cron: "0 9 * * *"
+  weekly_scan_cron: "0 3 * * 1"                  # weekly seed evolution Mon 03:00
+  plan_today_cron: "0 3 * * *"                   # daily publish plan 03:00
+  generate_cron: ""                              # disabled: c_pipeline runs are slot-driven
   review_cron: "30 9 * * *"
-  publish_cron: "0 10 * * *"
-  backup_cron: "0 3 * * *"
+  publish_cron: ""                               # disabled: use daily_publish_plan slots
+  backup_cron: "0 4 * * *"
 
-generation:
-  theme: "雨夜归人"
-  word_count: 3000
-  style: "现实温情，悬疑留白"
+scan:
+  pool_size: 100                                 # weekly_scan target
+  on_failure: "fallback_or_block"                # a+c: fall back to last week's pool, otherwise block
+  seed_file: "data/scan_seeds.yaml"
+
+c_pipeline:
+  max_concurrent_pipelines: 2                    # K2 concurrent stories
+  phase_2_max_retries: 2
+  phase_3_section_max_retries: 2
+  ai_slop_blacklist_path: "generator/c_pipeline/prompts/ai_slop_blacklist.json"
+  genre_formulas_path: "generator/c_pipeline/prompts/genre_formulas.json"
+
+cost_limits:
+  monthly_budget_cny: 100.0                      # B2: monthly budget
+  daily_token_limit: 800000
+  on_budget_exceeded: "degrade"                  # replaces legacy stop_when_exceeded
+  degrade_phases:
+    - "phase_3"
+    - "phase_5"
+    - "ai_review"
+    - "weekly_scan"
 
 logging:
-  level: "INFO"               # env: ANP_LOG_LEVEL
+  level: "INFO"                                  # env: ANP_LOG_LEVEL
   file: "logs/anp.log"
   json: false
   screenshot_dir: "logs/screenshots"
 
 database:
-  sqlite_path: "data/anp.sqlite3" # env: ANP_SQLITE_PATH
+  sqlite_path: "data/anp.sqlite3"                # env: ANP_SQLITE_PATH
   backup_dir: "data/backups"
   daily_backup: true
-
-cost_limits:
-  monthly_budget_cny: 100
-  daily_token_limit: 200000
-  stop_when_exceeded: true
