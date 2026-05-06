@@ -1,0 +1,700 @@
+# ANP scan_seeds.yaml
+# 每周一 03:00 weekly_scan 任务用此文件作为输入,产 100 条 theme_pool 进 data/theme_pool.json。
+# 蒸馏自 oh-story-claudecode 的 real-market-data.md + genre-writing-formulas.md。
+# 修改后下一次 scan 自动生效。
+
+version: 1
+distilled_at: "2026-05-06"
+source_repo: "oh-story-claudecode-main"
+source_files:
+  - "skills/story-short-scan/references/real-market-data.md"
+  - "skills/story-short-write/references/genre-writing-formulas.md"
+
+# === 目标平台 ===
+# ANP 当前只发番茄短篇,其他平台作为风格对标参考。
+target_platform:
+  primary: "番茄短篇"
+  primary_traits:
+    word_count_range: [8000, 15000]   # 主力 8000-12000
+    chapter_count_range: [7, 12]
+    person: "第一人称为主(95%+)"
+    audience: "下沉市场为主,女频占比 70%+,年龄 20-45"
+    flagship_genres: ["现代复仇打脸", "总裁豪门", "灵魂视角虐文", "重生反杀", "现实生活", "悬疑反转"]
+    paragraph_rule: "1-3 句一段,每段不超 60 字"
+    dialogue_ratio: [0.20, 0.40]
+    opening_window_chars: 100   # 前 100 字必须出现冲突或信息炸弹
+    ending_styles: ["HE 为主(50%+)", "BE 余韵", "开放式暗示"]
+  comparator_platforms:
+    七猫短篇:
+      word_count: [10000, 20000]
+      core: "重生幻想/态度反转/心声流"
+      ratio_in_pool: 0.15
+    黑岩短篇:
+      word_count: [8000, 40000]
+      core: "极致刺激/灵魂视角/虐恋极致"
+      ratio_in_pool: 0.10
+    点众短篇:
+      word_count: [8000, 15000]
+      core: "情绪快餐/弹幕流/读心/系统流/标题即剧情"
+      ratio_in_pool: 0.15
+    知乎盐言:
+      word_count: [5000, 15000]
+      core: "情感精品/专业细节/社会议题/金句"
+      ratio_in_pool: 0.10
+  # ratio_in_pool 是种子配比指引: 主平台 50% + 4 个 comparator 各 ~12.5%
+
+# === 情绪类型(closed enum,LLM 必须从中选一个作为 primary_emotion) ===
+emotion_types:
+  - id: yi_nan_ping
+    name: "意难平"
+    suitable_for: ["虐恋", "遗憾", "错过", "BE 收尾"]
+    market_heat: 3        # 1-3 分
+    difficulty: 2         # 1-3 分
+    target_arc: "稳态 → 撕裂 → 余韵"
+  - id: fan_zhuan_zhen_han
+    name: "反转震撼"
+    suitable_for: ["悬疑", "身份错位", "信息差揭露"]
+    market_heat: 3
+    difficulty: 3
+    target_arc: "误导 → 揭示 → 重新理解"
+  - id: shuang_gan_shi_fang
+    name: "爽感释放"
+    suitable_for: ["打脸", "逆袭", "复仇", "重生反杀"]
+    market_heat: 2
+    difficulty: 1
+    target_arc: "压抑 → 反击 → 碾压"
+  - id: zhi_yu_wen_nuan
+    name: "治愈温暖"
+    suitable_for: ["成长", "亲情", "友情", "新生活"]
+    market_heat: 2
+    difficulty: 2
+    target_arc: "缺失 → 联结 → 圆满"
+  - id: xi_si_ji_kong
+    name: "细思极恐"
+    suitable_for: ["悬疑", "心理", "灵异", "开放式"]
+    market_heat: 1
+    difficulty: 3
+    target_arc: "正常 → 异常 → 颠覆"
+  - id: gong_ming_gan_dong
+    name: "共鸣感动"
+    suitable_for: ["现实", "职场", "婚姻", "家庭"]
+    market_heat: 3
+    difficulty: 2
+    target_arc: "代入 → 撕裂 → 释然"
+
+# === 题材库(从 21 个公式蒸馏,LLM 选一个 genre 配 emotion) ===
+# 每个 genre 的 hot_score: 番茄短篇环境下的市场热度估算(1-3 分)
+genres:
+  - id: xian_dai_fu_chou
+    name: "现代复仇打脸"
+    formula: "当众背叛 → 冷静反击 → 证据递交 → 反派自毁 → 最终加冕"
+    emotion_arc: "愤怒 → 爽 → 紧张 → 极爽 → 余韵"
+    target_words: [8000, 11000]
+    chapter_count: [6, 10]
+    signature_scenes:
+      - "当众羞辱开场:第一段就是主角被亲近之人当众背叛"
+      - "冷静标志性动作:端起水杯/理西装/转车钥匙"
+      - "逐层揭露证据:每章一个,层层加码"
+      - "反派自曝最丑陋的话:常被监控/直播拍下"
+    target_platforms: ["番茄短篇", "黑岩短篇", "点众短篇"]
+    hot_score: 3
+    notes: "主角永远不失态,用动作替代情绪;对方越歇斯底里,主角越平静"
+
+  - id: gu_dai_zhai_dou
+    name: "古代宅斗身份反转"
+    formula: "被弃回归 → 后院交锋 → 信物初露 → 被陷害软禁 → 圣旨身份揭露 → 反扑 → 最终碾压"
+    emotion_arc: "压抑 → 压抑 → 释放 → 短暂再压 → 终极释放"
+    target_words: [10000, 14000]
+    chapter_count: [7, 10]
+    signature_scenes:
+      - "回归时父母第一句不是想念而是嫌弃"
+      - "被冤枉被打,积攒仇恨值"
+      - "信物展示让关键人物变色"
+      - "身份揭露名场面:全场跪下"
+    target_platforms: ["七猫短篇", "番茄短篇"]
+    hot_score: 2
+    notes: "压抑 3 节释放 1 节;父母用'偏心'写,不用'坏'写"
+
+  - id: nve_lian_fu_chou_linghun
+    name: "虐恋复仇灵魂视角"
+    formula: "死亡回溯 → 虐待现场 → 小三虚伪 → 开棺真相 → 舆论反转 → 崩溃 → 收尾"
+    emotion_arc: "窒息 → 暴怒 → 冰冷 → 心碎 → 爽 → 苍凉"
+    target_words: [9000, 12000]
+    chapter_count: [7, 10]
+    signature_scenes:
+      - "保小不保大:渣男最冷酷的那句话"
+      - "对比场景:同时家人被打 vs 渣男给小三买东西"
+      - "孩子出场:3 岁小孩一句话击穿防线"
+      - "定时发布证据:主角死后布局"
+      - "开棺/亲眼看到自己遗体"
+    target_platforms: ["黑岩短篇", "点众短篇", "番茄短篇"]
+    hot_score: 3
+    notes: "灵魂飘在半空视角;时间线穿插现在与回忆;渣男合理化自己的恶"
+
+  - id: zong_cai_hao_men
+    name: "总裁豪门白月光虐恋"
+    formula: "三层伤害(言语→行为→身体) → 临界事件心死 → 真相揭露 → 渣男追悔被拒 → 新生活"
+    emotion_arc: "虐(30%) → 觉醒(15%) → 爽(35%) → 治愈(20%)"
+    target_words: [10000, 13000]
+    chapter_count: [8, 11]
+    signature_scenes:
+      - "开篇背叛信息炸弹:'三年前我在产房生下痴傻儿子'"
+      - "白月光出场每句话都是羞辱"
+      - "临界事件:看监控/母亲去世他还带秘书旅行"
+      - "死遁/消失(30% 作品使用)"
+      - "渣男追悔被拒:'那你怎么不去死呢?'"
+      - "新恋情暗示(50% 作品收尾)"
+    target_platforms: ["七猫短篇", "番茄短篇", "点众短篇"]
+    hot_score: 3
+    notes: "100% 第一人称;爽按序释放(小→中→大→温暖);高频意象:白月光/怀孕流产/监控"
+
+  - id: nian_dai_chong_sheng
+    name: "年代重生双重复仇"
+    formula: "前世被利用 → 双重生设定 → 选不同路 → 男主温柔登场 → 渣男自以为赢 → 揭发 → BE 收尾"
+    emotion_arc: "愤怒 → 解气 → 甜 → 紧张 → 极爽 → 余韵痛快"
+    target_words: [12000, 16000]
+    chapter_count: [9, 12]
+    signature_scenes:
+      - "前世替罪羊设定(替坐牢/被谣言)"
+      - "年代细节:的确良/大团结/赤脚医生/牛棚"
+      - "男主'缺陷'实则完美(天阉是假温柔是真)"
+      - "渣男最后崩溃发现自己输得最惨"
+      - "结尾用渣男视角写后悔"
+    target_platforms: ["七猫短篇", "番茄短篇"]
+    hot_score: 2
+    notes: "双重生=双重信息战;'替罪羊'比'被出轨'更有冲击力"
+
+  - id: gong_wei_nve_fu
+    name: "宫闱宅斗女帝逆袭"
+    formula: "家族被害 → 替嫁 → 暗中布局 → 带走资源离开 → 积蓄力量 → 反攻 → 称帝改革"
+    emotion_arc: "悲愤 → 隐忍 → 悬念 → 爽 → 极爽 → 满足"
+    target_words: [12000, 18000]
+    chapter_count: [10, 15]
+    signature_scenes:
+      - "开篇家族被害:父兄战死母亲呕血"
+      - "替嫁场景展现智慧:借机布局非盲目接受"
+      - "带走家产:表面顺从实则掏空"
+      - "反攻名场面:血洗皇城"
+      - "称帝改革体现格局"
+    target_platforms: ["七猫短篇", "番茄短篇"]
+    hot_score: 2
+    notes: "主角从不解释计划,让读者自己猜;反派是利益驱动的冷漠不是纯坏"
+
+  - id: xian_dai_xuan_yi
+    name: "现代悬疑超自然视角"
+    formula: "鬼伪装人 → 被骗入局 → 怨气升级 → 顺水推舟 → 揭露犯罪网 → 最终对决 → 双重惩罚"
+    emotion_arc: "好奇 → 紧张 → 爽 → 更爽 → 震撼 → 痛快"
+    target_words: [10000, 14000]
+    chapter_count: [8, 12]
+    signature_scenes:
+      - "设定一句话说清:'我是红衣厉鬼伪装成人生活'"
+      - "被骗后'不慌反喜':需要怨气升级"
+      - "鬼能看到死者记忆"
+      - "反派震惊台词:'她没有器官!'"
+      - "法律审判+鬼的永恒折磨"
+    target_platforms: ["番茄短篇", "知乎盐言"]
+    hot_score: 2
+    notes: "鬼视角是独特卖点;每章结尾要有反转或新发现"
+
+  - id: jia_kong_xing_bie_fan_zhuan
+    name: "架空历史性别反转"
+    formula: "被家暴/被误解 → 配偶偏心外人 → 决定离开 → 离开后变好 → 配偶后悔 → 不原谅 BE"
+    emotion_arc: "憋屈 → 更憋屈 → 释然 → 轻松 → 暗爽 → 意难平"
+    target_words: [10000, 13000]
+    chapter_count: [8, 11]
+    signature_scenes:
+      - "开篇被冤枉/被打"
+      - "白莲花情敌让读者恨得牙痒"
+      - "主角离开干净利落"
+      - "配偶后悔递进:无所谓→想念→疯狂"
+      - "结局 BE,'来不及了'比'不可能'更虐"
+    target_platforms: ["番茄短篇", "黑岩短篇"]
+    hot_score: 2
+    notes: "性别反转是外壳,核心是'不被珍惜的人选择离开';男主视角 = 女频读者投射"
+
+  - id: jia_qian_jin_xin_sheng
+    name: "假千金心声流(灵魂旁观)"
+    formula: "极致虐待开场 → 灵魂旁观 → 家人冷漠 → 假千金恶毒揭露 → 家人悔疯 → 安息或重生"
+    emotion_arc: "极愤怒 → 窒息 → 心碎 → 爽 → 极爽 → 苍凉"
+    target_words: [9000, 12000]
+    chapter_count: [8, 10]
+    signature_scenes:
+      - "开场虐到极致:棺材窒息/被活埋/被当成演戏"
+      - "灵魂视角看到所有人真面目"
+      - "家人每次说'她在演戏'都是心理暴击"
+      - "假千金'精致的恶':表面无辜暗地毒辣"
+      - "家人后悔层层递进"
+    target_platforms: ["点众短篇", "番茄短篇", "黑岩短篇"]
+    hot_score: 3
+    notes: "'死后才被爱'击穿读者防线;每个家人反应不同(暴力/犹豫/嘲讽)"
+
+  - id: chong_sheng_li_hun_ni_xi
+    name: "重生离婚逆袭"
+    formula: "前世被害 → 重生 → 冷静签字 → 拿走应得 → 投资前世已知项目 → 前夫后悔 → 拒绝挽回"
+    emotion_arc: "憋屈 → 释然 → 爽 → 更爽 → 极爽 → 满足"
+    target_words: [9000, 12000]
+    chapter_count: [8, 10]
+    signature_scenes:
+      - "前世死法和前夫直接相关(他在隔壁挑请帖)"
+      - "重生后第一反应不是哭闹而是'笑了'"
+      - "离婚干脆要钱要利不要人"
+      - "投资展示主角智慧"
+      - "前夫后悔递进"
+    target_platforms: ["番茄短篇", "七猫短篇"]
+    hot_score: 3
+    notes: "重生文核心:做'前世绝不会做的事';前夫不是纯坏而是'理所当然地忽视'"
+
+  - id: zhui_fu_huo_zang_chang
+    name: "追夫火葬场不原谅型"
+    formula: "发现真相 → 彻底死心 → 妻子失控但不为男主 → 决然离开 → 妻子身败名裂 → 重逢已新欢 → 不原谅"
+    emotion_arc: "绝望 → 平静 → 新生 → 痛快 → 苍凉"
+    target_words: [9000, 12000]
+    chapter_count: [8, 10]
+    signature_scenes:
+      - "引诱失败清单:用'第 N 次'制造递进绝望"
+      - "撞见真相:亲眼看到她的另一面"
+      - "妻子的'无所谓'(以为他会回来)"
+      - "新恋人的对比:温柔 vs 从不在意"
+      - "天台对峙 BE 结局"
+    target_platforms: ["番茄短篇", "黑岩短篇"]
+    hot_score: 2
+    notes: "男主越冷静越有力;'不是所有道歉都值得原谅'"
+
+  - id: nian_dai_yi_shu_fu_chou
+    name: "年代医术复仇"
+    formula: "前世极惨(被卖→工具→被赶→烧死) → 重生 → 银针金手指 → 步步为营 → 收网 → BE 圆满"
+    emotion_arc: "愤怒 → 爽 → 紧张 → 极爽 → 苍凉(男主病逝)"
+    target_words: [10000, 14000]
+    chapter_count: [8, 11]
+    signature_scenes:
+      - "前世极惨:被 500 块卖→生育工具→被赶→烧死"
+      - "重生后冷静面对不再害怕"
+      - "医术金手指:银针/穴位/诊断"
+      - "贵人沈夫人结识"
+      - "丈夫双重身份(也在复仇)"
+      - "复仇成功但男主病逝 BE"
+    target_platforms: ["七猫短篇", "番茄短篇"]
+    hot_score: 2
+    notes: "年代感靠细节(500 块/银针/公鸡拜堂);BE 是'得到一切但失去最重要的人'"
+
+  - id: ling_hun_jia_ting_nve
+    name: "灵魂视角家庭虐文"
+    formula: "病中被虐 → 灵魂飘起 → 旁观真相 → 证据浮出 → 审判清算 → 重生暖心收尾"
+    emotion_arc: "窒息 → 心碎 → 释放 → 痛快 → 治愈"
+    target_words: [8000, 11000]
+    chapter_count: [5, 8]
+    signature_scenes:
+      - "病中被逼:脊椎手术后被祭祖/剖腹产被做饭"
+      - "灵魂飘起的转折:'我的魂魄慢慢飘起来'"
+      - "配角拱火(堂妹/嫂子)"
+      - "母亲的'面子'执念比纯粹的恶更虐"
+      - "手机/日记成为审判证据"
+      - "重生新妈妈'紧不紧?会不会不舒服?'对比前世'给我站直了!'"
+    target_platforms: ["番茄短篇", "黑岩短篇", "点众短篇"]
+    hot_score: 3
+    notes: "'我想要的只是一句疼不疼';最后一句必须温暖给读者出口"
+
+  - id: xi_jie_xian_suo_fu_chou
+    name: "细节线索驱动型复仇"
+    formula: "发现异常细节 → 暗中调查 → 布局反击 → 公开对峙 → 连环反杀"
+    emotion_arc: "警觉 → 压抑 → 冷静 → 爽 → 极爽 → 豁达"
+    target_words: [8000, 11000]
+    chapter_count: [8, 13]
+    signature_scenes:
+      - "触发细节:钥匙扣/避孕套品牌/香水味"
+      - "职业优势:法务总监/医生/银行高管"
+      - "证据链:转账+监控+消费+证人"
+      - "'笑着点头'时刻"
+      - "反向利用对方的棋子"
+      - "'人情味很贵'收尾"
+    target_platforms: ["番茄短篇", "知乎盐言"]
+    hot_score: 2
+    notes: "超短章节制(500-1000 字/章);用'冷描写'写大情绪('我指甲掐进掌心')"
+
+  - id: fan_tao_lu_jia_huo_chong_sheng
+    name: "反套路嫁祸型重生"
+    formula: "重生假意顺从 → '你既然想要,就都给你吧' → 暗中布局 → 身份揭露 → 看对方自毁 → 离开"
+    emotion_arc: "了然 → 爽 → 更爽 → 极爽 → 痛快 → 豁达"
+    target_words: [8000, 11000]
+    chapter_count: [6, 8]
+    signature_scenes:
+      - "'给你吧'时刻:遗产是毒药"
+      - "白月光三连试探:撒娇→哭闹→威胁"
+      - "渣男'既要又要'两头落空"
+      - "权威人物到场一句话改写全局"
+      - "冷眼旁观对方自毁"
+      - "'头也不回'式离开"
+    target_platforms: ["番茄短篇", "七猫短篇"]
+    hot_score: 2
+    notes: "核心技法:'给你就是最好的惩罚';最大的蔑视是漠视"
+
+  - id: gong_kai_shen_pan_da_lian
+    name: "公开审判式打脸"
+    formula: "竞技场设定 → 反派先赢 → 主角标志性冷静 → 逐层揭露 → 反派逐级崩溃 → 标志性驱逐台词 → 背影离场"
+    emotion_arc: "压抑 → 期待 → 爆发 → 碾压 → 豁达"
+    target_words: [8000, 11000]
+    chapter_count: [6, 9]
+    signature_scenes:
+      - "公开场:股东会/家族寿宴/公司大堂/医院走廊"
+      - "标志性动作:端起水杯喝一口/理西装/转车钥匙"
+      - "逐层甩证据,反派从得意到崩溃"
+      - "驱逐台词:'与狗,不得入内'"
+      - "全场死寂中头也不回离开"
+    target_platforms: ["番茄短篇", "黑岩短篇"]
+    hot_score: 3
+    notes: "'厚重的隔音门彻底关上,将两个世界永远地隔绝'电影感收场"
+
+  - id: yin_ren_fu_hei
+    name: "宫闱宅斗隐忍腹黑型"
+    formula: "主动入局 → 以退为进 → 借力打力 → 静待自毁 → 设局收网 → 终极反转(主角全程操纵)"
+    emotion_arc: "好奇 → 爽 → 更爽 → 震撼"
+    target_words: [9000, 12000]
+    chapter_count: [7, 10]
+    signature_scenes:
+      - "开篇反常:明知丈夫不爱仍主动嫁入"
+      - "情敌自毁三连:假晕→失言→杀婆婆"
+      - "主角'每次让步'都是布局"
+      - "结尾内心独白揭示真相形成认知反转"
+    target_platforms: ["七猫短篇", "番茄短篇"]
+    hot_score: 1
+    notes: "主角从不主动出手,所有打击都是情敌自找的;读者从'忍辱负重'认知反转到'腹黑布局'"
+
+  - id: jia_ting_fu_chou
+    name: "现实家庭复仇"
+    formula: "出轨/背叛 → 收集证据 → 当众打脸 → 财产清算 → 断亲新生"
+    emotion_arc: "愤怒 → 痛快"
+    target_words: [8000, 11000]
+    chapter_count: [6, 9]
+    signature_scenes:
+      - "家庭群截图/家族寿宴当众揭露"
+      - "替代性温暖:断裂后的新关系填补"
+      - "时代细节质感(拆迁房/彩礼)"
+    target_platforms: ["番茄短篇", "七猫短篇"]
+    hot_score: 3
+    notes: "代际冲突展示双方的苦不简单站队;断亲不是轻松的决定要有反复挣扎"
+
+  - id: lao_tai_chong_sheng
+    name: "老太重生(下沉市场爆款)"
+    formula: "不孝子女推诿养老 → 老人冻死/饿死 → 重生回 40-50 岁 → 改掉掏心掏肺习惯 → 新生活"
+    emotion_arc: "愤怒 → 解气 → 释然 → 满足"
+    target_words: [9000, 13000]
+    chapter_count: [8, 11]
+    signature_scenes:
+      - "母亲扇自私儿子巴掌"
+      - "对付不作为的丈夫"
+      - "拯救苦难的女儿"
+      - "后期当妇女主任帮其他女性(格局升级)"
+    target_platforms: ["番茄短篇", "七猫短篇"]
+    hot_score: 2
+    notes: "受众心理:年长女性看到自己,年轻女性看到母亲/奶奶;极致下沉但情绪精准"
+
+  - id: zhi_chang_ni_xi_xi_tong
+    name: "都市系统逆袭(中年危机)"
+    formula: "中年危机(离婚/失业) → 系统激活 → 新手礼包 → 隐藏装备 → 前妻后悔 → 父子修复"
+    emotion_arc: "憋屈 → 爽(系统) → 更爽(变化) → 满足(关系修复)"
+    target_words: [10000, 14000]
+    chapter_count: [8, 12]
+    signature_scenes:
+      - "中年危机够惨:离婚/失业/被嫌弃"
+      - "系统面板讽刺数据'报废边缘''魅力值5'"
+      - "新手礼包立刻可见效果"
+      - "前妻后悔伏笔从'无所谓'到'察觉变了'"
+      - "隐藏装备(机车/跑车)"
+    target_platforms: ["番茄短篇"]
+    hot_score: 2
+    notes: "吐槽风+自嘲式幽默;每章结尾必有系统奖励;反差是爽点('三秒'→'三分三秒')"
+
+  - id: dian_zhong_qing_xi_ju
+    name: "点众轻喜剧短篇"
+    formula: "吐槽式出场 → 认知错位笑料 → 意外升级 → 打脸/震惊"
+    emotion_arc: "好奇 → 爽 → 更爽 → 震撼"
+    target_words: [8000, 11000]
+    chapter_count: [6, 9]
+    signature_scenes:
+      - "第一人称吐槽内心独白"
+      - "反差萌:可怕的存在被当宠物对待"
+      - "种田天赋:一碗粥=补天神液"
+      - "认知错位:A 觉得在拼命 B 觉得在玩闹"
+    target_platforms: ["点众短篇", "番茄短篇"]
+    hot_score: 2
+    notes: "对话造梗是核心;主角'不正经'但实力在线,反差是魅力"
+
+# === 标题模式(LLM 按平台特性挑选) ===
+title_patterns:
+  点众式:
+    template: "{人物}{行为},{反杀/后果/情绪}"
+    examples:
+      - "白眼狼妹妹把家产送人,我让她净身出户"
+      - "愚人节死在棺材里后,三个哥哥都悔疯了"
+      - "春节返程,老公一家把我女儿挂车外狗笼子里"
+    适用题材: ["现代复仇打脸", "灵魂视角虐文", "家庭复仇", "假千金心声流"]
+  七猫式:
+    template: "{身份/状态}+{反转/觉醒}"
+    examples:
+      - "重生后我嫁给了郭家天阉"
+      - "嫁给暴君十年,我决定带儿子改嫁"
+      - "代嫁三年,他记错了我的名字"
+    适用题材: ["年代重生", "古代宅斗", "总裁豪门"]
+  知乎式:
+    template: "{反常/悬疑悖论的一句话}"
+    examples:
+      - "我死后的第三天,老公发了一条朋友圈"
+      - "你有没有在深夜接到过一个不该接的电话?"
+      - "我是世上仅存的红衣厉鬼,我不知自己是怎么死的"
+    适用题材: ["现代悬疑超自然", "细节线索复仇", "灵魂视角虐文"]
+  黑岩式:
+    template: "{极端冲击}/{道德踩踏}的状态描述"
+    examples:
+      - "三个月后我代替皇后嫡亲公主坐上去漠北和亲的轿撵"
+      - "我的尸体躺在透明棺材里,三个哥哥在外面笑着说她演得真像"
+    适用题材: ["虐恋复仇", "假千金心声流", "灵魂视角虐文"]
+  番茄主流:
+    description: "番茄短篇标题混合点众与七猫风格,偏好动词驱动+结果暗示"
+    template: "{触发事件},{我的反击/觉醒}"
+    examples:
+      - "丈夫给情人买学区房,我连夜做了三件事"
+      - "我把孩子从奶奶家接回来那天,全家炸了"
+      - "重生后我把家产送给了那个被全家羞辱的'傻女儿'"
+
+# === 简介公式(Phase 1 输出 summary 时按平台对应公式) ===
+summary_formulas:
+  番茄_主推:
+    structure: "情境设定(1-2句) → 冲突引爆(2-3句) → 对话金句(1-2句) → 主角转折(1句) → 悬念钩子(1句)"
+    word_range: [150, 300]
+    must_include: ["第一人称", "至少 1 句对话", "结尾留钩"]
+  七猫总裁:
+    structure: "正常生活 → 伤害事件 → 最残忍对话 → 女主反转 → 悬念钩子"
+    word_range: [133, 322]
+    must_include: ["对话占 70%+", "对话选最伤人那句"]
+  黑岩女频:
+    structure: "递进式控诉/心声揭穿/绝症倒计时/重生对比/公开羞辱+底牌"
+    word_range: [103, 363]
+    must_include: ["核心是'这一次我...'"]
+  知乎金句式:
+    structure: "人物关系 → 核心冲突 → 2-3 转折 → 金句/留白"
+    word_range: [200, 500]
+    must_include: ["简介即微小说", "金句收尾"]
+  点众_浓缩:
+    structure: "场景设定 → 信任陷阱 → 致命真相 → 反击暗示"
+    word_range: [150, 300]
+    must_include: ["简介浓缩前 1/3 精华"]
+
+# === 开头模式(LLM 演化时挑选) ===
+opening_modes:
+  - id: chong_tu_qian_zhi
+    name: "冲突前置"
+    template: "第一句就是矛盾"
+    example: "离婚协议放在桌上,他已经签了。"
+  - id: xin_xi_cha_gou
+    name: "信息差钩"
+    template: "给读者一个角色不知道的信息"
+    example: "她不知道,对面那个男人已经在计划第三次了。"
+  - id: fan_chang_xing_wei
+    name: "反常行为"
+    template: "用一个不合常理的行为引起好奇"
+    example: "她把订婚戒指冲进了马桶。"
+  - id: chong_sheng_fan_chang
+    name: "重生反常"
+    template: "重生后做前世绝不会做的事"
+    example: "沈栀心念成灰,支着一口气找到媒婆:郭家的那个天阉,我来嫁。"
+  - id: ling_hun_pang_guan
+    name: "灵魂旁观"
+    template: "以灵魂视角描述死亡现场"
+    example: "我的尸体躺在透明棺材里,三个哥哥在外面笑着说:她演得真像。"
+  - id: bing_zhong_bei_bi
+    name: "病中被逼"
+    template: "第一句就是身体最脆弱时被逼做最累的事"
+    example: "我刚做完脊椎手术,医生再三嘱咐要静养三个月。妈妈却攥着我的手腕:快点,祭祀要开始了。"
+  - id: si_wang_hui_su
+    name: "死亡回溯"
+    template: "第一句就交代死法和凶手"
+    example: "孕八月时发现老公出轨,我情绪崩溃导致早产。手术台上大出血。"
+  - id: xuan_nian_ju
+    name: "悬念句"
+    template: "抛出一个需要解释的事实"
+    example: "我死后的第三天,老公发了一条朋友圈。"
+  - id: dai_ru_shi_ti_wen
+    name: "代入式提问"
+    template: "直接让读者产生共鸣"
+    example: "你有没有在深夜接到过一个不该接的电话?"
+  - id: ti_jia_bei_qi
+    name: "替嫁被弃"
+    template: "被迫接受不公正的命运"
+    example: "三个月后,我代替皇后的嫡亲公主坐上了去漠北和亲的轿撵。"
+  - id: leng_xiao_fa_xian
+    name: "冷发现"
+    template: "发现异常后第一反应不是哭闹而是冷笑"
+    example: "我笑着点头。当天就去月子中心记下预约单,转身给公司法务部写了封举报信。"
+  - id: yi_chang_wu_jian
+    name: "异常物件"
+    template: "一个不该出现在这里的物件引发全局"
+    example: "避孕套日期突然变了,连味道也变成了我以前过敏的芒果味。"
+
+# === 结尾模式 ===
+ending_modes:
+  - id: yu_yun_shi
+    name: "余韵式"
+    适用情绪: ["意难平", "共鸣感动"]
+    技法: "不说完,让读者自己想"
+  - id: hu_ying_shi
+    name: "呼应式"
+    适用情绪: ["治愈温暖"]
+    技法: "首尾呼应形成闭环"
+  - id: kai_fang_shi
+    name: "开放式"
+    适用情绪: ["细思极恐"]
+    技法: "留下悬念"
+  - id: fan_zhuan_zai_fan_zhuan
+    name: "反转再反转"
+    适用情绪: ["反转震撼"]
+    技法: "结尾再来一个小反转"
+  - id: jin_ju_shi
+    name: "金句式"
+    适用情绪: ["共鸣感动", "意难平"]
+    技法: "一句话点题"
+  - id: chong_sheng_nuan_xin
+    name: "重生暖心式"
+    适用情绪: ["治愈温暖"]
+    技法: "投胎到温暖家庭用温馨细节呼应前世缺失;'这一世护腰很暖,妈妈也很好'"
+  - id: yu_yun_dao_ju
+    name: "余韵道具式"
+    适用情绪: ["意难平"]
+    技法: "用一个物件暗示未来不说破"
+  - id: da_chang_jing_tou
+    name: "大长镜头式"
+    适用情绪: ["爽感释放"]
+    技法: "电影感收场仪式感极强;'厚重的隔音门彻底关上将两个世界永远地隔绝'"
+  - id: fan_feng_dui_wei
+    name: "反讽对位式"
+    适用情绪: ["意难平", "爽感释放"]
+    技法: "用反派的视角写出最讽刺的结局;漠视比报复更有力"
+
+# === 反转类型 ===
+reversal_types:
+  - id: shen_fen_fan_zhuan
+    name: "身份反转"
+    pattern: "看似普通人 → 实则隐藏大佬/真千金"
+    examples: ["古代宅斗", "都市系统逆袭", "反套路嫁祸型重生"]
+  - id: shi_jiao_fan_zhuan
+    name: "视角反转"
+    pattern: "读者跟随主角视角 → 揭示反派也有内心戏 → 重新理解全局"
+    examples: ["年代重生双重复仇", "宫闱腹黑型"]
+  - id: dong_ji_fan_zhuan
+    name: "动机反转"
+    pattern: "看似 A 动机 → 实则 B 动机"
+    examples: ["宫闱隐忍腹黑(主角全程操纵)"]
+  - id: shi_jian_xian_fan_zhuan
+    name: "时间线反转"
+    pattern: "重生/穿越/灵魂回溯,时间线被颠覆"
+    examples: ["年代重生", "重生离婚逆袭", "假千金心声流"]
+  - id: xin_xi_cha_fan_zhuan
+    name: "信息差反转"
+    pattern: "读者一直被误导 → 真相揭示推翻所有"
+    examples: ["现代悬疑超自然", "细节线索复仇"]
+
+# === 多样性约束(LLM 演化 100 题材时必须满足) ===
+diversity_constraints:
+  emotion_distribution_target:
+    yi_nan_ping: 0.18
+    fan_zhuan_zhen_han: 0.15
+    shuang_gan_shi_fang: 0.30   # 主力
+    zhi_yu_wen_nuan: 0.10
+    xi_si_ji_kong: 0.07
+    gong_ming_gan_dong: 0.20
+  genre_max_share: 0.15           # 单 genre 不超 15 题材(15%)
+  platform_distribution_target:
+    番茄短篇: 0.50
+    七猫短篇: 0.15
+    黑岩短篇: 0.10
+    点众短篇: 0.15
+    知乎盐言: 0.10
+  reversal_type_min_distinct: 4   # 100 题材中至少使用 4 种不同反转类型
+  opening_mode_min_distinct: 8    # 至少使用 8 种不同开头模式
+  ending_mode_min_distinct: 6     # 至少使用 6 种不同结尾模式
+  duplicate_prevention:
+    no_two_themes_share_more_than_n_keywords: 3
+    avoid_recent_pool_themes: true   # 演化时去掉与上周 pool 的重复
+
+# === 时间种子修饰(每周变化注入,防止演化结果一成不变) ===
+time_seed_modifiers:
+  description: "scan 任务每次取这些类目随机抽几个,作为'本周流行风向'注入 LLM 演化 prompt,产生周间差异"
+  current_topics_pool:    # 持续维护,可手动追加
+    - "高考志愿"
+    - "彩礼纠纷"
+    - "拆迁分房"
+    - "学区房"
+    - "婚前协议"
+    - "家族企业接班"
+    - "中年危机"
+    - "失业再就业"
+    - "婆媳大战"
+    - "二胎/三胎压力"
+    - "AI 替代人类岗位"
+    - "原生家庭议题"
+    - "奶奶带娃"
+    - "丁克家庭"
+    - "海归回国"
+    - "互联网创业泡沫"
+    - "明星塌房"
+    - "电信诈骗"
+    - "代孕风波"
+    - "亲子鉴定"
+  seasonal_topics:
+    spring: ["相亲", "返乡", "扫墓"]
+    summer: ["毕业", "高考放榜", "暑假补课"]
+    autumn: ["开学", "中秋团圆", "国庆相亲"]
+    winter: ["年终奖", "春节回家", "婚介所"]
+  weekly_random_count: 5    # 每周从上述池随机抽 5 个作为本周风向
+
+# === 输出 Schema(LLM 演化时严格按此 JSON 结构输出) ===
+output_schema:
+  description: "每条 theme_pool item 必须包含以下字段"
+  fields:
+    id: "tp_{YYYY}w{周数}_{序号:03d},如 tp_2026w19_001"
+    theme: "10-30 字的题材一句话描述,可直接作为 Phase 1 的输入"
+    emotion: "emotion_types.id 之一"
+    genre: "genres.id 之一"
+    formula_used: "genres[genre].formula 的引用"
+    target_platform: "target_platform.primary 或 comparator_platforms 的 key"
+    target_length: "[min, max],来自 target_platform/comparator 的 word_count_range"
+    hint_title: "符合 title_patterns 中某个 template 的具体标题"
+    title_pattern_used: "title_patterns 的 key"
+    opening_mode: "opening_modes.id 之一"
+    ending_mode: "ending_modes.id 之一"
+    reversal_type: "reversal_types.id 之一"
+    expected_audience: "如 '女频/25-35 都市'"
+    seasonal_or_topic_seed: "本次注入的本周风向词(如 '彩礼纠纷')"
+    consumed_count: 0   # 初始 0,每被 Phase 0 消费一次 +1
+    created_at: "ISO 时间戳"
+
+# === LLM 演化指令模板(scan/seed_evolver.py 拼装时使用) ===
+llm_evolution_prompt_template: |
+  你是中文短篇网文市场分析师 + 题材策划。
+
+  【任务】基于下方种子库,演化产出 ${pool_size} 个差异化、可写性强的具体题材,严格按 output_schema 输出 JSON 数组。
+
+  【主目标平台】${primary_platform}(${primary_word_range} 字,${audience})
+  【对标平台】${comparator_summary}
+
+  【可选情绪类型】${emotion_options}
+  【可选题材公式库】${genre_options}
+  【可选标题模式】${title_pattern_options}
+  【可选开头模式】${opening_mode_options}
+  【可选结尾模式】${ending_mode_options}
+  【可选反转类型】${reversal_type_options}
+
+  【本周风向词(必须每条至少融入 1 个)】${weekly_topics}
+  【已生成池(避免雷同)】${existing_pool_themes_short_list}
+
+  【硬性约束】
+  - 严格按 ${diversity_constraints_summary} 分布
+  - theme 字段 10-30 字,具体到角色身份+触发事件+情绪走向
+  - 同一情绪×同一题材组合不超过 ${genre_max_count_per_emotion} 个
+  - 至少 ${reversal_type_min_distinct} 种不同反转类型
+  - 至少 ${opening_mode_min_distinct} 种不同开头模式
+  - 任意两条 theme 关键词重叠不超过 3 个
+
+  【输出格式】
+  仅输出 JSON 数组,不要 Markdown 代码块,不要解释。每个对象包含 output_schema.fields 列出的所有字段。
+
+  现在开始演化 ${pool_size} 个题材:
