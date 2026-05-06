@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sqlite3
+from datetime import date
 from pathlib import Path
 
 from config_loader import LoadedConfig, load_from_environment
 from publisher.base_publisher import PublishResult, PublishStatus
 from publisher.fansq import FansqPublisher
 from review_queue.db import (
+    get_daily_publish_plan,
     get_database_path,
+    get_story,
     initialize_database,
     story_from_row,
     update_story_status,
@@ -36,6 +40,37 @@ def find_one_approved_story(db_path: str | Path):
             """
         ).fetchone()
     return story_from_row(row) if row is not None else None
+
+
+def find_story_by_slot(
+    db_path: str | Path, slot_index: int, *, today: str | None = None
+):
+    """Return the story already claimed by ``slots_json[slot_index]`` for today.
+
+    Phase D debug helper: lets ``cli/publish --slot-id N`` target the
+    same story the scheduler would publish for slot N. Returns ``None``
+    when no plan exists, the index is out of range, or the slot has no
+    ``story_id`` claim yet.
+    """
+
+    today = today or date.today().isoformat()
+    plan = get_daily_publish_plan(db_path, today)
+    if plan is None:
+        return None
+    try:
+        slots = json.loads(plan.slots_json)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(slots, list) or not (0 <= slot_index < len(slots)):
+        return None
+    slot = slots[slot_index] if isinstance(slots[slot_index], dict) else {}
+    story_id = slot.get("story_id")
+    if not story_id:
+        return None
+    try:
+        return get_story(db_path, int(story_id))
+    except (TypeError, ValueError):
+        return None
 
 
 def apply_publish_result(db_path: str | Path, result: PublishResult, commit_dry_run: bool = False) -> bool:
@@ -74,6 +109,20 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Persist dry-run result to SQLite; by default dry-run keeps approved status unchanged.",
     )
+    parser.add_argument(
+        "--slot-id",
+        type=int,
+        default=None,
+        help=(
+            "Phase D debug: resolve target story via daily_publish_plan slots_json[N].story_id "
+            "for today instead of FIFO. Useful for replaying a specific slot."
+        ),
+    )
+    parser.add_argument(
+        "--slot-date",
+        default=None,
+        help="Override the date used by --slot-id (YYYY-MM-DD). Defaults to today.",
+    )
     parser.add_argument("--wait-on-pause", action="store_true", help="Wait for Enter after a safe pause")
     return parser
 
@@ -87,10 +136,19 @@ def main(argv: list[str] | None = None) -> int:
         config = _with_runtime_dry_run(config, False)
 
     db_path = initialize_database(config)
-    story = find_one_approved_story(db_path)
-    if story is None:
-        print("No approved story found; nothing to publish.")
-        return 0
+    if args.slot_id is not None:
+        story = find_story_by_slot(db_path, args.slot_id, today=args.slot_date)
+        if story is None:
+            print(
+                f"No story claimed for slot_id={args.slot_id} "
+                f"on date={args.slot_date or 'today'}; nothing to publish."
+            )
+            return 0
+    else:
+        story = find_one_approved_story(db_path)
+        if story is None:
+            print("No approved story found; nothing to publish.")
+            return 0
 
     publisher = FansqPublisher(config)
     result = publisher.publish_story(
