@@ -24,6 +24,15 @@ from review_queue.dashboard_assets import (
     DASHBOARD_JS,
 )
 from review_queue.metrics import query_overview, record_pipeline_event
+from review_queue.phase_progress import (
+    PhaseProgress,
+    PhaseStep,
+    WorkDirFile,
+    compute_phase_progress,
+    list_work_dir_files,
+    normalize_resume_from,
+    read_work_dir_file,
+)
 from review_queue.settings_api import mode_router, router as settings_router
 from review_queue.control_api import router as control_router, scheduler_manager
 from review_queue.db import (
@@ -99,6 +108,188 @@ def api_story_detail(story_id: int) -> dict[str, Any]:
     if payload is not None:
         payload["review_detail"] = _parse_summary(story.summary)
     return {"ok": True, "story": payload}
+
+
+# ============================================================================
+# Phase F (decision #27 / U2): per-story progress strip, work_dir browser,
+# and resume-from-phase trigger. The dashboard surfaces these endpoints as
+# the phase progress bar, file browser, and "续跑" button respectively.
+# ============================================================================
+
+
+@app.get("/api/stories/{story_id}/phases")
+def api_story_phases(story_id: int) -> dict[str, Any]:
+    """Phase progress strip for one story (compute_phase_progress)."""
+
+    story = _ensure_story_exists(story_id)
+    progress = compute_phase_progress(story.current_phase)
+    return {
+        "ok": True,
+        "story_id": story.id,
+        "current_phase": progress.current_phase,
+        "percent": progress.percent,
+        "label": progress.label,
+        "state": progress.state,
+        "failed_at": progress.failed_at,
+        "section_index": progress.section_index,
+        "steps": [_phase_step_payload(step) for step in progress.steps],
+    }
+
+
+@app.get("/api/stories/{story_id}/files")
+def api_story_files(story_id: int) -> dict[str, Any]:
+    """List files in the story's work_dir (top level only, sorted)."""
+
+    story = _ensure_story_exists(story_id)
+    work_dir = _story_work_dir_or_404(story)
+    files = list_work_dir_files(work_dir)
+    return {
+        "ok": True,
+        "story_id": story.id,
+        "work_dir": str(work_dir),
+        "files": [_file_payload(f) for f in files],
+    }
+
+
+@app.get("/api/stories/{story_id}/files/{filename:path}")
+def api_story_file_content(story_id: int, filename: str) -> dict[str, Any]:
+    """Return the text contents of one file inside the story's work_dir.
+
+    Path traversal escapes ``work_dir`` are rejected with 400. Files
+    outside the text suffix allow-list (or larger than 1 MiB) are also
+    rejected with 400 so the browser doesn't try to render binaries.
+    """
+
+    story = _ensure_story_exists(story_id)
+    work_dir = _story_work_dir_or_404(story)
+    try:
+        text = read_work_dir_file(work_dir, filename)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "ok": True,
+        "story_id": story.id,
+        "work_dir": str(work_dir),
+        "name": filename,
+        "size_bytes": len(text.encode("utf-8")),
+        "content": text,
+    }
+
+
+@app.post("/api/stories/{story_id}/resume")
+async def api_story_resume(story_id: int, request: Request) -> dict[str, Any]:
+    """Resume the c_pipeline state machine from a chosen phase.
+
+    Body: ``{"resume_from": "phase_4"}`` (or ``phase_3_done`` which
+    advances to ``phase_4``). The orchestrator call is wrapped through
+    ``_invoke_resume_pipeline`` so tests can stub it.
+    """
+
+    story = _ensure_story_exists(story_id)
+    payload = await _json_payload(request)
+    raw = payload.get("resume_from")
+    try:
+        resume_from = normalize_resume_from(str(raw) if raw is not None else None)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    config = _load_config()
+    db_path = _database_path(config)
+    try:
+        result = _invoke_resume_pipeline(
+            story_id=story.id,
+            resume_from=resume_from,
+            config=config,
+        )
+    except Exception as exc:
+        record_pipeline_event(
+            db_path,
+            kind="resume",
+            status="failed",
+            story_id=story.id,
+            message=f"{exc.__class__.__name__}: {exc}",
+            detail=resume_from,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"resume failed: {exc.__class__.__name__}: {exc}",
+        ) from exc
+
+    record_pipeline_event(
+        db_path,
+        kind="resume",
+        status=str(getattr(result, "status", "")) or "completed",
+        story_id=story.id,
+        message=f"resume_from={resume_from}",
+        detail=str(getattr(result, "final_phase", "")),
+    )
+    logger.info(
+        "Dashboard resume action: story_id=%s resume_from=%s final_phase=%s",
+        story.id,
+        resume_from,
+        getattr(result, "final_phase", None),
+    )
+    return {
+        "ok": True,
+        "message": f"已从 {resume_from} 续跑作品 #{story.id}",
+        "story_id": story.id,
+        "resume_from": resume_from,
+        "final_phase": getattr(result, "final_phase", None),
+        "status": getattr(result, "status", None),
+        "char_count": getattr(result, "char_count", None),
+        "duration_seconds": getattr(result, "duration_seconds", None),
+    }
+
+
+def _invoke_resume_pipeline(
+    *,
+    story_id: int,
+    resume_from: str,
+    config: LoadedConfig,
+) -> Any:
+    """Indirection layer so tests can monkeypatch the orchestrator call."""
+
+    from generator.c_pipeline.orchestrator import run_pipeline
+
+    return run_pipeline(
+        story_id=story_id,
+        config=config,
+        resume_from=resume_from,
+    )
+
+
+def _story_work_dir_or_404(story: Story) -> Path:
+    raw = (story.work_dir or "").strip()
+    if not raw or raw == "(pending)":
+        raise HTTPException(
+            status_code=404,
+            detail="story has no work_dir yet (still pending phase 0).",
+        )
+    work_dir = Path(raw)
+    if not work_dir.exists() or not work_dir.is_dir():
+        raise HTTPException(
+            status_code=404,
+            detail=f"work_dir missing on disk: {work_dir}",
+        )
+    return work_dir
+
+
+def _phase_step_payload(step: PhaseStep) -> dict[str, Any]:
+    return {"phase": step.phase, "label": step.label, "status": step.status}
+
+
+def _file_payload(entry: WorkDirFile) -> dict[str, Any]:
+    return {
+        "name": entry.name,
+        "relative_path": entry.relative_path,
+        "size_bytes": entry.size_bytes,
+        "modified_at": entry.modified_at,
+        "is_text": entry.is_text,
+    }
 
 
 @app.delete("/api/stories/{story_id}")
