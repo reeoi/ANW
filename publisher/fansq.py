@@ -93,6 +93,13 @@ class FansqPublisher(BasePublisher):
             wait_on_pause: If true, block for manual intervention after pausing.
             content_text: Optional explicit story body. When omitted, the content
                 is read from ``story.final_content_path`` (c_pipeline manuscript).
+
+        Phase E note: ``story.title`` (= Phase 1 ``final_title``) and
+        ``story.summary`` (= Phase 1 simplified 150-300 字 简介) are
+        both consumed when present. The summary is filled into the
+        first matching 简介 selector if the page exposes one; missing
+        summary degrades gracefully (older Story rows pre-Phase-1 may
+        lack it).
         """
 
         if story.status != "approved":
@@ -153,14 +160,41 @@ class FansqPublisher(BasePublisher):
 
             title_box.fill(story.title)
             content_box.fill(body)
+
+            summary_text = (story.summary or "").strip()
+            summary_filled = False
+            if summary_text:
+                summary_box = self._first_visible(page, [
+                    "textarea[placeholder*='简介']",
+                    "input[placeholder*='简介']",
+                    "textarea[placeholder*='摘要']",
+                    "[contenteditable='true'][data-placeholder*='简介']",
+                ])
+                if summary_box is not None:
+                    try:
+                        summary_box.fill(summary_text)
+                        summary_filled = True
+                    except Exception:
+                        # Non-fatal: summary is best-effort; human reviewer can
+                        # paste it during the manual confirm step.
+                        summary_filled = False
+
             risk_reason = self.detect_risk_control(page)
             if risk_reason:
                 return self.pause_for_human(risk_reason, story_id=story.id, page=page, wait=wait_on_pause)
 
             # MVP stops at draft preparation to avoid accidental public posting when
             # button labels/flows are uncertain. Human can verify and submit.
+            summary_note = (
+                f"，简介已填入（{len(summary_text)} 字）"
+                if summary_filled
+                else (
+                    "，简介未识别字段，请人工粘贴" if summary_text
+                    else "，无简介"
+                )
+            )
             return self.pause_for_human(
-                "作品已填入发布页草稿区域，请人工复核页面、章节设置和最终提交。",
+                f"作品已填入发布页草稿区域{summary_note}，请人工复核页面、章节设置和最终提交。",
                 story_id=story.id,
                 page=page,
                 wait=wait_on_pause,
@@ -198,9 +232,13 @@ class FansqPublisher(BasePublisher):
                 wait=False,
                 dry_run=True,
             )
+        summary_chars = len((story.summary or "").strip())
+        summary_note = (
+            f"简介 {summary_chars} 字" if summary_chars else "无简介"
+        )
         return self.result(
             PublishStatus.PUBLISHED,
-            f"dry-run 模拟发布成功：{story.title}（未打开浏览器，未提交到番茄）",
+            f"dry-run 模拟发布成功：{story.title}（{summary_note}；未打开浏览器，未提交到番茄）",
             story_id=story.id,
             dry_run=True,
         )
