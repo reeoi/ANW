@@ -41,7 +41,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--word-count",
         type=int,
         default=None,
-        help="Override target word count (used for Phase 2 ±10% check).",
+        help="Override target word count (used for Phase 2 +/-10%% check).",
     )
     parser.add_argument(
         "--story-id",
