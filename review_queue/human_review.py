@@ -470,6 +470,28 @@ def api_monitor_cards() -> dict[str, Any]:
     return {"ok": True, **monitor_cards(config, db_path, scheduler_manager)}
 
 
+@app.get("/api/monitor/concurrency")
+def api_monitor_concurrency() -> dict[str, Any]:
+    """Phase G.2 — expose K2 pipeline semaphore stats for the dashboard.
+
+    Reads ``c_pipeline.max_concurrent_pipelines`` (default 2 per decision
+    #32) and the live ``in_use`` / ``available`` slot counts from the
+    process-global semaphore. Used by the operator Web UI to confirm the
+    cap is enforced and to detect stuck slots.
+    """
+    from generator.c_pipeline.concurrency import get_global_semaphore
+
+    config = _load_config()
+    semaphore = get_global_semaphore(config)
+    stats = semaphore.stats()
+    return {
+        "ok": True,
+        "max_concurrent": stats.max_concurrent,
+        "in_use": stats.in_use,
+        "available": stats.available,
+    }
+
+
 @app.get("/api/health")
 def api_health() -> dict[str, Any]:
     """Lightweight liveness probe for external monitoring."""
