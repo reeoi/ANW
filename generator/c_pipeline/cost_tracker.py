@@ -69,7 +69,14 @@ DEFAULT_PRICING: dict[str, ModelPricing] = {
 
 @dataclass(frozen=True)
 class BudgetStatus:
-    """Snapshot of monthly budget status used for degrade decisions."""
+    """Snapshot of monthly budget + daily-token status used for degrade decisions.
+
+    ``is_degrade_active`` flips True whenever **either** the monthly CNY
+    budget or the daily token cap has been exceeded (decision #22 + #24).
+    The ``on_budget_exceeded`` policy ('degrade' vs 'stop') controls how
+    callers react: 'degrade' routes ``degrade_phases`` to flash, 'stop'
+    asks callers to abort instead.
+    """
 
     monthly_budget_cny: float
     used_cny: float
@@ -77,12 +84,31 @@ class BudgetStatus:
     is_degrade_active: bool
     degrade_phases: tuple[str, ...]
     period: str  # YYYY-MM, the calendar month being aggregated
+    daily_token_limit: int = 0
+    daily_tokens_used: int = 0
+    is_token_limit_exceeded: bool = False
+    is_budget_exceeded: bool = False
+    on_budget_exceeded: str = "degrade"  # "degrade" | "stop"
+    day: str = ""  # YYYY-MM-DD
 
     @property
     def usage_ratio(self) -> float:
         if self.monthly_budget_cny <= 0:
             return 0.0
         return round(self.used_cny / self.monthly_budget_cny, 4)
+
+    @property
+    def daily_token_ratio(self) -> float:
+        if self.daily_token_limit <= 0:
+            return 0.0
+        return round(self.daily_tokens_used / self.daily_token_limit, 4)
+
+    @property
+    def should_abort(self) -> bool:
+        """True when policy is 'stop' and either limit has been crossed."""
+        return self.on_budget_exceeded == "stop" and (
+            self.is_budget_exceeded or self.is_token_limit_exceeded
+        )
 
 
 # ============================================================ pricing
@@ -132,6 +158,14 @@ def _resolve_pricing(
 # ============================================================ tracker
 
 
+class BudgetExceededError(RuntimeError):
+    """Raised when ``on_budget_exceeded='stop'`` and a limit is crossed.
+
+    Callers should let this bubble up so the orchestrator/scheduler can
+    fail the affected story (decision #22 'stop' fork).
+    """
+
+
 class CostTracker:
     """Per-config helper that persists token usage and decides on degrade."""
 
@@ -149,6 +183,14 @@ class CostTracker:
         self.monthly_budget_cny = float(
             self._cost_limits.get("monthly_budget_cny") or 0
         )
+        self.daily_token_limit = int(
+            self._cost_limits.get("daily_token_limit") or 0
+        )
+        self.on_budget_exceeded = str(
+            self._cost_limits.get("on_budget_exceeded") or "degrade"
+        ).strip().lower()
+        if self.on_budget_exceeded not in {"degrade", "stop"}:
+            self.on_budget_exceeded = "degrade"
         self.degrade_phases: tuple[str, ...] = tuple(
             self._cost_limits.get("degrade_phases") or ()
         )
@@ -223,14 +265,43 @@ class CostTracker:
             ).fetchone()
         return float(row[0] or 0.0)
 
+    def daily_token_count(self, *, day: str | None = None) -> int:
+        """Sum input+output tokens spent today (YYYY-MM-DD, UTC).
+
+        Powers the ``daily_token_limit`` degrade rule (decision #24). We
+        treat the cap as input+output combined because both contribute to
+        compute load on DeepSeek; cached_tokens are folded into input_tokens
+        already so we don't double-count.
+        """
+        period = day or _current_day_utc()
+        with sqlite3.connect(self.db_path) as conn:
+            row = conn.execute(
+                """
+                SELECT COALESCE(SUM(input_tokens), 0) + COALESCE(SUM(output_tokens), 0)
+                FROM pipeline_cost_log
+                WHERE strftime('%Y-%m-%d', occurred_at) = ?
+                """,
+                (period,),
+            ).fetchone()
+        return int(row[0] or 0)
+
     def get_status(self) -> BudgetStatus:
         period = _current_month_utc()
+        day = _current_day_utc()
         used = self.monthly_spend_cny(month=period)
+        tokens_used = self.daily_token_count(day=day)
         remaining = max(0.0, self.monthly_budget_cny - used)
+        is_budget_exceeded = (
+            self.monthly_budget_cny > 0 and used >= self.monthly_budget_cny
+        )
+        is_token_exceeded = (
+            self.daily_token_limit > 0 and tokens_used >= self.daily_token_limit
+        )
+        # 'degrade' policy: any limit hit + degrade_phases configured → degrade
         is_degrade = (
-            self.monthly_budget_cny > 0
-            and used >= self.monthly_budget_cny
+            self.on_budget_exceeded == "degrade"
             and bool(self.degrade_phases)
+            and (is_budget_exceeded or is_token_exceeded)
         )
         return BudgetStatus(
             monthly_budget_cny=self.monthly_budget_cny,
@@ -239,9 +310,40 @@ class CostTracker:
             is_degrade_active=is_degrade,
             degrade_phases=self.degrade_phases,
             period=period,
+            daily_token_limit=self.daily_token_limit,
+            daily_tokens_used=tokens_used,
+            is_token_limit_exceeded=is_token_exceeded,
+            is_budget_exceeded=is_budget_exceeded,
+            on_budget_exceeded=self.on_budget_exceeded,
+            day=day,
         )
 
     # ------------------------------------------------------------ routing
+
+    def should_degrade(self, phase: str, *, status: BudgetStatus | None = None) -> bool:
+        """True iff this ``phase`` is currently subject to flash downgrade.
+
+        Convenience wrapper used by callers (phase_3 / phase_5 / ai_review /
+        weekly_scan) to decide whether to override the default model just
+        before issuing ``client.chat_completion``. False whenever:
+        - ``on_budget_exceeded='stop'`` (no degrade — caller should abort
+          instead, see ``should_abort``);
+        - neither the monthly budget nor the daily token cap is exceeded;
+        - the phase is not in ``cost_limits.degrade_phases``.
+        """
+        status = status or self.get_status()
+        if not status.is_degrade_active:
+            return False
+        return _phase_in_degrade_list(phase, status.degrade_phases)
+
+    def should_abort(self, *, status: BudgetStatus | None = None) -> bool:
+        """True iff ``on_budget_exceeded='stop'`` and any limit is exceeded.
+
+        Callers in 'stop' mode should raise ``BudgetExceededError`` instead
+        of issuing the next LLM call.
+        """
+        status = status or self.get_status()
+        return status.should_abort
 
     def select_model_for_phase(
         self,
@@ -259,6 +361,12 @@ class CostTracker:
         ``weekly_scan``.
         """
         status = status or self.get_status()
+        if status.should_abort:
+            raise BudgetExceededError(
+                f"on_budget_exceeded='stop' and limits crossed: "
+                f"used={status.used_cny:.2f}/{status.monthly_budget_cny:.2f} CNY, "
+                f"tokens={status.daily_tokens_used}/{status.daily_token_limit}"
+            )
         if not status.is_degrade_active:
             return default_model
         if _phase_in_degrade_list(phase, status.degrade_phases):
@@ -285,6 +393,10 @@ def _phase_in_degrade_list(
 
 def _current_month_utc() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m")
+
+
+def _current_day_utc() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
 def _resolve_config_pricing(config: LoadedConfig) -> dict[str, ModelPricing]:
@@ -316,6 +428,7 @@ def _pricing_key_for_model(model: str) -> str:
 
 
 __all__ = [
+    "BudgetExceededError",
     "BudgetStatus",
     "CostTracker",
     "DEFAULT_PRICING",

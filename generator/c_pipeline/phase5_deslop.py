@@ -24,6 +24,7 @@ from typing import Sequence
 
 from config_loader import LoadedConfig
 from generator.api_client import ChatCompletion, DeepSeekClient
+from generator.c_pipeline.cost_tracker import CostTracker
 from generator.c_pipeline.validators import (
     ValidationResult,
     check_ai_slop,
@@ -62,6 +63,7 @@ def run_deslop(
     polished_path: Path | None = None,
     blacklist_path: Path | None = None,
     client: DeepSeekClient | None = None,
+    cost_tracker: CostTracker | None = None,
 ) -> Phase5Result:
     """Run Phase 5 — de-AI-slop pass."""
     work_dir = Path(work_dir)
@@ -84,9 +86,15 @@ def run_deslop(
     messages = build_phase5_prompt(
         polished_md=polished_md, blacklist=blacklist, project_root=project_root
     )
+
+    # Decision #22/#24: pick model right before the call so a triggered
+    # downgrade applies even when run_deslop is invoked mid-month.
+    model_override = _resolve_phase5_model(config, client, cost_tracker)
+
     completion = client.chat_completion(
         messages,
         thinking_mode=False,
+        model=model_override,
         purpose="phase_5",
     )
     final_md = (completion.text or "").strip()
@@ -179,6 +187,35 @@ def _project_root(config: LoadedConfig) -> Path:
     if rt and rt != ".":
         return Path(rt).resolve()
     return Path(__file__).resolve().parents[2]
+
+
+def _resolve_phase5_model(
+    config: LoadedConfig,
+    client: DeepSeekClient,
+    cost_tracker: CostTracker | None,
+) -> str | None:
+    """Pick model for Phase 5; honour B2 / daily-token degrade.
+
+    Returns None when no override is needed so ``client.chat_completion``
+    keeps its configured default.
+    """
+    if cost_tracker is None:
+        return None
+    deepseek = config.data.get("deepseek", {}) or {}
+    default_model = (
+        getattr(client.settings, "model", None)
+        or str(deepseek.get("model") or "deepseek-v4-pro")
+    )
+    flash_model = (
+        getattr(client.settings, "flash_model", None)
+        or str(deepseek.get("flash_model") or "deepseek-v4-flash")
+    )
+    chosen = cost_tracker.select_model_for_phase(
+        "phase_5",
+        default_model=default_model,
+        flash_model=flash_model,
+    )
+    return chosen if chosen != default_model else None
 
 
 __all__ = [

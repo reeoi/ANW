@@ -388,9 +388,41 @@ def _live_review(title: str, content: str, settings: AIReviewSettings) -> Review
         "dimension_scores、issues、suggestions、decision。decision 只能是 approved 或 rewrite。"
         f"通过阈值：{settings.approval_threshold}/100。\n标题：{title}\n正文：{content}"
     )
-    raw = _call_deepseek(prompt, settings)
+    # Decision #22/#24: route ai_review to flash when budget exhausted.
+    routed = _maybe_swap_model_for_degrade(settings)
+    raw = _call_deepseek(prompt, routed)
     data = _extract_json(raw)
-    return _review_result_from_mapping(data, settings)
+    return _review_result_from_mapping(data, routed)
+
+
+def _maybe_swap_model_for_degrade(
+    settings: AIReviewSettings, config: LoadedConfig | None = None
+) -> AIReviewSettings:
+    """Return a settings copy with ``model=flash`` when ai_review degrade fires.
+
+    Imports the cost tracker lazily so existing tests/runs without c_pipeline
+    state still work. Failures are non-fatal — we fall back to the original
+    settings rather than block the review pipeline.
+    """
+    try:
+        from dataclasses import replace as _replace
+
+        from generator.c_pipeline.cost_tracker import CostTracker
+
+        cfg = config or load_from_environment()
+        deepseek = cfg.data.get("deepseek", {}) or {}
+        flash_model = str(deepseek.get("flash_model") or "deepseek-v4-flash")
+        tracker = CostTracker(cfg)
+        chosen = tracker.select_model_for_phase(
+            "ai_review",
+            default_model=settings.model,
+            flash_model=flash_model,
+        )
+        if chosen != settings.model:
+            return _replace(settings, model=chosen)
+    except Exception:  # pragma: no cover - never block review on degrade lookup
+        pass
+    return settings
 
 
 def _call_deepseek(prompt: str, settings: AIReviewSettings) -> str:

@@ -377,11 +377,11 @@ def test_rerun_phase_4_5_calls_phase4_phase5_and_updates_final_path(
 
     final_path_new = work_dir / "5_最终稿.md"
 
-    def fake_polish(config, *, work_dir, client=None):
+    def fake_polish(config, *, work_dir, client=None, **kwargs):
         polish_calls.append(work_dir)
         return FakePhase4(polished_path=work_dir / "4_精修稿.md")
 
-    def fake_deslop(config, *, work_dir, client=None):
+    def fake_deslop(config, *, work_dir, client=None, **kwargs):
         deslop_calls.append(work_dir)
         return FakePhase5(final_path=final_path_new)
 

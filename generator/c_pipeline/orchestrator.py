@@ -218,7 +218,7 @@ def run_pipeline(
             if resume_idx <= 3:
                 update_story_phase(db_path, story_id, "phase_3_running")
                 phase3 = phase3_sections.run_sections(
-                    config, work_dir=work_dir, client=client
+                    config, work_dir=work_dir, client=client, cost_tracker=tracker
                 )
                 for s in phase3.sections:
                     update_story_phase(
@@ -256,7 +256,7 @@ def run_pipeline(
             if resume_idx <= 5:
                 update_story_phase(db_path, story_id, "phase_5_running")
                 phase5 = phase5_deslop.run_deslop(
-                    config, work_dir=work_dir, client=client
+                    config, work_dir=work_dir, client=client, cost_tracker=tracker
                 )
                 tracker.record_completion(
                     story_id=story_id, phase="phase_5", completion=phase5.llm_completion

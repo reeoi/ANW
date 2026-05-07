@@ -92,7 +92,9 @@ def rerun_phase_4_5(
     warnings.extend(phase4.warnings)
 
     update_story_phase(db_path, story_id, "phase_5_rewrite")
-    phase5 = phase5_deslop.run_deslop(config, work_dir=work_dir, client=client)
+    phase5 = phase5_deslop.run_deslop(
+        config, work_dir=work_dir, client=client, cost_tracker=cost_tracker
+    )
     cost_tracker.record_completion(
         story_id=story_id,
         phase="phase_5_rewrite",

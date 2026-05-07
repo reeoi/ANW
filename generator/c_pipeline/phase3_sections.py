@@ -36,6 +36,7 @@ from typing import Any, Iterable, Mapping, Sequence
 
 from config_loader import LoadedConfig
 from generator.api_client import ChatCompletion, DeepSeekClient
+from generator.c_pipeline.cost_tracker import CostTracker
 from generator.c_pipeline.phase2_outline import (
     OutlineSection,
     parse_outline_md,
@@ -104,6 +105,7 @@ def run_sections(
     blacklist_path: Path | None = None,
     max_section_retries: int = 2,
     client: DeepSeekClient | None = None,
+    cost_tracker: CostTracker | None = None,
 ) -> Phase3Result:
     """Generate every section listed in the outline, write per-section files,
     then write the combined draft to ``3_正文_合稿.md``."""
@@ -155,6 +157,7 @@ def run_sections(
             blacklist=blacklist,
             max_retries=max_section_retries,
             work_dir=work_dir,
+            cost_tracker=cost_tracker,
         )
         written_sections.append(section_result)
         prior_blocks.append(section_result.text)
@@ -257,6 +260,7 @@ def _generate_one_section(
     blacklist: Sequence[str],
     max_retries: int,
     work_dir: Path,
+    cost_tracker: CostTracker | None = None,
 ) -> SectionResult:
     """Generate, validate, and write one section. Retries up to max_retries."""
     messages = build_phase3_prompt(
@@ -273,6 +277,11 @@ def _generate_one_section(
     last_validations: dict[str, ValidationResult] = {}
     warnings: list[str] = []
     attempt: int = 0
+
+    # Decision #22/#24: ask the cost tracker which model to use right
+    # before issuing the call so a mid-pipeline budget hit downgrades the
+    # remaining sections without restarting Phase 3.
+    chosen_model = _resolve_phase3_model(config, client, cost_tracker)
 
     for attempt in range(max_retries + 1):
         round_messages = list(messages)
@@ -292,6 +301,7 @@ def _generate_one_section(
         completion = client.chat_completion(
             round_messages,
             thinking_mode=False,
+            model=chosen_model,
             purpose=f"phase_3_section_{outline_section.index:02d}{'_retry_' + str(attempt) if attempt else ''}",
         )
         text = (completion.text or "").strip()
@@ -388,6 +398,36 @@ def _project_root(config: LoadedConfig) -> Path:
     if rt and rt != ".":
         return Path(rt).resolve()
     return Path(__file__).resolve().parents[2]
+
+
+def _resolve_phase3_model(
+    config: LoadedConfig,
+    client: DeepSeekClient,
+    cost_tracker: CostTracker | None,
+) -> str | None:
+    """Pick model for Phase 3 calls, honouring B2 / daily-token degrade.
+
+    Returns None when no override is needed (so ``client.chat_completion``
+    falls back to its configured default). When the cost tracker says
+    ``phase_3`` should degrade, returns ``deepseek.flash_model``.
+    """
+    if cost_tracker is None:
+        return None
+    deepseek = config.data.get("deepseek", {}) or {}
+    default_model = (
+        getattr(client.settings, "model", None)
+        or str(deepseek.get("model") or "deepseek-v4-pro")
+    )
+    flash_model = (
+        getattr(client.settings, "flash_model", None)
+        or str(deepseek.get("flash_model") or "deepseek-v4-flash")
+    )
+    chosen = cost_tracker.select_model_for_phase(
+        "phase_3",
+        default_model=default_model,
+        flash_model=flash_model,
+    )
+    return chosen if chosen != default_model else None
 
 
 # ============================================================ fallback synthesis

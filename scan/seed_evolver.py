@@ -251,6 +251,7 @@ def run_weekly_scan(
     today: date | None = None,
     force: bool = False,
     client: Any = None,
+    cost_tracker: Any = None,
 ) -> WeeklyScanResult:
     """Run weekly theme-pool evolution; see module docstring for full flow."""
     today = today or date.today()
@@ -309,10 +310,12 @@ def run_weekly_scan(
             pool_size=pool_size,
         )
         deepseek_cfg = config.data.get("deepseek", {})
+        # Decision #22/#24: route weekly_scan to flash if budget/token cap hit.
+        scan_model = _resolve_scan_model(config, deepseek_cfg, cost_tracker)
         completion = client.chat_completion(
             messages,
             thinking_mode=False,
-            model=deepseek_cfg.get("model", "deepseek-v4-pro"),
+            model=scan_model,
             response_format={"type": "json_object"},
             purpose="weekly_scan",
         )
@@ -373,6 +376,37 @@ def run_weekly_scan(
 
 def _project_root() -> Path:
     return Path(__file__).resolve().parents[1]
+
+
+def _resolve_scan_model(
+    config: LoadedConfig,
+    deepseek_cfg: dict[str, Any],
+    cost_tracker: Any,
+) -> str:
+    """Decision #22/#24: pick pro vs flash for weekly_scan via cost_tracker.
+
+    Builds a tracker from config when none is supplied so the scheduler-
+    triggered scan also degrades. Failures are swallowed and we keep the
+    configured default model.
+    """
+    default_model = str(deepseek_cfg.get("model") or "deepseek-v4-pro")
+    flash_model = str(deepseek_cfg.get("flash_model") or "deepseek-v4-flash")
+    tracker = cost_tracker
+    if tracker is None:
+        try:
+            from generator.c_pipeline.cost_tracker import CostTracker
+
+            tracker = CostTracker(config)
+        except Exception:  # pragma: no cover
+            return default_model
+    try:
+        return tracker.select_model_for_phase(
+            "weekly_scan",
+            default_model=default_model,
+            flash_model=flash_model,
+        )
+    except Exception:  # pragma: no cover
+        return default_model
 
 
 def _project_root_from_config(config: LoadedConfig) -> Path:
