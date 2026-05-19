@@ -162,7 +162,7 @@ def test_run_pipeline_creates_story_and_advances_through_all_phases(
 
     assert isinstance(result, PipelineResult)
     assert result.story_id >= 1
-    assert result.final_phase == "phase_5_done"
+    assert result.final_phase == "phase_6_done"
     assert result.status in ("pending", "needs_human")
     assert result.final_content_path is not None
     assert result.final_content_path.exists()
@@ -171,7 +171,7 @@ def test_run_pipeline_creates_story_and_advances_through_all_phases(
     db = get_database_path(config)
     story = get_story(db, result.story_id)
     assert story is not None
-    assert story.current_phase == "phase_5_done"
+    assert story.current_phase == "phase_6_done"
     assert story.final_content_path == str(result.final_content_path)
     assert story.title  # set from Phase 1 final_title
     assert story.summary  # set from Phase 1 summary
@@ -187,6 +187,7 @@ def test_run_pipeline_creates_story_and_advances_through_all_phases(
         assert (work / f"3_正文_第 {i:02d} 节.md").exists()
     assert (work / "4_精修稿.md").exists()
     assert (work / "5_最终稿.md").exists()
+    assert (work / "6_最终稿_带章节.md").exists()
 
 
 def test_run_pipeline_writes_pipeline_cost_log(tmp_path: Path) -> None:
@@ -267,8 +268,9 @@ def test_run_pipeline_failure_sets_status_failed(tmp_path: Path) -> None:
         "generator.c_pipeline.orchestrator.phase1_framework.run_framework",
         side_effect=RuntimeError("phase 1 boom"),
     ):
-        with pytest.raises(PipelineError):
+        with pytest.raises(PipelineError) as exc_info:
             run_pipeline(config=config, client=FakeClient())
+        assert exc_info.value.failed_phase == "phase_1"
 
     db = get_database_path(config)
     with sqlite3.connect(db) as conn:
@@ -360,7 +362,7 @@ test
     result = run_pipeline(
         story_id=sid, config=config, client=client, resume_from="phase_3"
     )
-    assert result.final_phase == "phase_5_done"
+    assert result.final_phase == "phase_6_done"
     # Phase 0/1/2 should NOT have been called → no calls with those purposes
     purposes = [c["purpose"] for c in client.calls]
     assert not any(p in ("phase_0", "phase_1", "phase_2") for p in purposes)
@@ -368,6 +370,62 @@ test
     assert any(p.startswith("phase_3_section_") for p in purposes)
     assert "phase_4" in purposes
     assert "phase_5" in purposes
+    assert "phase_6" in purposes
+
+
+def test_run_pipeline_resume_does_not_emit_phase_0_reset(tmp_path: Path) -> None:
+    """When resuming, ``current_phase`` and the transition log must not be
+    rewritten back to ``phase_0`` — atomic_runner relies on this so the
+    dashboard timeline shows the retry continuing from the failed phase.
+    """
+
+    _setup_project(tmp_path)
+    config = _config(tmp_path)
+    db = initialize_database(config)
+    sid = insert_story(
+        db,
+        Story(title="resume-test-no-reset", current_phase="failed_at_phase_4"),
+    )
+    work = tmp_path / "data" / "works" / str(sid)
+    work.mkdir(parents=True)
+    # Minimal artifacts so phases 0-3 are skipped via resume_from.
+    (work / "0_选题.json").write_text(
+        json.dumps({"target_length": [10000, 12000], "genre_id": "xian_dai_fu_chou"}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    (work / "1_设定.md").write_text(
+        "# 设定\n\n## final_title\n标题\n\n## summary\n" + ("我盯着银行短信。" * 12) + "\n\n## 一句话核心\nx\n",
+        encoding="utf-8",
+    )
+    from generator.c_pipeline.phase2_outline import OutlineSection, render_outline_md
+
+    sections = [
+        OutlineSection(
+            index=i, main_event=f"主{i}", sub_events=["a","b","c"], emotion="爆发",
+            new_info=f"info{i}", hook=f"hook{i}", foreshadowing="物件",
+            static_dynamic="动", dialogue_ratio="30%", target_words=1300,
+        )
+        for i in range(1, 9)
+    ]
+    (work / "2_小节大纲.md").write_text(render_outline_md(sections, target_length=10400), encoding="utf-8")
+    # Phase 3 combined output — required before phase_4 resume.
+    (work / "3_正文_合稿.md").write_text("正文" * 1000, encoding="utf-8")
+
+    run_pipeline(story_id=sid, config=config, client=FakeClient(), resume_from="phase_4")
+
+    # No phase_0 / phase_0_running marker should appear in this resume run.
+    with sqlite3.connect(db) as conn:
+        rows = list(
+            conn.execute(
+                "SELECT phase FROM phase_transitions WHERE story_id = ? ORDER BY id",
+                (sid,),
+            )
+        )
+    markers = [r[0] for r in rows]
+    assert "phase_0" not in markers
+    assert "phase_0_running" not in markers
+    # phase_4 was actually re-entered.
+    assert "phase_4_running" in markers
 
 
 # ============================================================ semaphore
@@ -390,3 +448,26 @@ def test_run_pipeline_writes_work_dir_into_stories(tmp_path: Path) -> None:
     db = get_database_path(config)
     story = get_story(db, result.story_id)
     assert story.work_dir.endswith(str(result.story_id))
+
+
+# ============================================================ cancellation
+
+
+def test_run_pipeline_cancellation_marks_story_cancelled(tmp_path: Path) -> None:
+    """``cancel_requested=1`` set before run_pipeline → cancelled status."""
+
+    from review_queue.db import insert_story, request_story_cancel
+
+    _setup_project(tmp_path)
+    config = _config(tmp_path)
+    db = initialize_database(config)
+    sid = insert_story(db, Story(title="待取消", status="pending"))
+    request_story_cancel(db, sid)
+
+    result = run_pipeline(story_id=sid, config=config, client=FakeClient())
+    assert result.status == "cancelled"
+    assert result.final_phase.startswith("cancelled_at_")
+    story = get_story(db, sid)
+    assert story is not None
+    assert story.status == "cancelled"
+    assert story.current_phase.startswith("cancelled_at_")

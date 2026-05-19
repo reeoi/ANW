@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS stories (
     ai_review_score REAL,
     ai_review_attempts INTEGER DEFAULT 0,
     content TEXT,
+    cancel_requested INTEGER NOT NULL DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -67,6 +68,16 @@ CREATE TABLE IF NOT EXISTS pipeline_cost_log (
 );
 
 CREATE INDEX IF NOT EXISTS idx_cost_log_occurred_at ON pipeline_cost_log(occurred_at);
+
+CREATE TABLE IF NOT EXISTS phase_transitions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    story_id INTEGER NOT NULL,
+    phase TEXT NOT NULL,
+    occurred_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(story_id) REFERENCES stories(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_phase_transitions_story_id ON phase_transitions(story_id, id);
 """
 
 REVIEWABLE_STATUSES: tuple[str, ...] = ("pending", "needs_human")
@@ -80,6 +91,7 @@ def initialize_database(config: LoadedConfig) -> Path:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(db_path) as connection:
         connection.executescript(SCHEMA)
+        _migrate_add_cancel_requested(connection)
     try:
         from review_queue.metrics import ensure_metrics_schema
 
@@ -87,6 +99,33 @@ def initialize_database(config: LoadedConfig) -> Path:
     except Exception:  # pragma: no cover - metrics is best-effort
         pass
     return db_path
+
+
+def _migrate_add_cancel_requested(connection: sqlite3.Connection) -> None:
+    """Add ``cancel_requested`` column to legacy stories tables (idempotent)."""
+
+    cols = {row[1] for row in connection.execute("PRAGMA table_info(stories)").fetchall()}
+    if "cancel_requested" not in cols:
+        connection.execute(
+            "ALTER TABLE stories ADD COLUMN cancel_requested INTEGER NOT NULL DEFAULT 0"
+        )
+    if "preset_name" not in cols:
+        connection.execute(
+            "ALTER TABLE stories ADD COLUMN preset_name TEXT NOT NULL DEFAULT ''"
+        )
+    # Phase 6: pending_human_input table
+    connection.execute("""
+        CREATE TABLE IF NOT EXISTS pending_human_input (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            story_id INTEGER NOT NULL,
+            prompt TEXT NOT NULL DEFAULT '',
+            input_schema TEXT NOT NULL DEFAULT '{}',
+            payload_json TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            resolved_at TIMESTAMP,
+            FOREIGN KEY(story_id) REFERENCES stories(id)
+        )
+    """)
 
 
 def get_database_path(config: LoadedConfig) -> Path:
@@ -185,7 +224,13 @@ def update_story_phase(
     current_phase: str,
     final_content_path: str | None = None,
 ) -> bool:
-    """Advance the pipeline state machine for a story."""
+    """Advance the pipeline state machine for a story.
+
+    Also appends a row to ``phase_transitions`` so the dashboard can render a
+    timeline of when each phase entered / completed. The transition is logged
+    even when the phase string is identical to the current value, since the
+    orchestrator may re-emit the same marker on retry.
+    """
 
     with sqlite3.connect(Path(db_path)) as connection:
         cursor = connection.execute(
@@ -198,7 +243,36 @@ def update_story_phase(
             """,
             (current_phase, final_content_path, story_id),
         )
+        if cursor.rowcount > 0:
+            connection.execute(
+                "INSERT INTO phase_transitions (story_id, phase) VALUES (?, ?)",
+                (story_id, current_phase),
+            )
         return cursor.rowcount > 0
+
+
+def list_phase_transitions(
+    db_path: str | Path, story_id: int
+) -> list[dict[str, str]]:
+    """Return chronological phase transitions for one story.
+
+    Each entry is ``{"phase": "phase_2_done", "occurred_at": "2026-05-08T..."}``
+    in the order they were recorded. Returns an empty list when the story has
+    no transitions (e.g. legacy rows created before this table existed).
+    """
+
+    with sqlite3.connect(Path(db_path)) as connection:
+        connection.row_factory = sqlite3.Row
+        rows = connection.execute(
+            """
+            SELECT phase, occurred_at
+            FROM phase_transitions
+            WHERE story_id = ?
+            ORDER BY id ASC
+            """,
+            (story_id,),
+        ).fetchall()
+    return [{"phase": r["phase"], "occurred_at": r["occurred_at"]} for r in rows]
 
 
 def update_story_ai_review(
@@ -338,11 +412,19 @@ def get_daily_publish_plan(db_path: str | Path, date: str) -> DailyPublishPlan |
 def story_from_row(row: sqlite3.Row) -> Story:
     """Convert a sqlite Row from ``stories`` into a Story dataclass."""
 
+    keys = row.keys() if hasattr(row, "keys") else []
+    cancel_value = 0
+    if "cancel_requested" in keys:
+        try:
+            cancel_value = int(row["cancel_requested"] or 0)
+        except (TypeError, ValueError):
+            cancel_value = 0
     return Story(
         id=int(row["id"]),
         title=str(row["title"]),
         status=str(row["status"]),
         pipeline_version=str(row["pipeline_version"]),
+        preset_name=str(row["preset_name"] or "") if "preset_name" in keys else "",
         work_dir=str(row["work_dir"] or ""),
         current_phase=str(row["current_phase"]),
         final_content_path=row["final_content_path"],
@@ -355,19 +437,53 @@ def story_from_row(row: sqlite3.Row) -> Story:
         ai_review_score=row["ai_review_score"],
         ai_review_attempts=int(row["ai_review_attempts"] or 0),
         content=row["content"],
+        cancel_requested=cancel_value,
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
 
 
 _SELECT_STORY_SQL = """
-SELECT id, title, status, pipeline_version, work_dir, current_phase,
+SELECT id, title, status, pipeline_version, preset_name, work_dir, current_phase,
        final_content_path, pipeline_cost_cny, target_length,
        emotion, genre, hint_title, summary,
        ai_review_score, ai_review_attempts, content,
+       cancel_requested,
        created_at, updated_at
 FROM stories
 """.strip()
+
+
+def request_story_cancel(db_path: str | Path, story_id: int) -> bool:
+    """Set ``cancel_requested = 1`` for a story (cooperative cancel signal)."""
+
+    with sqlite3.connect(Path(db_path)) as connection:
+        cursor = connection.execute(
+            """
+            UPDATE stories
+            SET cancel_requested = 1,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (story_id,),
+        )
+        return cursor.rowcount > 0
+
+
+def is_cancel_requested(db_path: str | Path, story_id: int) -> bool:
+    """Return True if ``cancel_requested = 1`` for the given story."""
+
+    with sqlite3.connect(Path(db_path)) as connection:
+        row = connection.execute(
+            "SELECT cancel_requested FROM stories WHERE id = ?",
+            (story_id,),
+        ).fetchone()
+    if row is None:
+        return False
+    try:
+        return bool(int(row[0] or 0))
+    except (TypeError, ValueError):
+        return False
 
 
 __all__ = [
@@ -381,7 +497,10 @@ __all__ = [
     "initialize_database",
     "insert_pipeline_cost_log",
     "insert_story",
+    "is_cancel_requested",
     "list_reviewable_stories",
+    "request_story_cancel",
+    "list_phase_transitions",
     "story_from_row",
     "update_story_ai_review",
     "update_story_metadata",

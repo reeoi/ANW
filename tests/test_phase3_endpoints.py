@@ -148,9 +148,10 @@ def test_monitor_cards_endpoint_returns_4_cards(isolated_env: dict[str, Path]) -
 
 
 def test_monitor_cards_endpoint_when_scheduler_off(isolated_env: dict[str, Path]) -> None:
+    """调度器已下线，next_run 永远是占位（无 next_run_at）。"""
     r = _request("GET", "/api/monitor/cards")
     body = json.loads(r["body"])
-    assert body["next_run"]["level"] == "danger"
+    assert body["next_run"]["next_run_at"] is None
 
 
 def test_monitor_cards_endpoint_includes_generated_at(isolated_env: dict[str, Path]) -> None:

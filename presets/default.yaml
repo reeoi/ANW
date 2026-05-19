@@ -1,0 +1,60 @@
+name: "标准深度模式"
+inherits: null
+variables: {}
+
+steps:
+  - id: phase_0
+    type: builtin
+    label: "选题"
+    enabled: true
+    pause_after: false
+    prompt_override: null
+
+  - id: phase_1
+    type: builtin
+    label: "框架/简介"
+    enabled: true
+    pause_after: false
+    prompt_override: null
+
+  - id: phase_2
+    type: builtin
+    label: "大纲"
+    enabled: true
+    pause_after: false
+    prompt_override: null
+
+  - id: phase_3
+    type: builtin
+    label: "逐节生成"
+    enabled: true
+    pause_after: false
+    prompt_override: null
+
+  - id: phase_4
+    type: builtin
+    label: "精修"
+    enabled: true
+    pause_after: false
+    prompt_override: null
+
+  - id: phase_5
+    type: builtin
+    label: "去AI味"
+    enabled: true
+    pause_after: false
+    prompt_override: null
+
+  - id: phase_5_5
+    type: builtin
+    label: "朱雀检测"
+    enabled: true
+    pause_after: false
+    prompt_override: null
+
+  - id: phase_6
+    type: builtin
+    label: "分章"
+    enabled: true
+    pause_after: false
+    prompt_override: null

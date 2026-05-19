@@ -203,7 +203,7 @@ def test_resume_from_phase_2_completes_with_partial_artifacts(tmp_path: Path) ->
     )
 
     assert result.story_id == sid
-    assert result.final_phase == "phase_5_done"
+    assert result.final_phase == "phase_6_done"
     assert result.status in {"pending", "needs_human"}
     assert result.final_content_path is not None and Path(result.final_content_path).exists()
 
@@ -215,7 +215,7 @@ def test_resume_from_phase_2_completes_with_partial_artifacts(tmp_path: Path) ->
     refreshed = get_story(db, sid)
     assert refreshed is not None
     assert refreshed.status in {"pending", "needs_human"}
-    assert refreshed.current_phase == "phase_5_done"
+    assert refreshed.current_phase == "phase_6_done"
     assert refreshed.final_content_path
     assert Path(refreshed.final_content_path).exists()
 

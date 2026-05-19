@@ -201,7 +201,7 @@ def build_phase0_prompt(
             "role": "system",
             "content": (
                 "你是中文短篇网文资深编剧。"
-                "严格按 JSON 对象输出选题卡片,不要 Markdown 代码块,不要解释文字。"
+                "严格按 JSON 对象输出选题卡片,不要 Markdown 代码块,不要解释文字。输出必须是合法 json。"
             ),
         },
         {"role": "user", "content": user_text},

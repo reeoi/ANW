@@ -20,6 +20,7 @@ from review_queue.db import (
     initialize_database,
     insert_pipeline_cost_log,
     insert_story,
+    list_phase_transitions,
     update_story_ai_review,
     update_story_metadata,
     update_story_phase,
@@ -54,6 +55,7 @@ def test_stories_columns_match_plan(tmp_path: Path) -> None:
         "final_content_path", "pipeline_cost_cny", "target_length",
         "emotion", "genre", "hint_title", "summary",
         "ai_review_score", "ai_review_attempts", "content",
+        "cancel_requested", "preset_name",
         "created_at", "updated_at",
     }
     assert expected == cols
@@ -215,3 +217,34 @@ def test_story_read_final_content_reads_file(tmp_path: Path) -> None:
     text = story.read_final_content()
     assert text is not None
     assert "正文段落" in text
+
+
+def test_phase_transitions_table_created_with_index(tmp_path: Path) -> None:
+    db = initialize_database(_config(tmp_path))
+    with sqlite3.connect(db) as conn:
+        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        indexes = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='index'")}
+    assert "phase_transitions" in tables
+    assert "idx_phase_transitions_story_id" in indexes
+
+
+def test_update_story_phase_logs_transition(tmp_path: Path) -> None:
+    db = initialize_database(_config(tmp_path))
+    sid = insert_story(db, Story(title="t"))
+    update_story_phase(db, sid, "phase_0_running")
+    update_story_phase(db, sid, "phase_0_done")
+    update_story_phase(db, sid, "phase_1_running")
+    rows = list_phase_transitions(db, sid)
+    # initial insert_story emits an implicit phase_0 row via DEFAULT, but
+    # list_phase_transitions only returns rows we wrote ourselves.
+    assert [r["phase"] for r in rows] == [
+        "phase_0_running",
+        "phase_0_done",
+        "phase_1_running",
+    ]
+    assert all(r["occurred_at"] for r in rows)
+
+
+def test_list_phase_transitions_unknown_story_returns_empty(tmp_path: Path) -> None:
+    db = initialize_database(_config(tmp_path))
+    assert list_phase_transitions(db, 9999) == []

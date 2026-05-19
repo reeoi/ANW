@@ -9,13 +9,13 @@ deepseek:
   flash_model: "deepseek-v4-flash"               # B2: budget-driven downgrade target
   thinking_mode: true                            # pro reasoning mode toggle
   prompt_cache_enabled: true                     # 1M-context prompt cache
-  timeout_seconds: 120                           # phase 4 polish runs long
+  timeout_seconds: 60                            # phase 4 polish runs long
   max_retries: 3
-  mock: true                                     # auto-enabled by config_loader when api_key missing
+  mock: false                                    # env: ANP_MOCK_DEEPSEEK
 
 runtime:
   mode: "semi-auto"                              # auto | semi-auto; env: ANP_MODE
-  dry_run: true                                  # env: ANP_DRY_RUN
+  dry_run: false                                 # env: ANP_DRY_RUN
   project_root: "."
 
 audit:
@@ -31,33 +31,11 @@ audit:
     safety: 0.10
     platform_fit: 0.10
 
-publisher:
-  default_platform: "fansq"
-  platforms:
-    - "fansq"
-  daily_count_distribution: "uniform"            # R3: uniform_int[0, 5]
-  daily_count_min: 0
-  daily_count_max: 5
-  operating_hours: ["09:00", "22:00"]
-  slot_min_gap_minutes: 30
-  fansq:
-    enabled: true
-    username: ""                                 # env: FANSQ_USERNAME
-    password: ""                                 # env: FANSQ_PASSWORD
-    login_state_path: "data/browser/fansq_state.json"  # env: FANSQ_LOGIN_STATE_PATH
-    draft_url: "https://fanqienovel.com/"
-    min_publish_interval_minutes: 5              # secondary jitter on each slot
-    max_publish_interval_minutes: 15
-    pause_on_risk_control: true
-
 scheduler:
   enabled: true
   timezone: "Asia/Shanghai"
   weekly_scan_cron: "0 3 * * 1"                  # weekly seed evolution Mon 03:00
-  plan_today_cron: "0 3 * * *"                   # daily publish plan 03:00
-  generate_cron: ""                              # disabled: c_pipeline runs are slot-driven
   review_cron: "30 9 * * *"
-  publish_cron: ""                               # disabled: use daily_publish_plan slots
   backup_cron: "0 4 * * *"
 
 scan:
@@ -66,19 +44,41 @@ scan:
   seed_file: "data/scan_seeds.yaml"
 
 c_pipeline:
+  active_preset: "default"                       # 当前活跃的预设名（presets/ 目录下的 YAML 文件）
   max_concurrent_pipelines: 2                    # K2 concurrent stories
   phase_2_max_retries: 2
   phase_3_section_max_retries: 2
   ai_slop_blacklist_path: "generator/c_pipeline/prompts/ai_slop_blacklist.json"
   genre_formulas_path: "generator/c_pipeline/prompts/genre_formulas.json"
+  chapter_titling:                                # Phase 6 — split short story into chapters
+    enabled: true
+    min_chapters: 5
+    max_chapters: 10
+    title_min_chars: 3
+    title_max_chars: 8
+  zhuque_loop:                                    # Phase 5.5 — 朱雀 AI 检测闭环
+    enabled: true                                 # 设为 false 跳过朱雀检测
+    max_rounds: 3                                 # 最多重写轮数（含首次检测）
+    char_limit: 2000                              # 朱雀单次提交字数上限（实测后调整）
+    wait_result_seconds: 30                       # 等待检测结果出现的超时
+  phase_controls:                                 # 每个 phase 的执行控制：auto | skip | pause_after
+    phase_0: "pause_after"
+    phase_1: "auto"
+    phase_2: "auto"
+    phase_3: "auto"
+    phase_4: "auto"
+    phase_5: "auto"
+    phase_5_5: "auto"
+    phase_6: "auto"
 
 cost_limits:
   monthly_budget_cny: 100.0                      # B2: monthly budget
-  daily_token_limit: 800000
+  daily_token_limit: 8000000
   on_budget_exceeded: "degrade"                  # replaces legacy stop_when_exceeded
   degrade_phases:
     - "phase_3"
     - "phase_5"
+    - "phase_6"
     - "ai_review"
     - "weekly_scan"
 

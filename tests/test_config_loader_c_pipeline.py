@@ -57,7 +57,9 @@ def test_default_config_yaml_parses_with_c_pipeline_fields() -> None:
     assert cost_limits["monthly_budget_cny"] == 100.0
     assert cost_limits["daily_token_limit"] == 800000
     assert cost_limits["on_budget_exceeded"] == "degrade"
-    assert cost_limits["degrade_phases"] == ["phase_3", "phase_5", "ai_review", "weekly_scan"]
+    assert cost_limits["degrade_phases"] == [
+        "phase_3", "phase_5", "phase_6", "ai_review", "weekly_scan"
+    ]
 
 
 def test_default_config_drops_legacy_generation_block() -> None:

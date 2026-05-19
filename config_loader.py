@@ -57,9 +57,6 @@ SENSITIVE_ENV_OVERRIDES: dict[tuple[str, ...], str] = {
     ("deepseek", "base_url"): "DEEPSEEK_BASE_URL",
     ("deepseek", "model"): "DEEPSEEK_MODEL",
     ("deepseek", "flash_model"): "DEEPSEEK_FLASH_MODEL",
-    ("publisher", "fansq", "username"): "FANSQ_USERNAME",
-    ("publisher", "fansq", "password"): "FANSQ_PASSWORD",
-    ("publisher", "fansq", "login_state_path"): "FANSQ_LOGIN_STATE_PATH",
 }
 
 GENERAL_ENV_OVERRIDES: dict[tuple[str, ...], str] = {
@@ -79,11 +76,6 @@ GENERAL_ENV_OVERRIDES: dict[tuple[str, ...], str] = {
     ("cost_limits", "monthly_budget_cny"): "ANP_MONTHLY_BUDGET_CNY",
     ("cost_limits", "daily_token_limit"): "ANP_DAILY_TOKEN_LIMIT",
     ("cost_limits", "on_budget_exceeded"): "ANP_ON_BUDGET_EXCEEDED",
-    ("publisher", "fansq", "min_publish_interval_minutes"): "ANP_MIN_PUBLISH_INTERVAL_MINUTES",
-    ("publisher", "fansq", "max_publish_interval_minutes"): "ANP_MAX_PUBLISH_INTERVAL_MINUTES",
-    ("publisher", "daily_count_min"): "ANP_DAILY_COUNT_MIN",
-    ("publisher", "daily_count_max"): "ANP_DAILY_COUNT_MAX",
-    ("publisher", "slot_min_gap_minutes"): "ANP_SLOT_MIN_GAP_MINUTES",
     ("scheduler", "enabled"): "ANP_SCHEDULER_ENABLED",
     ("scheduler", "weekly_scan_cron"): "ANP_WEEKLY_SCAN_CRON",
     ("scheduler", "plan_today_cron"): "ANP_PLAN_TODAY_CRON",
@@ -120,7 +112,7 @@ def load_config(path: str | Path | None = None) -> LoadedConfig:
 
     dotenv_path = Path(os.getenv("ANP_DOTENV") or DEFAULT_DOTENV_PATH)
     if dotenv_path.exists():
-        load_dotenv(dotenv_path, override=False)
+        load_dotenv(dotenv_path, override=True)
 
     try:
         raw = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
@@ -143,15 +135,36 @@ def load_from_environment() -> LoadedConfig:
     return load_config(os.getenv("ANP_CONFIG") or DEFAULT_CONFIG_PATH)
 
 
+def is_wf_next() -> bool:
+    """Check if ANP_WF_NEXT=1 feature flag is set (phased rollout for workflow v2)."""
+    return os.getenv("ANP_WF_NEXT", "").strip() in ("1", "true", "yes", "on")
+
+
 def _apply_environment_overrides(
     data: dict[str, Any], overrides: dict[tuple[str, ...], str]
 ) -> None:
     for keys, env_name in overrides.items():
         value = os.getenv(env_name)
-        if value is None or value == "":
+        if value is None:
+            continue
+        value = _strip_env_quotes(value)
+        if value == "":
             continue
         existing_value = _get_nested(data, keys)
         _set_nested(data, keys, _coerce_env_value(value, existing_value))
+
+
+def _strip_env_quotes(value: str) -> str:
+    """Strip a single matched pair of surrounding quotes from an env value.
+
+    Some shells / GUIs persist values like ``KEY=""`` literally including the
+    quote characters. Treat such values as empty so we fall back to YAML
+    defaults instead of producing URLs like ``""/chat/completions``.
+    """
+    s = value.strip()
+    if len(s) >= 2 and s[0] == s[-1] and s[0] in ('"', "'"):
+        s = s[1:-1]
+    return s
 
 
 def _ensure_safe_runtime(data: dict[str, Any]) -> list[str]:
@@ -227,4 +240,4 @@ def _coerce_env_value(value: str, existing_value: Any) -> Any:
     return value
 
 
-__all__ = ["ConfigError", "LoadedConfig", "load_config", "load_from_environment"]
+__all__ = ["ConfigError", "LoadedConfig", "is_wf_next", "load_config", "load_from_environment"]

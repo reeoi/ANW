@@ -5,8 +5,8 @@ from __future__ import annotations
 import argparse
 
 from config_loader import load_from_environment
-from queue.ai_review import run_review_batch
-from queue.db import initialize_database
+from review_queue.ai_review import run_review_batch
+from review_queue.db import initialize_database
 
 
 def main() -> int:

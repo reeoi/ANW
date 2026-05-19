@@ -1,0 +1,23 @@
+name: '1'
+steps:
+- id: paste_text_dialog
+  label: 粘贴文本对话框
+  type: custom
+  description: 弹出一个命令行提示窗口，让用户粘贴文本
+  input: '{prev_output}'
+  output: 用户粘贴文本.md
+  enabled: true
+  pause_after: false
+  actions:
+  - action: python_snippet
+    code: "def run(input_text, ctx):\n    print(\"请粘贴文本（支持多行，输入空行结束）:\")\n    lines\
+      \ = []\n    while True:\n        try:\n            line = input()\n        \
+      \    if line == \"\":\n                break\n            lines.append(line)\n\
+      \        except EOFError:\n            break\n    text = \"\\n\".join(lines)\n\
+      \    return {\"pasted_text\": text}"
+    output_var: user_input
+  - action: write_file
+    path: '{work_dir}/用户粘贴文本.md'
+    content: '{user_input.pasted_text}'
+inherits: null
+variables: {}

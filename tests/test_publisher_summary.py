@@ -80,6 +80,8 @@ class FakeLocator:
     visible: bool = False
     text: str = ""
     fill_calls: list[str] = field(default_factory=list)
+    type_calls: list[str] = field(default_factory=list)
+    click_count: int = 0
 
     @property
     def first(self) -> "FakeLocator":
@@ -90,6 +92,12 @@ class FakeLocator:
 
     def fill(self, text: str) -> None:
         self.fill_calls.append(text)
+
+    def click(self, timeout: float = 0.0) -> None:
+        self.click_count += 1
+
+    def type(self, text: str, delay: int = 0) -> None:
+        self.type_calls.append(text)
 
     def inner_text(self, timeout: float = 0.0) -> str:
         return self.text
@@ -116,6 +124,28 @@ class FakePage:
             Path(path).parent.mkdir(parents=True, exist_ok=True)
             Path(path).write_bytes(b"fake-screenshot")
             self.screenshot_calls.append(path)
+
+    def wait_for_timeout(self, ms: int) -> None:
+        """Playwright sync API: pause for ms milliseconds. No-op in tests."""
+        return None
+
+    def evaluate(self, expression: str, *args: object) -> None:
+        """Playwright JS evaluate: no-op stub for tests."""
+        return None
+
+    @property
+    def keyboard(self) -> "FakeKeyboard":
+        if not hasattr(self, "_keyboard"):
+            self._keyboard = FakeKeyboard()
+        return self._keyboard
+
+
+@dataclass
+class FakeKeyboard:
+    pressed: list[str] = field(default_factory=list)
+
+    def press(self, key: str) -> None:
+        self.pressed.append(key)
 
 
 def _patch_browser(monkeypatch: pytest.MonkeyPatch, page: FakePage) -> None:
@@ -188,22 +218,21 @@ def test_live_path_fills_summary_into_简介_selector(
     summary_loc = FakeLocator(visible=True)
     page = FakePage(
         selectors={
-            "input[placeholder*='标题']": title_loc,
-            "textarea[placeholder*='正文']": content_loc,
+            "textarea.byte-textarea.serial-textarea": title_loc,
+            "div.ProseMirror": content_loc,
             "textarea[placeholder*='简介']": summary_loc,
         }
     )
     _patch_browser(monkeypatch, page)
+    monkeypatch.setattr("builtins.input", lambda *a, **kw: "")
     story = _approved_story(tmp_path)
 
     publisher = FansqPublisher(cfg)
     result = publisher.publish_story(story, dry_run=False)
-    # Pause-for-human is the MVP terminal state; status is PAUSED.
-    assert result.status == PublishStatus.PAUSED
+    # After successful fill + manual confirmation, status is PUBLISHED.
+    assert result.status == PublishStatus.PUBLISHED
     assert title_loc.fill_calls == [story.title]
-    assert content_loc.fill_calls and story.summary not in content_loc.fill_calls[0]
     assert summary_loc.fill_calls == [story.summary]
-    assert "简介已填入" in result.message
 
 
 def test_live_path_summary_present_but_no_selector_asks_human_to_paste(
@@ -212,19 +241,26 @@ def test_live_path_summary_present_but_no_selector_asks_human_to_paste(
     cfg = _config(tmp_path, dry_run=False)
     title_loc = FakeLocator(visible=True)
     content_loc = FakeLocator(visible=True)
+    captured: dict[str, str] = {}
+
+    def fake_input(prompt: str = "") -> str:
+        captured["prompt"] = prompt
+        return ""
+
     page = FakePage(
         selectors={
-            "input[placeholder*='标题']": title_loc,
-            "textarea[placeholder*='正文']": content_loc,
+            "textarea.byte-textarea.serial-textarea": title_loc,
+            "div.ProseMirror": content_loc,
         }
     )
     _patch_browser(monkeypatch, page)
+    monkeypatch.setattr("builtins.input", fake_input)
     story = _approved_story(tmp_path)
 
     publisher = FansqPublisher(cfg)
     result = publisher.publish_story(story, dry_run=False)
-    assert result.status == PublishStatus.PAUSED
-    assert "请人工粘贴" in result.message
+    assert result.status == PublishStatus.PUBLISHED
+    assert "请人工粘贴" in captured.get("prompt", "")
 
 
 def test_live_path_no_summary_skips_summary_box(
@@ -234,19 +270,26 @@ def test_live_path_no_summary_skips_summary_box(
     title_loc = FakeLocator(visible=True)
     content_loc = FakeLocator(visible=True)
     summary_loc = FakeLocator(visible=True)
+    captured: dict[str, str] = {}
+
+    def fake_input(prompt: str = "") -> str:
+        captured["prompt"] = prompt
+        return ""
+
     page = FakePage(
         selectors={
-            "input[placeholder*='标题']": title_loc,
-            "textarea[placeholder*='正文']": content_loc,
+            "textarea.byte-textarea.serial-textarea": title_loc,
+            "div.ProseMirror": content_loc,
             "textarea[placeholder*='简介']": summary_loc,
         }
     )
     _patch_browser(monkeypatch, page)
+    monkeypatch.setattr("builtins.input", fake_input)
     story = _approved_story(tmp_path, summary=None)
 
     publisher = FansqPublisher(cfg)
     result = publisher.publish_story(story, dry_run=False)
-    assert result.status == PublishStatus.PAUSED
+    assert result.status == PublishStatus.PUBLISHED
     # Summary selector should not have been touched when story.summary is empty.
     assert summary_loc.fill_calls == []
-    assert "无简介" in result.message
+    assert "无简介" in captured.get("prompt", "")

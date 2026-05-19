@@ -159,17 +159,105 @@ def test_phases_returns_progress_strip(env: dict[str, Path]) -> None:
     assert body["current_phase"] == "phase_3_section_05_done"
     assert body["state"] == "running"
     assert body["section_index"] == 5
-    assert len(body["steps"]) == 6
+    assert len(body["steps"]) == 9  # 6 generation + zhuque + review + publish
     assert body["steps"][2]["status"] == "done"
     assert body["steps"][3]["status"] == "in_progress"
 
 
-def test_phases_phase_5_done_reports_complete(env: dict[str, Path]) -> None:
+def test_phases_phase_7_done_reports_complete(env: dict[str, Path]) -> None:
+    """全流程完成（审核+发布）才算 100%。"""
     initialize_database(LoadedConfig(data={"database": {"sqlite_path": str(env["db"])}}, path=env["cfg"]))
-    sid = _seed_story(env["db"], current_phase="phase_5_done")
+    sid = _seed_story(env["db"], current_phase="phase_7_done")
     body = json.loads(_request("GET", f"/api/stories/{sid}/phases")["body"])
     assert body["state"] == "done"
     assert body["percent"] == 100.0
+
+
+def test_phases_phase_5_done_advances_to_review(env: dict[str, Path]) -> None:
+    """phase_5_done 不再是终态，应该在 phase_6（审核）位置 in_progress。"""
+    initialize_database(LoadedConfig(data={"database": {"sqlite_path": str(env["db"])}}, path=env["cfg"]))
+    sid = _seed_story(env["db"], current_phase="phase_5_done")
+    body = json.loads(_request("GET", f"/api/stories/{sid}/phases")["body"])
+    assert body["state"] == "running"
+    assert body["steps"][5]["status"] == "done"
+    assert body["steps"][6]["status"] == "in_progress"
+
+
+def test_phases_includes_timeline_after_transitions(env: dict[str, Path]) -> None:
+    initialize_database(LoadedConfig(data={"database": {"sqlite_path": str(env["db"])}}, path=env["cfg"]))
+    sid = _seed_story(env["db"], current_phase="phase_0")
+    from review_queue.db import update_story_phase
+
+    update_story_phase(env["db"], sid, "phase_0_running")
+    update_story_phase(env["db"], sid, "phase_0_done")
+    update_story_phase(env["db"], sid, "phase_1_running")
+    body = json.loads(_request("GET", f"/api/stories/{sid}/phases")["body"])
+    timeline = body["timeline"]
+    assert [e["phase"] for e in timeline] == ["phase_0", "phase_1"]
+    assert timeline[0]["status"] == "done"
+    assert timeline[0]["completed_at"] is not None
+    assert timeline[1]["status"] == "in_progress"
+    assert timeline[1]["completed_at"] is None
+
+
+def test_phases_section_progress_reads_outline_total(
+    env: dict[str, Path], tmp_path: Path
+) -> None:
+    initialize_database(LoadedConfig(data={"database": {"sqlite_path": str(env["db"])}}, path=env["cfg"]))
+    work_dir = tmp_path / "work_section"
+    work_dir.mkdir()
+    (work_dir / "2_小节大纲.md").write_text("- section_count: 8\n", encoding="utf-8")
+    sid = _seed_story(env["db"], work_dir=work_dir, current_phase="phase_3_section_03_done")
+    from review_queue.db import update_story_phase
+
+    update_story_phase(env["db"], sid, "phase_3_running")
+    update_story_phase(env["db"], sid, "phase_3_section_01_done")
+    update_story_phase(env["db"], sid, "phase_3_section_03_done")
+    body = json.loads(_request("GET", f"/api/stories/{sid}/phases")["body"])
+    assert body["phase_3_section"] == {"current": 3, "total": 8, "completed": [1, 3]}
+
+
+def test_phases_artifacts_payload_marks_existing_files(
+    env: dict[str, Path], tmp_path: Path
+) -> None:
+    initialize_database(LoadedConfig(data={"database": {"sqlite_path": str(env["db"])}}, path=env["cfg"]))
+    work_dir = tmp_path / "work_artifacts"
+    work_dir.mkdir()
+    (work_dir / "0_选题.json").write_text("{}", encoding="utf-8")
+    sid = _seed_story(env["db"], work_dir=work_dir, current_phase="phase_1_running")
+    body = json.loads(_request("GET", f"/api/stories/{sid}/phases")["body"])
+    artifacts = body["artifacts"]
+    assert artifacts["phase_0"][0]["exists"] is True
+    assert artifacts["phase_1"][0]["exists"] is False
+
+
+def test_phases_payload_surfaces_retry_state_after_failure(env: dict[str, Path]) -> None:
+    initialize_database(LoadedConfig(data={"database": {"sqlite_path": str(env["db"])}}, path=env["cfg"]))
+    sid = _seed_story(env["db"], current_phase="phase_3_running")
+    from review_queue.db import update_story_phase
+
+    # Attempt 1 — gets to phase_4 then fails.
+    update_story_phase(env["db"], sid, "phase_0_running")
+    update_story_phase(env["db"], sid, "phase_0_done")
+    update_story_phase(env["db"], sid, "phase_4_running")
+    update_story_phase(env["db"], sid, "failed_at_phase_4")
+    # Orchestrator reset + retry.
+    update_story_phase(env["db"], sid, "phase_0")
+    update_story_phase(env["db"], sid, "phase_0_running")
+    update_story_phase(env["db"], sid, "phase_3_running")
+    body = json.loads(_request("GET", f"/api/stories/{sid}/phases")["body"])
+
+    # Retry banner surfaces previous failure phase.
+    assert body["retry"] == {"attempt": 2, "previous_failed_at": "phase_4"}
+    # Two attempt buckets.
+    assert len(body["attempts"]) == 2
+    assert body["attempts"][0]["status"] == "failed"
+    assert body["attempts"][0]["failed_at"] == "phase_4"
+    assert body["attempts"][1]["status"] == "in_progress"
+    # Chip strip still flags phase_4 as failed even though current_phase regressed.
+    by_phase = {s["phase"]: s["status"] for s in body["steps"]}
+    assert by_phase["phase_4"] == "failed"
+    assert by_phase["phase_3"] == "in_progress"
 
 
 # ============================================================ /files

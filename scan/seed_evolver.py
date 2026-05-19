@@ -234,7 +234,7 @@ def build_evolution_prompt(
 
     system = (
         "你是中文短篇网文市场分析师 + 题材策划。"
-        "严格按 JSON 数组输出 100 条 theme_pool item,不要 Markdown 代码块,不要解释文字。"
+        "严格按 JSON 数组输出 100 条 theme_pool item,不要 Markdown 代码块,不要解释文字。输出必须是合法 json。"
     )
     return [
         {"role": "system", "content": system},

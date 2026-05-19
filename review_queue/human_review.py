@@ -13,10 +13,9 @@ from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import FastAPI, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
 from config_loader import LoadedConfig, load_from_environment
-from publisher.base_publisher import PublishStatus
 from review_queue.ai_review import review_story_in_database, run_review_batch
 from review_queue.dashboard_assets import (
     DASHBOARD_BODY_TEMPLATE,
@@ -25,40 +24,63 @@ from review_queue.dashboard_assets import (
 )
 from review_queue.metrics import query_overview, record_pipeline_event
 from review_queue.phase_progress import (
+    PHASE_ARTIFACTS,
+    PhaseAttempt,
     PhaseProgress,
     PhaseStep,
+    PhaseTimelineEntry,
     WorkDirFile,
+    compute_attempts,
+    compute_overall_steps,
+    compute_phase3_section_progress,
     compute_phase_progress,
+    compute_phase_timeline,
+    list_phase_artifacts,
     list_work_dir_files,
     normalize_resume_from,
     read_work_dir_file,
 )
 from review_queue.settings_api import mode_router, router as settings_router
-from review_queue.control_api import router as control_router, scheduler_manager
+from review_queue.control_api import router as control_router
+from review_queue.scan_plan_api import router as scan_plan_router
+from review_queue.console_api import router as console_router
+from generator.long_novel.api import router as long_novel_router
+from generator.long_novel.theme_api import router as theme_router
 from review_queue.db import (
     get_database_path,
     get_story,
     initialize_database,
+    list_phase_transitions,
     list_reviewable_stories,
     story_from_row,
     update_story_metadata,
     update_story_status,
 )
 from review_queue.models import Story
-from scheduler import configure_logging, recent_log_lines
+from runtime_helpers import configure_logging, recent_log_lines
 
 logger = logging.getLogger(__name__)
 
-_GENERATE_DISABLED_MESSAGE = (
-    "生成入口已停用:c_pipeline 重构 Phase A 已移除旧的单步生成路径。"
-    "Phase C 上线后会通过 generator.c_pipeline.orchestrator 触发多阶段流水线;"
-    "Phase E 集成接线后此 API 将改为按 daily_publish_plan + theme_pool 启动。"
-)
 
 app = FastAPI(title="ANP Local Studio")
 app.include_router(settings_router)
 app.include_router(mode_router)
 app.include_router(control_router)
+app.include_router(scan_plan_router)
+app.include_router(console_router)
+app.include_router(long_novel_router)
+app.include_router(theme_router)
+
+# Ensure long-novel + theme tables exist on startup
+from generator.long_novel.db import initialize_long_novel_tables
+from generator.long_novel.theme_db import initialize_theme_tables
+
+
+@app.on_event("startup")
+async def _ensure_long_novel_tables() -> None:
+    db_path = initialize_database(load_from_environment())
+    initialize_long_novel_tables(db_path)
+    initialize_theme_tables(db_path)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -119,10 +141,80 @@ def api_story_detail(story_id: int) -> dict[str, Any]:
 
 @app.get("/api/stories/{story_id}/phases")
 def api_story_phases(story_id: int) -> dict[str, Any]:
-    """Phase progress strip for one story (compute_phase_progress)."""
+    """Phase progress strip for one story (compute_phase_progress).
+
+    Returns the 6-step strip plus an enriched timeline (phase_transitions
+    aggregated into per-phase enter/exit timestamps + duration), Phase 3
+    section sub-progress, and per-phase artifact filenames so the dashboard
+    can wire the "查看产物" buttons without hard-coding paths.
+    """
 
     story = _ensure_story_exists(story_id)
     progress = compute_phase_progress(story.current_phase)
+
+    config = load_from_environment()
+    db_path = get_database_path(config)
+    transitions: list[dict[str, str]] = []
+    try:
+        transitions = list_phase_transitions(db_path, story.id)
+    except sqlite3.OperationalError:
+        # phase_transitions table is created lazily by initialize_database;
+        # if the dashboard is loaded before any pipeline run we can still
+        # return the static strip.
+        transitions = []
+
+    work_dir: Path | None = None
+    raw_dir = (story.work_dir or "").strip()
+    if raw_dir:
+        candidate = Path(raw_dir)
+        if candidate.exists() and candidate.is_dir():
+            work_dir = candidate
+
+    now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    timeline = compute_phase_timeline(transitions, now_iso=now_iso)
+    attempts = compute_attempts(transitions, now_iso=now_iso)
+    overall_steps = compute_overall_steps(transitions, story.current_phase)
+    section_progress = compute_phase3_section_progress(transitions, work_dir=work_dir)
+    artifacts = list_phase_artifacts(work_dir)
+
+    # If story was generated with a custom preset, include its steps and output files
+    preset_steps: list[dict[str, Any]] | None = None
+    preset_name = (story.preset_name or "").strip()
+    if preset_name and preset_name != "default":
+        try:
+            from generator.c_pipeline.preset_loader import load_preset
+            preset = load_preset(preset_name)
+            raw_steps = preset.get("steps") or []
+            preset_steps = [
+                {"phase": s.get("id", ""), "label": s.get("label", s.get("id", "")),
+                 "status": _preset_step_status(s.get("id", ""), story.current_phase, raw_steps)}
+                for s in raw_steps
+            ]
+            # Also add preset-declared output files to artifacts
+            if work_dir is not None:
+                for s in raw_steps:
+                    sid = s.get("id", "")
+                    out = s.get("output")
+                    if not sid or not out:
+                        continue
+                    target = work_dir / out
+                    exists = target.exists() and target.is_file()
+                    size = target.stat().st_size if exists else None
+                    artifacts[sid] = [{"name": out, "exists": exists, "size_bytes": size}]
+        except Exception:
+            preset_steps = None
+
+    last_failed = next(
+        (a for a in reversed(attempts[:-1]) if a.status == "failed"),
+        None,
+    )
+    retry_banner: dict[str, Any] | None = None
+    if len(attempts) > 1:
+        retry_banner = {
+            "attempt": len(attempts),
+            "previous_failed_at": last_failed.failed_at if last_failed else None,
+        }
+
     return {
         "ok": True,
         "story_id": story.id,
@@ -132,7 +224,14 @@ def api_story_phases(story_id: int) -> dict[str, Any]:
         "state": progress.state,
         "failed_at": progress.failed_at,
         "section_index": progress.section_index,
-        "steps": [_phase_step_payload(step) for step in progress.steps],
+        "steps": [_phase_step_payload(step) for step in overall_steps],
+        "preset_steps": preset_steps,
+        "timeline": [_timeline_payload(entry) for entry in timeline],
+        "attempts": [_attempt_payload(a) for a in attempts],
+        "retry": retry_banner,
+        "phase_3_section": _section_payload(section_progress),
+        "artifacts": artifacts,
+        "work_dir": str(work_dir) if work_dir else None,
     }
 
 
@@ -245,11 +344,73 @@ async def api_story_resume(story_id: int, request: Request) -> dict[str, Any]:
     }
 
 
+@app.post("/api/stories/{story_id}/rerun-phase/{phase}")
+def api_rerun_phase(story_id: int, phase: str, mode: str = "all") -> dict[str, Any]:
+    """重新运行 phase。
+
+    mode=all（默认）：从该 phase 开始跑完所有后续步骤。
+    mode=single：只跑这一个 phase，跑完就停。
+    """
+    from review_queue.phase_progress import PHASES as PROGRESS_PHASES
+
+    if phase not in PROGRESS_PHASES:
+        valid = ", ".join(PROGRESS_PHASES)
+        raise HTTPException(status_code=400, detail=f"无效 phase：{phase}。可选值：{valid}")
+
+    if mode not in ("all", "single"):
+        raise HTTPException(status_code=400, detail="mode 必须是 all 或 single")
+
+    story = _ensure_story_exists(story_id)
+    config = _load_config()
+    db_path = _database_path(config)
+
+    stop_after = phase if mode == "single" else None
+    try:
+        result = _invoke_resume_pipeline(
+            story_id=story.id,
+            resume_from=phase,
+            config=config,
+            stop_after=stop_after,
+        )
+    except Exception as exc:
+        record_pipeline_event(
+            db_path,
+            kind="rerun_phase",
+            status="failed",
+            story_id=story.id,
+            message=f"rerun {phase} mode={mode}: {exc}",
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"rerun {phase} failed: {exc.__class__.__name__}: {exc}",
+        ) from exc
+
+    record_pipeline_event(
+        db_path,
+        kind="rerun_phase",
+        status=str(getattr(result, "status", "")) or "completed",
+        story_id=story.id,
+        message=f"rerun from {phase} mode={mode}",
+        detail=str(getattr(result, "final_phase", "")),
+    )
+    logger.info("Dashboard rerun-phase: story_id=%s phase=%s mode=%s", story.id, phase, mode)
+    return {
+        "ok": True,
+        "message": f"已{'仅' if mode == 'single' else '从'} {phase} {'重跑' if mode == 'single' else '开始重跑'}作品 #{story.id}",
+        "story_id": story.id,
+        "phase": phase,
+        "mode": mode,
+        "final_phase": getattr(result, "final_phase", None),
+        "status": getattr(result, "status", None),
+    }
+
+
 def _invoke_resume_pipeline(
     *,
     story_id: int,
     resume_from: str,
     config: LoadedConfig,
+    stop_after: str | None = None,
 ) -> Any:
     """Indirection layer so tests can monkeypatch the orchestrator call."""
 
@@ -259,6 +420,7 @@ def _invoke_resume_pipeline(
         story_id=story_id,
         config=config,
         resume_from=resume_from,
+        stop_after=stop_after,
     )
 
 
@@ -278,8 +440,111 @@ def _story_work_dir_or_404(story: Story) -> Path:
     return work_dir
 
 
+def _preset_step_status(step_id: str, current_phase: str, all_steps: list[dict[str, Any]]) -> str:
+    """Determine status of a preset step relative to the story's current_phase."""
+    if current_phase == "complete":
+        return "done"
+    # Find the running/completed step
+    for i, s in enumerate(all_steps):
+        sid = s.get("id", "")
+        if current_phase.startswith(sid):
+            if current_phase.endswith("_done"):
+                return "done"
+            if current_phase.endswith("_running"):
+                return "running"
+            if current_phase.endswith("_user_paused"):
+                return "paused"
+            if current_phase.endswith("_user_skipped"):
+                return "skipped"
+            if current_phase.endswith("_failed") or "failed_at_" in current_phase:
+                return "failed"
+            return "running"
+        # Steps before the current one are done
+        if current_phase == sid + "_done" or current_phase == "complete":
+            return "done"
+    # Fallback: mark completed steps as done
+    for i, s in enumerate(all_steps):
+        sid = s.get("id", "")
+        if current_phase.startswith(sid):
+            for j in range(i):
+                pass  # steps before are done
+            return "running"
+    return "pending"
+
+
 def _phase_step_payload(step: PhaseStep) -> dict[str, Any]:
     return {"phase": step.phase, "label": step.label, "status": step.status}
+
+
+def _timeline_payload(entry: PhaseTimelineEntry) -> dict[str, Any]:
+    return {
+        "phase": entry.phase,
+        "label": entry.label,
+        "status": entry.status,
+        "entered_at": entry.entered_at,
+        "completed_at": entry.completed_at,
+        "duration_seconds": entry.duration_seconds,
+    }
+
+
+# ============================================================================
+# Phase 6: wait_for_human API
+# ============================================================================
+
+@app.get("/api/stories/{story_id}/pending_input")
+def api_pending_input(story_id: int) -> dict[str, Any]:
+    db_path = _database_path()
+    try:
+        with sqlite3.connect(db_path) as conn:
+            row = conn.execute(
+                "SELECT id, prompt, input_schema, created_at FROM pending_human_input "
+                "WHERE story_id = ? AND resolved_at IS NULL ORDER BY id DESC LIMIT 1",
+                (story_id,),
+            ).fetchone()
+    except sqlite3.OperationalError:
+        return {"ok": True, "pending": False, "message": "pending_human_input 表尚未创建"}
+    if not row:
+        return {"ok": True, "pending": False}
+    return {
+        "ok": True, "pending": True,
+        "input_id": row[0], "prompt": row[1],
+        "input_schema": json.loads(row[2]) if row[2] else {"type": "text"},
+        "created_at": row[3],
+    }
+
+
+@app.post("/api/stories/{story_id}/provide_input")
+async def api_provide_input(story_id: int, request: Request) -> dict[str, Any]:
+    payload = await _json_payload(request)
+    if not payload:
+        raise HTTPException(status_code=400, detail="payload 不能为空")
+    db_path = str(_database_path())
+    from generator.c_pipeline.builtin.wait_for_human import provide_input
+    ok = provide_input(story_id, payload, db_path)
+    if not ok:
+        raise HTTPException(status_code=500, detail="提交失败或该故事没有等待中的输入")
+    return {"ok": True, "message": "输入已提交，流水线继续执行"}
+
+
+def _section_payload(progress: Any) -> dict[str, Any] | None:
+    if progress is None:
+        return None
+    return {
+        "current": progress.current,
+        "total": progress.total,
+        "completed": list(progress.completed),
+    }
+
+
+def _attempt_payload(attempt: PhaseAttempt) -> dict[str, Any]:
+    return {
+        "attempt": attempt.attempt,
+        "started_at": attempt.started_at,
+        "ended_at": attempt.ended_at,
+        "status": attempt.status,
+        "failed_at": attempt.failed_at,
+        "phases": [_timeline_payload(entry) for entry in attempt.phases],
+    }
 
 
 def _file_payload(entry: WorkDirFile) -> dict[str, Any]:
@@ -301,33 +566,105 @@ def api_delete_story(story_id: int) -> dict[str, Any]:
 
     _ensure_story_exists(story_id)
     db_path = _database_path()
+    # 获取 work_dir 以便同步删除产物
+    import shutil
+    story = get_story(db_path, story_id)
+    work_dir_str = (story.work_dir or "").strip() if story else ""
     with sqlite3.connect(Path(db_path)) as connection:
         cursor = connection.execute("DELETE FROM stories WHERE id = ?", (story_id,))
         deleted = cursor.rowcount
     if deleted <= 0:
         raise HTTPException(status_code=404, detail="Story not found")
+    # 删除产物目录
+    if work_dir_str:
+        work_path = Path(work_dir_str)
+        if work_path.exists() and work_path.is_dir():
+            shutil.rmtree(work_path, ignore_errors=True)
+            logger.info("Dashboard delete work_dir story_id=%s path=%s", story_id, work_path)
     logger.info("Dashboard delete story_id=%s", story_id)
     return {"ok": True, "message": f"已删除 ID #{story_id} 的作品。", "deleted": deleted}
 
 
-@app.post("/api/generate")
-async def api_generate(request: Request) -> dict[str, Any]:
-    """[Stub] Old single-shot generate endpoint, disabled during c_pipeline refactor."""
+@app.post("/api/stories/repair-orphans")
+def api_repair_orphans() -> dict[str, Any]:
+    """扫描 data/works/ 目录，为缺失 DB 记录的目录补建 stories 条目。"""
+    config = _load_config()
+    db_path = _database_path(config)
+    project_root = Path(config.data.get("runtime", {}).get("project_root", "."))
+    if not project_root.is_absolute() or str(project_root) == ".":
+        project_root = Path(__file__).resolve().parents[1]
+    works_dir = project_root / "data" / "works"
+    if not works_dir.exists():
+        return {"ok": True, "message": "data/works 目录不存在", "added": 0}
 
-    return JSONResponse(
-        {"ok": False, "message": _GENERATE_DISABLED_MESSAGE, "stub": True},
-        status_code=503,
-    )
+    # Get existing story IDs
+    existing_ids: set[int] = set()
+    try:
+        with sqlite3.connect(db_path) as conn:
+            rows = conn.execute("SELECT id FROM stories").fetchall()
+            existing_ids = {r[0] for r in rows}
+    except Exception:
+        pass
 
+    added = 0
+    for child in sorted(works_dir.iterdir()):
+        if not child.is_dir():
+            continue
+        try:
+            sid = int(child.name)
+        except ValueError:
+            continue
+        if sid in existing_ids:
+            continue
+        # Try to get title from 1_设定.md first, then from directory name
+        title = f"作品 #{sid}"
+        status = "pending"
+        current_phase = "phase_0"
+        summary = ""
+        # Try to read title from artifacts
+        try:
+            framework = child / "1_设定.md"
+            if framework.exists():
+                text = framework.read_text(encoding="utf-8")[:2000]
+                for line in text.split("\n"):
+                    line = line.strip()
+                    if line.startswith("标题") or line.startswith("title"):
+                        title = line.split("：", 1)[-1].split(":", 1)[-1].strip()[:100] or title
+                        break
+        except Exception:
+            pass
+        # Count phases completed
+        try:
+            artifacts = sorted(child.glob("*_*.md")) + sorted(child.glob("*_*.json"))
+            phases_seen = set()
+            for a in artifacts:
+                stem = a.name.split("_")[0] if "_" in a.name else ""
+                if stem.isdigit():
+                    phases_seen.add(int(stem))
+                elif stem == "5":
+                    phases_seen.add(5)
+            if phases_seen:
+                max_phase = max(phases_seen)
+                if max_phase >= 6:
+                    status = "approved"
+                elif max_phase >= 5:
+                    status = "needs_human"
+                current_phase = f"phase_{max_phase}_done" if max_phase < 7 else "phase_6_done"
+        except Exception:
+            pass
 
-@app.post("/api/batch-generate")
-async def api_batch_generate(request: Request) -> dict[str, Any]:
-    """[Stub] Old batch generate endpoint, disabled during c_pipeline refactor."""
+        try:
+            with sqlite3.connect(db_path) as conn:
+                conn.execute(
+                    "INSERT INTO stories (id, title, status, current_phase, summary, work_dir) VALUES (?, ?, ?, ?, ?, ?)",
+                    (sid, title, status, current_phase, summary, str(child)),
+                )
+            added += 1
+            logger.info("repair-orphans added story_id=%s title=%s", sid, title)
+        except Exception as exc:
+            logger.warning("repair-orphans skip story_id=%s: %s", sid, exc)
 
-    return JSONResponse(
-        {"ok": False, "message": _GENERATE_DISABLED_MESSAGE, "stub": True},
-        status_code=503,
-    )
+    return {"ok": True, "message": f"扫描 {len(existing_ids) + added} 个目录，补建 {added} 条记录", "added": added}
 
 
 @app.post("/api/review/{story_id}/approve")
@@ -385,41 +722,7 @@ def api_ai_review_batch(limit: int = 20) -> dict[str, Any]:
     return {"ok": result.failed == 0, "message": result.message, "result": result.__dict__}
 
 
-@app.post("/api/publish")
-def api_publish(dry_run_outcome: str = "success", commit_dry_run: bool = False) -> dict[str, Any]:
-    from cli.publish import apply_publish_result, find_one_approved_story
-    from publisher.fansq import FansqPublisher
 
-    config = _load_config()
-    db_path = initialize_database(config)
-    story = find_one_approved_story(db_path)
-    if story is None:
-        return {"ok": True, "message": "没有 approved 待发布作品。", "result": None}
-    publisher = FansqPublisher(config)
-    result = publisher.publish_story(
-        story,
-        dry_run=bool(config.data.get("runtime", {}).get("dry_run")),
-        dry_run_outcome=dry_run_outcome,
-        wait_on_pause=False,
-    )
-    changed = apply_publish_result(db_path, result, commit_dry_run=commit_dry_run)
-    ok = result.status in {str(PublishStatus.PUBLISHED), str(PublishStatus.PAUSED), PublishStatus.PUBLISHED, PublishStatus.PAUSED}
-    record_pipeline_event(
-        db_path,
-        kind="publish",
-        status=str(result.status),
-        story_id=story.id,
-        message=str(result.message)[:200],
-        detail=("dry_run=" + dry_run_outcome) if config.is_dry_run else "live",
-    )
-    logger.info("Dashboard publish story_id=%s status=%s changed=%s", story.id, result.status, changed)
-    return {
-        "ok": bool(ok),
-        "message": result.message,
-        "changed": changed,
-        "result": result.__dict__,
-        "safe_pause_notice": "遇到验证码/滑块/登录态缺失只会暂停并截图，不会绕过。",
-    }
 
 
 @app.get("/api/logs")
@@ -467,7 +770,7 @@ def api_monitor_cards() -> dict[str, Any]:
 
     config = _load_config()
     db_path = _database_path(config)
-    return {"ok": True, **monitor_cards(config, db_path, scheduler_manager)}
+    return {"ok": True, **monitor_cards(config, db_path)}
 
 
 @app.get("/api/monitor/concurrency")
@@ -497,17 +800,13 @@ def api_health() -> dict[str, Any]:
     """Lightweight liveness probe for external monitoring."""
     config = _load_config()
     db_path = _database_path(config)
-    scheduler_running = scheduler_manager.is_running()
-    if scheduler_running:
-        status = "ok"
-    elif config.warnings:
+    if config.warnings:
         status = "degraded"
     else:
         status = "ok"
     return {
         "ok": True,
         "status": status,
-        "scheduler_running": scheduler_running,
         "dry_run": bool(config.is_dry_run),
         "database": str(db_path),
         "warnings": list(config.warnings or []),
