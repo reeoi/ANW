@@ -1,9 +1,8 @@
-# ANP 全自动小说创作与发布流水线
+# ANP 本地小说创作与审核工作台
 
-ANP 是一个本地优先的小说创作、审核与发布 MVP。当前已带 ANP Local Studio 本地管理界面：支持单篇/批量生成写入 SQLite 队列、Dashboard 统计、AI 七维审核与最多 3 次重写、人工审核、番茄小说 Playwright 发布适配器的 dry-run/安全暂停、日志查看、APScheduler 调度和 Windows 一键启动脚本。
+ANP 是一个本地优先的小说创作、审核与管理工具。它提供 ANP Local Studio 本地管理界面，支持单篇/批量生成、SQLite 队列、Dashboard 统计、AI 七维审核、最多 3 次自动重写、人工审核、日志查看、APScheduler 调度和 Windows 一键启动脚本。
 
-> 范围声明：本轮只完成本地 MVP 与番茄小说单平台适配。Telegram/飞书通知、起点/公众号等多平台发布、数据统计面板列为后续范围。
-
+> 当前范围：本地生成、本地审核、本地管理。项目只处理本地创作与审核，不处理第三方内容平台提交、平台登录或账号托管流程。
 
 ## 0. 一键启动本地软件界面
 
@@ -34,19 +33,20 @@ set ANP_REVIEW_PORT=18000
 start_anp.bat
 ```
 
-ANP Local Studio 包含：总览 Dashboard、单篇/批量生成、审核队列、作品详情编辑、批准/拒绝/AI 审核、发布 dry-run/安全暂停提示、最近日志和配置说明。页面不会展示 API key、账号密码或登录态内容。
+ANP Local Studio 包含：总览 Dashboard、单篇/批量生成、审核队列、作品详情编辑、批准/拒绝/AI 审核、最近日志和配置说明。页面不会展示 API key、账号密码或其他敏感配置。
 
+## 1. 本地开发环境
+
+建议使用 Python 3.11+。
 
 ```bash
 cd D:\Development_alma\anp
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
-python -m playwright install
-# 如只需要 Chromium：python -m playwright install chromium
 ```
 
-建议使用 Python 3.11+。所有命令均可在无 DeepSeek key、无番茄登录态时通过 mock/dry-run 路径运行。
+所有命令均可在无 DeepSeek key 的情况下通过 mock/dry-run 路径运行，方便本地验收。
 
 ## 2. 配置
 
@@ -56,13 +56,10 @@ python -m playwright install
 set ANP_CONFIG=D:\secure\anp-config.yaml
 ```
 
-敏感字段只允许来自 `config.yaml` 或环境变量，禁止写入源码：
+敏感字段只允许来自私有配置文件或环境变量，禁止写入源码：
 
 ```bash
 set DEEPSEEK_API_KEY=your_deepseek_key
-set FANSQ_USERNAME=your_username
-set FANSQ_PASSWORD=your_password
-set FANSQ_LOGIN_STATE_PATH=data/browser/fansq_state.json
 ```
 
 常用配置项：
@@ -73,22 +70,14 @@ deepseek:
   mock: true           # 无 key 时自动 mock
 runtime:
   dry_run: true
-publisher:
-  fansq:
-    login_state_path: "data/browser/fansq_state.json"
-    draft_url: "https://fanqienovel.com/"
-    min_publish_interval_minutes: 5
-    max_publish_interval_minutes: 15
-    pause_on_risk_control: true
 database:
   sqlite_path: "data/anp.sqlite3"
   backup_dir: "data/backups"
 logging:
   file: "logs/anp.log"
-  screenshot_dir: "logs/screenshots"
 ```
 
-可覆盖的环境变量包括：`ANP_SQLITE_PATH`、`ANP_DRY_RUN`、`ANP_MOCK_DEEPSEEK`、`ANP_AI_REVIEW_THRESHOLD`、`ANP_MAX_REWRITE_ATTEMPTS`、`ANP_MONTHLY_BUDGET_CNY`、`ANP_DAILY_TOKEN_LIMIT`、`ANP_MIN_PUBLISH_INTERVAL_MINUTES`、`ANP_MAX_PUBLISH_INTERVAL_MINUTES`。
+可覆盖的环境变量包括：`ANP_SQLITE_PATH`、`ANP_DRY_RUN`、`ANP_MOCK_DEEPSEEK`、`ANP_AI_REVIEW_THRESHOLD`、`ANP_MAX_REWRITE_ATTEMPTS`、`ANP_MONTHLY_BUDGET_CNY`、`ANP_DAILY_TOKEN_LIMIT`。
 
 ## 3. 生成
 
@@ -116,9 +105,7 @@ python -m review_queue.human_review
 # 如端口占用：python -m review_queue.human_review --port 18000
 ```
 
-管理界面包含总览 Dashboard、生成区、审核区、发布区、日志区和设置说明区。按钮有 loading 状态、重复点击保护、toast 反馈、错误展示和空状态提示。
-
-### 兼容人工审核入口
+管理界面包含总览 Dashboard、生成区、审核区、日志区和设置说明区。按钮有 loading 状态、重复点击保护、toast 反馈、错误展示和空状态提示。
 
 ### AI 审核 dry-run / mock
 
@@ -129,29 +116,9 @@ python -m cli.ai_review --limit 20 --threshold 85
 
 AI 审核包含 7 个维度：`plot`、`character`、`pacing`、`language`、`originality`、`safety`、`platform_fit`。低于阈值会自动重写，最多 3 次；仍不通过则转为 `needs_human`。无 DeepSeek key 时自动使用 mock/dry-run，不阻塞验收。
 
-## 5. 发布
+## 5. 统一入口
 
-发布 CLI 只读取一条 `status='approved'` 的作品：
-
-```bash
-# dry-run 成功，默认保留 approved 状态，便于重复测试
-python -m cli.publish --dry-run --dry-run-outcome success
-
-# dry-run 模拟验证码/滑块/登录态缺失导致暂停，默认保留状态
-python -m cli.publish --dry-run --dry-run-outcome paused
-
-# 如需把 dry-run 暂停结果写回 SQLite
-python -m cli.publish --dry-run --dry-run-outcome paused --commit-dry-run
-
-# 真实 Playwright 模式，需先准备 login_state_path
-python -m cli.publish --real
-```
-
-真实模式下 Sprint 7 MVP 只做正常浏览器自动化和草稿填充/安全暂停，不做风控绕过。最终提交、分类、章节规则建议人工复核。
-
-## 6. 统一入口
-
-`main.py` 当前只支持初始化配置／数据库与手动 SQLite 备份：
+`main.py` 当前支持初始化配置、初始化数据库和手动 SQLite 备份：
 
 ```bash
 # 初始化配置、数据库，并提示本地 UI 入口
@@ -161,97 +128,61 @@ python main.py
 python main.py --backup-now
 ```
 
-> `--mode auto / semi-auto / once` 等调度模式已随 APScheduler 整体移除。
-> 生成 / AI 审核 / 发布等操作通过本地 UI 的"立即执行一次"按钮或直接使用
-> `cli/generate.py`、`cli/ai_review.py`、`cli/publish.py` 等独立 CLI 触发。
+> `--mode auto / semi-auto / once` 等旧调度模式已随 APScheduler 整体移除。
+> 生成、AI 审核等操作可以通过本地 UI 的“立即执行一次”按钮，或直接使用 `cli/generate.py`、`cli/batch_generate.py`、`cli/ai_review.py` 等独立 CLI 触发。
 
 SQLite 备份写入 `database.backup_dir`。
 
-## 7. dry-run 验证与本次验收记录
+## 6. 本地验证
 
-2026-04-29 Sprint 7 本地验收执行结果：
+推荐在提交前执行：
 
 ```bash
-pytest -q tests/test_sprint7.py
-# 2 passed
-
 pytest -q
-# 25 passed
-
-python -m py_compile config_loader.py main.py scheduler.py generator/*.py queue/*.py publisher/*.py cli/*.py
-# exit code 0
-
-set ANP_SQLITE_PATH=data/sprint7_batch_dryrun.sqlite3 && python -m cli.batch_generate --count 3 --theme Sprint7批量 --word-count 600 --dry-run --print-ids
-# Batch generation completed: requested=3 success=3 failed=0 dry_run=True database=data\sprint7_batch_dryrun.sqlite3
-# failure_reasons=none
-
-set ANP_SQLITE_PATH=data/sprint7_verify.sqlite3 && python -m cli.generate --theme Sprint7单篇 --word-count 600 --style 验收 --print-content
-# Generated story ID: 1; Status: pending; exit code 0
-
-set ANP_SQLITE_PATH=data/sprint7_verify.sqlite3 && python -m cli.ai_review --limit 5
-# reviewed=1; approved=1; needs_human=0; failed=0; failure_reasons=none; exit code 0
-
-set ANP_SQLITE_PATH=data/sprint7_verify.sqlite3 && python -m cli.publish --dry-run --dry-run-outcome success
-# story_id=1 platform=fansq status=published status_preserved ...; exit code 0
+python -m py_compile config_loader.py main.py scheduler.py generator/*.py queue/*.py cli/*.py
 ```
 
-说明：`cli.publish --dry-run` 默认不改写队列状态，输出 `status_preserved`，用于重复验收；需要落库时使用 `--commit-dry-run`。
+生成与审核的 smoke test：
 
-## 8. 番茄验证码/滑块/登录态缺失策略
+```bash
+set ANP_SQLITE_PATH=data/local_verify.sqlite3 && python -m cli.batch_generate --count 3 --theme 本地验收 --word-count 600 --dry-run --print-ids
+set ANP_SQLITE_PATH=data/local_verify.sqlite3 && python -m cli.ai_review --limit 5
+```
 
-ANP 明确禁止绕过平台风控。遇到以下情况必须暂停：验证码、图形验证码、滑块、扫码/短信验证、登录态缺失或过期、安全验证、异常访问、风控页、异常跳转、未识别编辑器、Playwright 超时。
-
-暂停策略与 `docs/fansq_workflow.md` 保持一致：
-
-1. 立即停止后续自动点击/提交。
-2. 保存截图或占位证据到 `logs/screenshots` 或 `logging.screenshot_dir`。
-3. 写日志到 `logs/anp.log` 或 `logging.file`，包含 platform、story_id、原因、截图路径。
-4. CLI 输出需要人工处理的通知；当前 MVP 未接入外部通知，Telegram/飞书为后续范围。
-5. 等待人工完成登录/验证/页面复核后再重试。
-6. 不破解、不调用打码平台、不模拟拖动滑块、不绕过登录或风控。
-
-## 9. 人工配置项与安全说明
+## 7. 人工配置项与安全说明
 
 必须人工准备或确认：
 
 - DeepSeek API key（如需真实生成/审核）。
-- 番茄小说账号权限与登录态 `data/browser/fansq_state.json`。
-- 番茄作品分类、章节设置、敏感词与最终提交按钮。
-- 调度 cron、发布间隔、AI 阈值、成本上限。
+- 调度 cron、AI 阈值、成本上限。
 - SQLite 数据库路径、备份目录、日志目录权限。
 
 安全要求：
 
-- 不提交 `.env`、登录态、真实账号密码、API key、浏览器 storage state。
-- `data/browser/` 建议作为本机私有目录。
+- 不提交 `.env`、真实账号密码、API key、本地数据库、日志或浏览器数据。
 - 日志只记录动作、story_id、状态与错误，不记录密钥。
-- 发布自动化只做合规浏览器操作；任何风控信号都转人工。
+- 生产/私有配置应放在仓库外，或通过环境变量注入。
+- 提交前建议运行 secret 扫描，确认没有敏感信息进入 Git 历史。
 
-## 10. 常见问题
+## 8. 常见问题
 
 **没有 DeepSeek key 会失败吗？**  
 不会。配置加载器会警告并启用 mock/dry-run，生成和 AI 审核仍可本地验证。
 
-**发布命令提示没有 approved 作品怎么办？**  
-先运行生成和 AI 审核，或在人工审核页面批准一篇作品。
-
-**dry-run 发布为什么没有把状态改成 published？**  
-默认保留 `approved`，便于重复测试。需要写回请加 `--commit-dry-run`。
-
-**遇到验证码/滑块能否自动处理？**  
-不能。系统会暂停、截图、写日志并要求人工处理，明确禁止绕过。
-
 **8000 端口被占用？**  
 使用 `python -m review_queue.human_review --port 18000` 或设置 `ANP_REVIEW_PORT=18000`。
 
+**数据保存在哪里？**  
+默认保存在 `data/anp.sqlite3`。`data/` 属于本地运行数据，不应提交到 GitHub。
+
 **多平台和外部通知在哪里？**  
-未在 Sprint 7 实现，列为后续扩展范围。
+当前不在项目范围内。如后续需要，应作为独立模块设计，并单独做安全评审。
 
-## 11. Git 状态
+## 9. Git 检查
 
-Sprint 7 已完成最终阶段提交：`git commit -m "Complete sprint 7 delivery package"`。如验收环境看不到提交，请运行：
+提交前建议确认工作区和最近提交：
 
 ```bash
-git log --oneline -1
 git status --short
+git log --oneline -1
 ```
