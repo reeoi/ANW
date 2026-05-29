@@ -627,35 +627,23 @@
             <label for="gen-key">DeepSeek API Key</label>
             <div class="control">
               <div class="secret-input">
-                <input type="password" id="gen-key" autocomplete="off" spellcheck="false">
-                <button class="eye" type="button" data-eye="gen-key" title="显示/隐藏"></button>
+                <input type="password" id="gen-key" autocomplete="off" spellcheck="false" aria-label="DeepSeek API Key">
+                <button class="eye" type="button" data-eye="gen-key" title="显示 API Key" aria-label="显示 API Key" aria-pressed="false">显示</button>
               </div>
               <div class="control-inline">
                 <button class="tiny primary" type="button" id="gen-test">测试连接</button>
+                <span class="meta" id="gen-key-status"></span>
                 <span class="meta" id="gen-test-msg"></span>
               </div>
             </div>
           </div>
-          <div class="settings-advanced settings-advanced-static">
-            <summary>展开高级参数</summary>
-            <div class="group-body">
-              <div class="settings-row">
-                <label for="gen-model">模型识别码 (Model ID)</label>
-                <div class="control"><input type="text" id="gen-model" placeholder="deepseek-chat"></div>
-              </div>
-              <div class="settings-row">
-                <label for="gen-base">API 代理地址 (Base URL)</label>
-                <div class="control"><input type="text" id="gen-base" placeholder="https://api.deepseek.com"></div>
-              </div>
-              <div class="settings-row">
-                <label for="gen-timeout">请求超时 (秒)</label>
-                <div class="control"><input type="number" id="gen-timeout" min="5" max="900" step="5"></div>
-              </div>
-              <div class="settings-row">
-                <label for="gen-retries">最大重试次数</label>
-                <div class="control"><input type="number" id="gen-retries" min="0" max="20" step="1"></div>
-              </div>
-            </div>
+          <div class="settings-row">
+            <label for="gen-model">模型名称</label>
+            <div class="control"><input type="text" id="gen-model" placeholder="deepseek-chat"></div>
+          </div>
+          <div class="settings-row">
+            <label for="gen-base">API 代理地址 (Base URL)</label>
+            <div class="control"><input type="text" id="gen-base" placeholder="https://api.deepseek.com"></div>
           </div>
           <div class="group-actions">
             <button class="ghost" data-reset="generation">↩ 还原修改</button>

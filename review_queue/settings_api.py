@@ -136,12 +136,9 @@ def get_generation() -> dict[str, Any]:
     d = cfg.get("deepseek") or {}
     api_key = env.get("DEEPSEEK_API_KEY") or str(d.get("api_key") or "")
     return {
-        "api_key_masked": mask_secret(api_key),
         "has_api_key": bool(api_key),
         "base_url": env.get("DEEPSEEK_BASE_URL") or str(d.get("base_url") or "https://api.deepseek.com"),
         "model": env.get("DEEPSEEK_MODEL") or str(d.get("model") or "deepseek-v4-pro"),
-        "timeout_seconds": int(d.get("timeout_seconds") or 60),
-        "max_retries": int(d.get("max_retries") or 3),
     }
 
 
@@ -163,25 +160,6 @@ async def set_generation(request: Request) -> dict[str, Any]:
         for k, v in env_updates.items():
             os.environ[k] = v
 
-    cfg = load_yaml(_config_path())
-    cfg.setdefault("deepseek", {})
-    if "timeout_seconds" in payload:
-        try:
-            ts = int(payload["timeout_seconds"])
-        except (TypeError, ValueError):
-            raise HTTPException(status_code=400, detail="超时必须是整数") from None
-        if ts <= 0 or ts > 600:
-            raise HTTPException(status_code=400, detail="超时必须在 1~600 秒")
-        cfg["deepseek"]["timeout_seconds"] = ts
-    if "max_retries" in payload:
-        try:
-            mr = int(payload["max_retries"])
-        except (TypeError, ValueError):
-            raise HTTPException(status_code=400, detail="重试次数必须是整数") from None
-        if mr < 0 or mr > 10:
-            raise HTTPException(status_code=400, detail="重试次数必须在 0~10")
-        cfg["deepseek"]["max_retries"] = mr
-    save_yaml(_config_path(), cfg)
     return {"ok": True, "message": "生成配置已保存"}
 
 

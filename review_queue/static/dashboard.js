@@ -412,10 +412,108 @@
   }
 
   function bindModeToggle() {}
-  function bindSettings() {}
-  function loadAllSettings() {
+
+  function setGenKeyVisible(visible) {
+    const input = $('gen-key');
+    if (!input) return;
+    const btn = document.querySelector('[data-eye="gen-key"]');
+    input.type = visible ? 'text' : 'password';
+    if (btn) {
+      btn.textContent = visible ? '隐藏' : '显示';
+      btn.title = visible ? '隐藏 API Key' : '显示 API Key';
+      btn.setAttribute('aria-label', visible ? '隐藏 API Key' : '显示 API Key');
+      btn.setAttribute('aria-pressed', visible ? 'true' : 'false');
+    }
+  }
+
+  async function loadGenerationSettings() {
     const meta = $('settings-meta');
-    if (meta) meta.textContent = '设置面板已加载。';
+    const msg = $('gen-test-msg');
+    try {
+      const data = await api('/api/settings/generation');
+      const key = $('gen-key');
+      const model = $('gen-model');
+      const base = $('gen-base');
+      const status = $('gen-key-status');
+      if (key) key.value = '';
+      setGenKeyVisible(false);
+      if (model) model.value = data.model || '';
+      if (base) base.value = data.base_url || '';
+      if (status) status.textContent = data.has_api_key ? '✓ 已配置' : '';
+      if (msg) msg.textContent = '';
+      if (meta) meta.textContent = '设置面板已加载。';
+    } catch (err) {
+      if (meta) meta.textContent = '加载失败：' + err.message;
+      toast(err.message, 'error');
+    }
+  }
+
+  async function saveGenerationSettings(button) {
+    const done = withBusy(button, '保存中…');
+    const msg = $('gen-test-msg');
+    try {
+      const payload = {
+        model: (($('gen-model') || {}).value || '').trim(),
+        base_url: (($('gen-base') || {}).value || '').trim(),
+      };
+      const keyValue = (($('gen-key') || {}).value || '').trim();
+      if (keyValue) payload.api_key = keyValue;
+      const data = await api('/api/settings/generation', { method: 'POST', body: payload });
+      if ($('gen-key')) $('gen-key').value = '';
+      const status = $('gen-key-status');
+      if (status && (keyValue || status.textContent)) status.textContent = '✓ 已配置';
+      if (msg) msg.textContent = data.message || '已保存';
+      toast(data.message || '生成配置已保存', 'success');
+    } catch (err) {
+      if (msg) msg.textContent = '保存失败：' + err.message;
+      toast(err.message, 'error');
+    } finally {
+      done();
+    }
+  }
+
+  async function testGenerationSettings(button) {
+    const done = withBusy(button, '测试中…');
+    const msg = $('gen-test-msg');
+    try {
+      const payload = {
+        model: (($('gen-model') || {}).value || '').trim(),
+        base_url: (($('gen-base') || {}).value || '').trim(),
+      };
+      const keyValue = (($('gen-key') || {}).value || '').trim();
+      if (keyValue) payload.api_key = keyValue;
+      const data = await api('/api/settings/generation/test', { method: 'POST', body: payload });
+      if (msg) msg.textContent = data.message || (data.ok ? '连接成功' : '连接失败');
+      toast(data.message || (data.ok ? '连接成功' : '连接失败'), data.ok ? 'success' : 'error');
+    } catch (err) {
+      if (msg) msg.textContent = '测试失败：' + err.message;
+      toast(err.message, 'error');
+    } finally {
+      done();
+    }
+  }
+
+  function bindSettings() {
+    $$('[data-eye]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const input = $(btn.dataset.eye || '');
+        if (!input) return;
+        setGenKeyVisible(input.type === 'password');
+        input.focus();
+      });
+    });
+    $$('[data-save="generation"]').forEach((btn) => {
+      btn.addEventListener('click', () => saveGenerationSettings(btn));
+    });
+    $$('[data-reset="generation"]').forEach((btn) => {
+      btn.addEventListener('click', loadGenerationSettings);
+    });
+    const testBtn = $('gen-test');
+    if (testBtn) testBtn.addEventListener('click', () => testGenerationSettings(testBtn));
+  }
+
+  function loadAllSettings() {
+    loadGenerationSettings();
   }
 
   function showSection(target) {
