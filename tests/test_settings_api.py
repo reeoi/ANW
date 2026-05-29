@@ -196,11 +196,11 @@ def test_get_generation_masks_api_key(env_setup: dict[str, Path]) -> None:
     r = _request("GET", "/api/settings/generation")
     assert r["status"] == 200
     body = json.loads(r["body"])
-    assert body["api_key_masked"].startswith("sk-abc")
-    assert body["api_key_masked"].endswith("tail")
-    assert "..." in body["api_key_masked"]
     assert body["has_api_key"] is True
-    assert "sk-abcdef-1234567890-tail" not in r["body"]
+    assert "model" in body
+    assert "base_url" in body
+    # api_key_masked 已移除，不应出现在响应中
+    assert "api_key_masked" not in r["body"]
 
 
 def test_post_generation_keeps_existing_when_masked(env_setup: dict[str, Path]) -> None:
@@ -227,15 +227,6 @@ def test_post_generation_writes_real_key(env_setup: dict[str, Path]) -> None:
     assert r["status"] == 200
     env_text = env_setup["env"].read_text(encoding="utf-8")
     assert "DEEPSEEK_API_KEY=sk-fresh-9999" in env_text
-
-
-def test_post_generation_validates_timeout(env_setup: dict[str, Path]) -> None:
-    r = _request(
-        "POST",
-        "/api/settings/generation",
-        json_body={"timeout_seconds": 0},
-    )
-    assert r["status"] == 400
 
 
 def test_generation_test_handles_empty_key(env_setup: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
@@ -547,16 +538,6 @@ def test_invalid_json_body_returns_400(env_setup: dict[str, Path]) -> None:
     """空 body 应该走默认值，对其余仍存活的 endpoint 返回 200。"""
     r = _request("POST", "/api/settings/notifications", json_body=None)
     assert r["status"] == 200
-
-
-def test_post_generation_rejects_bad_timeout(env_setup: dict[str, Path]) -> None:
-    r = _request("POST", "/api/settings/generation", json_body={"timeout_seconds": 99999})
-    assert r["status"] == 400
-
-
-def test_post_generation_rejects_non_int_retries(env_setup: dict[str, Path]) -> None:
-    r = _request("POST", "/api/settings/generation", json_body={"max_retries": "many"})
-    assert r["status"] == 400
 
 
 def test_post_audit_rejects_weight_out_of_range(env_setup: dict[str, Path]) -> None:

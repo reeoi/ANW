@@ -3605,32 +3605,57 @@ code { color: var(--amber); }
 }
 .settings-row textarea { width: 100%; min-height: 80px; }
 .secret-input {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: stretch;
   border: 1px solid var(--divider);
-  width: 280px;
+  width: min(100%, 520px);
   max-width: 100%;
+  background: var(--ground);
 }
+.secret-input:focus-within { border-color: var(--amber); }
 .secret-input input {
-  border: 0;
-  flex: 1;
+  width: 100% !important;
+  border: 0 !important;
+  min-width: 0;
   background: var(--ground);
   font-family: var(--font-mono);
   font-size: 13px;
-  color: var(--text-hi);
-  padding: 8px 10px;
+  line-height: 1.4;
+  color: var(--text-hi) !important;
+  -webkit-text-fill-color: var(--text-hi);
+  caret-color: var(--amber-hi);
+  padding: 8px 12px;
 }
+.secret-input input[type='password'],
+.secret-input input[type='text'] {
+  color: var(--text-hi) !important;
+}
+.secret-input input::placeholder { color: var(--muted); }
+.secret-input input:focus { outline: 0; }
 .secret-input .eye {
+  min-width: 58px;
+  height: auto;
   background: var(--surface-2);
   border: 0;
   border-left: 1px solid var(--divider);
-  padding: 8px 11px;
+  padding: 8px 12px;
   font-family: var(--font-mono);
   font-size: 11px;
-  color: var(--muted);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--text-hi) !important;
   cursor: pointer;
+  text-align: center;
+  white-space: nowrap;
+  user-select: none;
 }
-.secret-input .eye:hover { color: var(--amber); }
+.secret-input .eye:hover,
+.secret-input .eye:focus-visible {
+  color: var(--amber) !important;
+  background: var(--amber-soft);
+  outline: 0;
+}
 .settings-advanced {
   margin-top: 8px;
   border: 1px solid var(--divider);
@@ -3650,21 +3675,6 @@ code { color: var(--amber); }
 .settings-advanced > summary::-webkit-details-marker { display: none; }
 .settings-advanced[open] > summary { color: var(--amber); }
 .settings-advanced .group-body { padding: 12px 15px; background: var(--surface-1); }
-.settings-advanced-static > summary {
-  display: none;
-}
-.settings-advanced-static::before {
-  content: '高级参数';
-  display: block;
-  padding: 10px 15px;
-  border-bottom: 1px solid var(--divider);
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--muted);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  background: var(--surface-2);
-}
 .settings-row input:-webkit-autofill,
 .settings-row input:-webkit-autofill:hover,
 .settings-row input:-webkit-autofill:focus,
@@ -3749,12 +3759,6 @@ html:not([data-theme='light']) body:not(.light) .settings-advanced {
 }
 [data-theme='dark'] .settings-advanced > summary,
 html:not([data-theme='light']) body:not(.light) .settings-advanced > summary {
-  background: #0d1118;
-  border-bottom-color: #252b36;
-  color: #d6dbe5;
-}
-[data-theme='dark'] .settings-advanced-static::before,
-html:not([data-theme='light']) body:not(.light) .settings-advanced-static::before {
   background: #0d1118;
   border-bottom-color: #252b36;
   color: #d6dbe5;
