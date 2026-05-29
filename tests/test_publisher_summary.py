@@ -20,7 +20,6 @@ from __future__ import annotations
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -28,11 +27,11 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from config_loader import LoadedConfig
 from publisher.base_publisher import PublishStatus
 from publisher.fansq import FansqPublisher
-from review_queue.models import Story
 
+from config_loader import LoadedConfig
+from review_queue.models import Story
 
 # ============================================================ helpers
 

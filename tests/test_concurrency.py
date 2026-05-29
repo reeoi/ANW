@@ -32,7 +32,6 @@ from generator.c_pipeline.concurrency import (
     reset_global_semaphore,
 )
 
-
 # ============================================================ size constraints
 
 

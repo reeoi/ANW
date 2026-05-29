@@ -9,9 +9,11 @@ SQLite backup, and reading config-derived numbers.
 from __future__ import annotations
 
 import logging
+import logging.handlers
+import re
 import shutil
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -40,8 +42,17 @@ def configure_logging(config: LoadedConfig) -> Path:
 
     added = False
 
-    if not any(isinstance(handler, logging.FileHandler) and Path(handler.baseFilename) == log_file.resolve() for handler in root_logger.handlers):
-        file_handler = logging.FileHandler(log_file, encoding="utf-8")
+    if not any(
+        isinstance(handler, logging.handlers.RotatingFileHandler)
+        and Path(handler.baseFilename) == log_file.resolve()
+        for handler in root_logger.handlers
+    ):
+        file_handler = logging.handlers.RotatingFileHandler(
+            log_file,
+            encoding="utf-8",
+            maxBytes=10 * 1024 * 1024,  # 10 MB
+            backupCount=5,
+        )
         file_handler.setFormatter(formatter)
         file_handler.setLevel(level)
         root_logger.addHandler(file_handler)
@@ -85,15 +96,71 @@ def get_monthly_api_limit(config: LoadedConfig) -> float | int | None:
     return cost_limits.get("monthly_budget_cny")
 
 
+def get_publish_delay_range(config: LoadedConfig) -> tuple[int, int]:
+    """Return configured publish delay range in minutes.
+
+    Invalid or missing values fall back to the conservative 5-15 minute window.
+    If min/max are reversed, return them sorted.
+    """
+
+    fansq = _mapping(_mapping(config.data.get("publisher")).get("fansq"))
+    try:
+        min_minutes = int(fansq.get("min_publish_interval_minutes") or 0)
+        max_minutes = int(fansq.get("max_publish_interval_minutes") or 0)
+    except (TypeError, ValueError):
+        return (5, 15)
+    if min_minutes <= 0 or max_minutes <= 0:
+        return (5, 15)
+    return (min(min_minutes, max_minutes), max(min_minutes, max_minutes))
+
+
+_LOG_TS_RE = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}),\d{3}\b")
+
+
+def _log_line_datetime(line: str) -> datetime | None:
+    match = _LOG_TS_RE.match(line)
+    if not match:
+        return None
+    try:
+        return datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return None
+
+
 def recent_log_lines(config: LoadedConfig, max_lines: int = 80) -> tuple[Path, list[str]]:
-    """Return the configured log file path and recent lines for the UI."""
+    """Return the recent tail of the configured log and prune timestamped blocks older than 7 days."""
 
     log_file = Path(str(_mapping(config.data.get("logging")).get("file") or "logs/anp.log"))
     if not log_file.exists():
         return log_file, []
-    with log_file.open("r", encoding="utf-8", errors="replace") as handle:
-        lines = handle.readlines()[-max_lines:]
-    return log_file, [line.rstrip("\n") for line in lines]
+
+    raw_lines = log_file.read_text(encoding="utf-8", errors="replace").splitlines()
+    blocks: list[list[str]] = []
+    current: list[str] = []
+    for line in raw_lines:
+        if _log_line_datetime(line) is not None and current:
+            blocks.append(current)
+            current = [line]
+        else:
+            current.append(line)
+    if current:
+        blocks.append(current)
+
+    cutoff = datetime.now() - timedelta(days=7)
+    kept: list[list[str]] = []
+    for block in blocks:
+        ts = _log_line_datetime(block[0]) if block else None
+        if ts is None or ts >= cutoff:
+            kept.append(block)
+
+    if len(kept) != len(blocks):
+        log_file.write_text(
+            "\n".join(line for block in kept for line in block) + ("\n" if kept else ""),
+            encoding="utf-8",
+        )
+
+    flattened = [line for block in kept for line in block]
+    return log_file, flattened[-max(1, max_lines) :]
 
 
 def count_stories_by_status(config: LoadedConfig) -> dict[str, int]:
@@ -110,5 +177,6 @@ __all__ = [
     "configure_logging",
     "count_stories_by_status",
     "get_monthly_api_limit",
+    "get_publish_delay_range",
     "recent_log_lines",
 ]

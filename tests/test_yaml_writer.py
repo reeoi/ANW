@@ -13,7 +13,6 @@ from review_queue.yaml_writer import (
     update_yaml_fields,
 )
 
-
 SAMPLE_YAML = """\
 # 顶部注释 — 必须保留
 deepseek:

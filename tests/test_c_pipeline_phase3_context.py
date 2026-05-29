@@ -27,11 +27,9 @@ from config_loader import LoadedConfig
 from generator.api_client import ChatCompletion, ChatUsage
 from generator.c_pipeline.phase2_outline import OutlineSection, render_outline_md
 from generator.c_pipeline.phase3_sections import (
-    PARAGRAPH_MAX_CHARS,
+    SECTION_MIN_CHARS,
     Phase3Result,
     PhaseSectionsError,
-    SECTION_MIN_CHARS,
-    SectionResult,
     run_sections,
     validate_section_text,
 )
@@ -120,12 +118,12 @@ def _good_section(content_seed: str, *, target_chars: int = 850) -> str:
     paras = [
         f"她{content_seed}转身把钥匙放在桌上。",
         f"门外{content_seed}传来一阵脚步声。",
-        f"我把外套挂好,袖口还在滴水。",
-        f"客厅吊灯坏了一只灯泡,半边是亮的。",
-        f"她终于开口:'你回来了。'",
-        f"我点头,把账本翻到下一页。",
-        f"窗外开始下雨,盆栽被打歪。",
-        f"我数到第三声铃响才接起电话。",
+        "我把外套挂好,袖口还在滴水。",
+        "客厅吊灯坏了一只灯泡,半边是亮的。",
+        "她终于开口:'你回来了。'",
+        "我点头,把账本翻到下一页。",
+        "窗外开始下雨,盆栽被打歪。",
+        "我数到第三声铃响才接起电话。",
     ]
     out: list[str] = []
     n = 0

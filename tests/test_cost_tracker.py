@@ -16,7 +16,6 @@ import sqlite3
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
@@ -27,10 +26,7 @@ if str(ROOT) not in sys.path:
 from config_loader import LoadedConfig
 from generator.api_client import ChatCompletion, ChatUsage
 from generator.c_pipeline.cost_tracker import (
-    BudgetStatus,
     CostTracker,
-    DEFAULT_PRICING,
-    ModelPricing,
     estimate_call_cost_cny,
 )
 from review_queue.db import insert_story

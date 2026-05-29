@@ -1,0 +1,1007 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ANP · Cockpit / 01 · 系统驾驶舱</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@500;700;900&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+
+<!--
+  DESIGN SYSTEM · ANP Cockpit v0
+  =============================
+  School:    Information Architecture (Bloomberg Terminal × Pentagram)
+  Vibe:      Mission-critical density, amber-on-near-black, type does the heavy lifting
+
+  Palette:
+    ground       #0A0E14     surface-1  #131820     surface-2  #1B2230
+    divider      #2A3140     amber      #D4A017     amber-hi   #E8B845
+    text-hi      #E8E2D4     text       #B8B3A4     muted      #6E6A5E
+    axis         #4A4736     up         #4ADE80     down       #F87171     warn  #FACC15
+
+  Type:
+    Display    Noto Serif SC 700/900           32/48/64
+    Numerals   IBM Plex Mono 500/600 tabular   10/11/13/24/48
+    Body       Inter 400/500                   12/13/14
+
+  Spacing:   2 4 8 12 16 24 32 48 64
+  Radius:    0 default · 2 chip · never higher
+  Elevation: zero shadow / zero glow · only 1px hairline + surface delta
+  Motion:    80ms linear data flash · 120ms ease-out hover · no eased translate
+-->
+
+<style>
+  :root{
+    --ground:#0A0E14;
+    --surface-1:#131820;
+    --surface-2:#1B2230;
+    --divider:#2A3140;
+    --divider-strong:#3A4358;
+    --amber:#D4A017;
+    --amber-hi:#E8B845;
+    --amber-soft:rgba(212,160,23,.10);
+    --amber-line:rgba(212,160,23,.32);
+    --text-hi:#E8E2D4;
+    --text:#B8B3A4;
+    --muted:#6E6A5E;
+    --axis:#4A4736;
+    --up:#4ADE80;
+    --down:#F87171;
+    --warn:#FACC15;
+    --info:#7DD3FC;
+    --font-serif:'Noto Serif SC','Source Han Serif SC','STSong',serif;
+    --font-mono:'IBM Plex Mono','JetBrains Mono','Consolas',ui-monospace,monospace;
+    --font-sans:'Inter',-apple-system,'PingFang SC','Hiragino Sans GB',sans-serif;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;background:var(--ground);color:var(--text);}
+  body{
+    font-family:var(--font-sans);
+    font-size:13px;
+    line-height:1.5;
+    -webkit-font-smoothing:antialiased;
+    min-height:100vh;
+  }
+  ::selection{background:var(--amber);color:var(--ground);}
+
+  /* ============== TOP CHROME ============== */
+  .chrome{
+    height:38px;
+    background:var(--surface-1);
+    border-bottom:1px solid var(--divider);
+    display:flex;
+    align-items:center;
+    padding:0 16px;
+    font-family:var(--font-mono);
+    font-size:11px;
+    letter-spacing:.04em;
+    color:var(--muted);
+    position:sticky;top:0;z-index:10;
+  }
+  .chrome-brand{
+    display:flex;align-items:center;gap:8px;
+    color:var(--text-hi);font-weight:600;
+  }
+  .chrome-brand .mark{
+    width:14px;height:14px;display:inline-block;
+    background:
+      linear-gradient(135deg,var(--amber) 50%,transparent 50%) no-repeat,
+      var(--surface-2);
+    border:1px solid var(--amber);
+  }
+  .chrome-path{margin-left:16px;}
+  .chrome-path .sep{color:var(--axis);margin:0 8px;}
+  .chrome-path .crumb{color:var(--text);}
+  .chrome-path .crumb.active{color:var(--amber);}
+  .chrome-right{margin-left:auto;display:flex;gap:24px;align-items:center;}
+  .chrome-ticker{
+    display:flex;gap:18px;color:var(--muted);
+  }
+  .chrome-ticker em{font-style:normal;color:var(--text-hi);margin-left:4px;}
+  .chrome-ticker .up{color:var(--up);}
+  .chrome-ticker .down{color:var(--down);}
+  .chrome-clock{color:var(--amber);}
+  .chrome-pill{
+    display:inline-flex;align-items:center;gap:6px;
+    padding:2px 8px;border:1px solid var(--up);
+    color:var(--up);
+    text-transform:uppercase;letter-spacing:.08em;
+  }
+  .chrome-pill .dot{width:6px;height:6px;background:var(--up);}
+
+  /* ============== LAYOUT ============== */
+  .shell{display:grid;grid-template-columns:200px 1fr;min-height:calc(100vh - 38px);}
+  aside.nav{
+    background:var(--surface-1);
+    border-right:1px solid var(--divider);
+    padding:24px 0 16px;
+    position:sticky;top:38px;height:calc(100vh - 38px);
+    overflow-y:auto;
+    font-family:var(--font-mono);
+    font-size:11px;
+    letter-spacing:.06em;
+  }
+  .nav-group{padding:0 16px;margin-bottom:24px;}
+  .nav-group-label{
+    color:var(--axis);text-transform:uppercase;font-size:10px;letter-spacing:.14em;
+    border-bottom:1px solid var(--divider);
+    padding-bottom:6px;margin-bottom:8px;
+    display:flex;justify-content:space-between;align-items:center;
+  }
+  .nav-group-label .ix{color:var(--muted);font-variant-numeric:tabular-nums;}
+  .nav-item{
+    display:flex;align-items:center;justify-content:space-between;
+    padding:6px 8px;color:var(--text);
+    text-decoration:none;
+    border-left:2px solid transparent;
+    margin-left:-8px;padding-left:6px;
+    cursor:pointer;
+    transition:color .12s ease-out,background .12s ease-out;
+  }
+  .nav-item:hover{background:var(--amber-soft);color:var(--text-hi);}
+  .nav-item.active{
+    color:var(--amber);
+    border-left-color:var(--amber);
+    background:var(--amber-soft);
+  }
+  .nav-item .key{
+    font-size:10px;color:var(--muted);font-variant-numeric:tabular-nums;
+    border:1px solid var(--divider);padding:0 4px;
+  }
+  .nav-item.active .key{color:var(--amber);border-color:var(--amber-line);}
+  .nav-foot{
+    padding:0 16px;
+    border-top:1px solid var(--divider);
+    margin-top:auto;
+    font-size:10px;color:var(--axis);
+    padding-top:12px;
+  }
+  .nav-foot .row{display:flex;justify-content:space-between;color:var(--muted);margin-bottom:4px;}
+  .nav-foot .row em{font-style:normal;color:var(--text);}
+
+  /* ============== MAIN ============== */
+  main{padding:32px 40px 64px;max-width:1480px;}
+
+  /* PAGE HEADER */
+  .ph{
+    display:flex;align-items:flex-end;justify-content:space-between;
+    border-bottom:1px solid var(--divider);
+    padding-bottom:16px;margin-bottom:32px;
+    gap:24px;
+  }
+  .ph-eyebrow{
+    font-family:var(--font-mono);
+    font-size:11px;letter-spacing:.22em;text-transform:uppercase;
+    color:var(--amber);
+    display:flex;align-items:center;gap:12px;
+  }
+  .ph-eyebrow .rule{flex:0 0 32px;height:1px;background:var(--amber);}
+  .ph h1{
+    font-family:var(--font-serif);font-weight:900;
+    font-size:clamp(40px,4.6vw,64px);
+    line-height:1;margin:8px 0 0;
+    color:var(--text-hi);letter-spacing:-.01em;
+  }
+  .ph h1 .punct{color:var(--amber);}
+  .ph-meta{
+    text-align:right;font-family:var(--font-mono);font-size:11px;
+    color:var(--muted);
+  }
+  .ph-meta .row{display:flex;justify-content:flex-end;gap:24px;margin-bottom:4px;}
+  .ph-meta .row em{font-style:normal;color:var(--text-hi);font-weight:500;}
+  .ph-btn{
+    background:transparent;border:1px solid var(--divider);
+    color:var(--text);padding:6px 12px;
+    font-family:var(--font-mono);font-size:11px;letter-spacing:.06em;
+    text-transform:uppercase;cursor:pointer;
+    transition:all .12s ease-out;
+  }
+  .ph-btn:hover{border-color:var(--amber);color:var(--amber);}
+  .ph-btn.primary{background:var(--amber);color:var(--ground);border-color:var(--amber);}
+  .ph-btn.primary:hover{background:var(--amber-hi);}
+
+  /* HERO ROW: HEALTH + 4 BEATS */
+  .hero{
+    display:grid;grid-template-columns:320px 1fr;
+    gap:0;
+    border:1px solid var(--divider);
+    margin-bottom:24px;
+  }
+  .health{
+    padding:24px;border-right:1px solid var(--divider);
+    background:var(--surface-1);
+    display:grid;grid-template-columns:140px 1fr;gap:24px;
+    align-items:center;
+  }
+  .ring{
+    --pct:98;
+    position:relative;width:140px;height:140px;
+  }
+  .ring svg{transform:rotate(-90deg);width:100%;height:100%;}
+  .ring .bg{stroke:var(--divider);}
+  .ring .fg{stroke:var(--amber);stroke-linecap:butt;}
+  .ring .center{
+    position:absolute;inset:0;display:flex;
+    flex-direction:column;align-items:center;justify-content:center;
+    font-family:var(--font-mono);
+  }
+  .ring .num{
+    font-size:36px;font-weight:600;color:var(--text-hi);
+    font-variant-numeric:tabular-nums;letter-spacing:-.02em;
+    line-height:1;
+  }
+  .ring .num small{font-size:14px;color:var(--axis);margin-left:2px;}
+  .ring .lbl{
+    font-size:10px;letter-spacing:.16em;text-transform:uppercase;
+    color:var(--muted);margin-top:4px;
+  }
+  .health-info .eyebrow{
+    font-family:var(--font-mono);font-size:10px;letter-spacing:.18em;
+    text-transform:uppercase;color:var(--muted);margin-bottom:8px;
+  }
+  .health-info h3{
+    font-family:var(--font-serif);font-weight:700;font-size:22px;
+    margin:0 0 4px;color:var(--text-hi);
+  }
+  .health-info .sub{font-size:12px;color:var(--text);margin-bottom:12px;}
+  .badge-row{display:flex;flex-wrap:wrap;gap:6px;}
+  .badge{
+    font-family:var(--font-mono);font-size:10px;
+    border:1px solid var(--divider);padding:2px 6px;
+    color:var(--text);letter-spacing:.06em;text-transform:uppercase;
+  }
+  .badge.ok{border-color:var(--up);color:var(--up);}
+  .badge.warn{border-color:var(--warn);color:var(--warn);}
+  .badge.amber{border-color:var(--amber);color:var(--amber);}
+
+  .beats{display:grid;grid-template-columns:repeat(4,1fr);}
+  .beat{
+    padding:24px;border-right:1px solid var(--divider);
+    background:var(--surface-1);
+    display:flex;flex-direction:column;justify-content:space-between;
+    min-height:160px;
+    position:relative;
+  }
+  .beat:last-child{border-right:0;}
+  .beat .lbl{
+    font-family:var(--font-mono);font-size:10px;letter-spacing:.18em;
+    text-transform:uppercase;color:var(--muted);
+  }
+  .beat .ix{
+    position:absolute;top:12px;right:12px;
+    font-family:var(--font-mono);font-size:10px;color:var(--axis);
+    letter-spacing:.1em;
+  }
+  .beat .val{
+    font-family:var(--font-mono);font-weight:500;
+    font-size:36px;color:var(--text-hi);font-variant-numeric:tabular-nums;
+    letter-spacing:-.02em;line-height:1;
+    margin:8px 0;
+  }
+  .beat .val small{
+    font-size:12px;color:var(--muted);margin-left:4px;font-weight:400;
+  }
+  .beat .val.amber{color:var(--amber);}
+  .beat .sub{font-size:12px;color:var(--text);display:flex;gap:8px;align-items:baseline;}
+  .beat .sub em{font-style:normal;color:var(--muted);}
+  .beat .sub .delta{font-family:var(--font-mono);font-variant-numeric:tabular-nums;}
+  .beat .sub .delta.up{color:var(--up);}
+  .beat .sub .delta.down{color:var(--down);}
+  .beat .sparkbar{
+    margin-top:12px;display:flex;align-items:flex-end;gap:2px;height:24px;
+  }
+  .beat .sparkbar i{
+    flex:1;background:var(--axis);min-height:2px;
+  }
+  .beat .sparkbar i.hi{background:var(--amber);}
+
+  /* PULSE BAR */
+  .section-head{
+    font-family:var(--font-mono);font-size:11px;color:var(--muted);
+    letter-spacing:.18em;text-transform:uppercase;
+    border-bottom:1px solid var(--divider);
+    padding:0 0 8px;margin:32px 0 12px;
+    display:flex;align-items:center;justify-content:space-between;
+  }
+  .section-head .ix{color:var(--axis);}
+  .pulse{
+    display:flex;border:1px solid var(--divider);
+    height:48px;overflow:hidden;font-family:var(--font-mono);
+  }
+  .pulse-cell{
+    flex:1;display:flex;flex-direction:column;justify-content:space-between;
+    padding:6px 10px;border-right:1px solid var(--divider);
+    position:relative;cursor:pointer;
+    transition:background .12s ease-out;
+  }
+  .pulse-cell:last-child{border-right:0;}
+  .pulse-cell:hover{background:var(--amber-soft);}
+  .pulse-cell .lbl{
+    font-size:10px;color:var(--muted);letter-spacing:.1em;text-transform:uppercase;
+  }
+  .pulse-cell .val{
+    font-size:18px;color:var(--text-hi);font-variant-numeric:tabular-nums;
+    font-weight:500;line-height:1;
+  }
+  .pulse-cell.alert{background:rgba(248,113,113,.06);}
+  .pulse-cell.alert .val{color:var(--down);}
+  .pulse-cell.warn{background:rgba(250,204,21,.05);}
+  .pulse-cell.warn .val{color:var(--warn);}
+  .pulse-cell.amber .val{color:var(--amber);}
+  .pulse-cell::after{
+    content:"";position:absolute;left:0;right:0;bottom:0;
+    height:2px;background:var(--axis);
+    transform-origin:left;transform:scaleX(var(--pct,0.5));
+  }
+  .pulse-cell.alert::after{background:var(--down);}
+  .pulse-cell.warn::after{background:var(--warn);}
+  .pulse-cell.amber::after{background:var(--amber);}
+
+  /* OPS GRID — 4 cards */
+  .ops{
+    display:grid;grid-template-columns:repeat(4,1fr);
+    border:1px solid var(--divider);
+  }
+  .ops-card{
+    background:var(--surface-1);
+    border-right:1px solid var(--divider);
+    padding:20px;
+    min-height:280px;
+    display:flex;flex-direction:column;
+    position:relative;
+  }
+  .ops-card:last-child{border-right:0;}
+  .ops-head{
+    display:flex;align-items:baseline;justify-content:space-between;
+    padding-bottom:8px;margin-bottom:16px;
+    border-bottom:1px solid var(--divider);
+  }
+  .ops-head h4{
+    font-family:var(--font-serif);font-weight:700;font-size:15px;
+    color:var(--text-hi);margin:0;
+  }
+  .ops-head .meta{
+    font-family:var(--font-mono);font-size:10px;color:var(--muted);
+    letter-spacing:.1em;text-transform:uppercase;
+  }
+  /* throughput */
+  .tp-bars{
+    display:flex;align-items:flex-end;gap:3px;height:140px;
+    border-bottom:1px solid var(--axis);padding-bottom:0;
+    position:relative;
+  }
+  .tp-bars::before,.tp-bars::after{
+    content:"";position:absolute;left:0;right:0;
+    height:1px;background:var(--divider);
+  }
+  .tp-bars::before{top:33%;}
+  .tp-bars::after{top:66%;}
+  .tp-bars i{
+    flex:1;background:var(--amber);min-height:2px;
+    position:relative;
+  }
+  .tp-bars i.muted{background:var(--axis);}
+  .tp-bars i.warn{background:var(--warn);}
+  .tp-axis{
+    display:flex;justify-content:space-between;font-family:var(--font-mono);
+    font-size:9px;color:var(--axis);letter-spacing:.08em;
+    padding-top:4px;
+  }
+  .tp-meta{
+    margin-top:12px;font-family:var(--font-mono);font-size:11px;
+    display:flex;flex-direction:column;gap:4px;
+  }
+  .tp-meta .row{display:flex;justify-content:space-between;}
+  .tp-meta .row em{font-style:normal;color:var(--text-hi);font-variant-numeric:tabular-nums;}
+  /* burn ring */
+  .burn{display:flex;flex-direction:column;align-items:center;justify-content:center;flex:1;}
+  .burn .ring-sm{width:140px;height:140px;position:relative;}
+  .burn-meta{
+    margin-top:12px;font-family:var(--font-mono);font-size:11px;
+    width:100%;display:flex;flex-direction:column;gap:4px;
+  }
+  .burn-meta .row{display:flex;justify-content:space-between;color:var(--text);}
+  .burn-meta .row em{font-style:normal;color:var(--text-hi);font-variant-numeric:tabular-nums;}
+  /* novels */
+  .nov{flex:1;display:flex;flex-direction:column;}
+  .nov-state{
+    font-family:var(--font-mono);font-size:24px;color:var(--text-hi);
+    font-variant-numeric:tabular-nums;font-weight:500;letter-spacing:-.01em;
+  }
+  .nov-state em{font-style:normal;color:var(--amber);}
+  .nov-state small{font-size:12px;color:var(--muted);margin-left:4px;}
+  .nov-rows{
+    margin-top:16px;display:flex;flex-direction:column;gap:6px;
+    font-family:var(--font-mono);font-size:11px;
+  }
+  .nov-row{
+    display:grid;grid-template-columns:1fr auto auto;gap:8px;
+    padding:4px 0;border-top:1px solid var(--divider);
+    color:var(--text);
+  }
+  .nov-row:first-child{border-top:0;}
+  .nov-row .title{color:var(--text-hi);font-family:var(--font-sans);font-size:12px;}
+  .nov-row .pg{color:var(--muted);font-variant-numeric:tabular-nums;}
+  .nov-row .status.ok{color:var(--up);}
+  .nov-row .status.run{color:var(--amber);}
+  .nov-row .status.idle{color:var(--muted);}
+  /* slots */
+  .slot-grid{
+    display:grid;grid-template-columns:repeat(4,1fr);gap:4px;
+    margin-bottom:16px;
+  }
+  .slot{
+    aspect-ratio:1;border:1px solid var(--divider);
+    display:flex;align-items:center;justify-content:center;
+    font-family:var(--font-mono);font-size:11px;font-weight:600;
+    color:var(--muted);position:relative;
+  }
+  .slot.active{
+    border-color:var(--amber);color:var(--amber);
+    background:var(--amber-soft);
+  }
+  .slot.active::before{
+    content:"";position:absolute;top:2px;right:2px;
+    width:5px;height:5px;background:var(--amber);
+    animation:blink 1.4s steps(2) infinite;
+  }
+  .slot.warn{border-color:var(--warn);color:var(--warn);}
+  .slot.idle{color:var(--axis);border-style:dashed;}
+  @keyframes blink{50%{opacity:.2;}}
+  .slot-meta{
+    font-family:var(--font-mono);font-size:11px;
+    display:flex;flex-direction:column;gap:4px;
+  }
+  .slot-meta .row{display:flex;justify-content:space-between;color:var(--text);}
+  .slot-meta .row em{font-style:normal;color:var(--text-hi);font-variant-numeric:tabular-nums;}
+
+  /* TIMELINE + ALERTS */
+  .twin{
+    display:grid;grid-template-columns:1.5fr 1fr;gap:0;
+    border:1px solid var(--divider);
+    margin-top:24px;
+  }
+  .twin-card{
+    background:var(--surface-1);
+    padding:20px;border-right:1px solid var(--divider);
+  }
+  .twin-card:last-child{border-right:0;}
+  .twin-card h4{
+    font-family:var(--font-serif);font-weight:700;font-size:15px;
+    color:var(--text-hi);margin:0 0 8px;
+    padding-bottom:8px;border-bottom:1px solid var(--divider);
+    display:flex;justify-content:space-between;align-items:baseline;
+  }
+  .twin-card h4 .meta{
+    font-family:var(--font-mono);font-size:10px;color:var(--muted);
+    letter-spacing:.1em;text-transform:uppercase;font-weight:500;
+  }
+  .stream{
+    font-family:var(--font-mono);font-size:12px;
+    max-height:360px;overflow-y:auto;
+  }
+  .stream::-webkit-scrollbar{width:6px;}
+  .stream::-webkit-scrollbar-thumb{background:var(--divider);}
+  .ev{
+    display:grid;grid-template-columns:80px 60px 1fr auto;gap:12px;
+    padding:6px 0;border-top:1px solid var(--divider);
+    align-items:baseline;
+  }
+  .ev:first-child{border-top:0;}
+  .ev .t{color:var(--muted);font-variant-numeric:tabular-nums;}
+  .ev .tag{
+    color:var(--text-hi);letter-spacing:.06em;
+    border-left:2px solid var(--axis);padding-left:6px;
+    font-size:10px;
+  }
+  .ev .tag.PUB{border-left-color:var(--up);color:var(--up);}
+  .ev .tag.AIR{border-left-color:var(--amber);color:var(--amber);}
+  .ev .tag.GEN{border-left-color:var(--info);color:var(--info);}
+  .ev .tag.THM{border-left-color:var(--muted);color:var(--text);}
+  .ev .tag.ERR{border-left-color:var(--down);color:var(--down);}
+  .ev .msg{color:var(--text);}
+  .ev .msg em{font-style:normal;color:var(--text-hi);}
+  .ev .delta{color:var(--muted);font-variant-numeric:tabular-nums;font-size:11px;}
+  .ev:hover{background:var(--amber-soft);}
+
+  .alerts{display:flex;flex-direction:column;gap:8px;}
+  .alert{
+    display:grid;grid-template-columns:auto 1fr;gap:12px;
+    border-left:2px solid var(--axis);
+    padding:8px 12px;background:transparent;
+    font-size:12px;
+    transition:background .12s ease-out;
+  }
+  .alert:hover{background:var(--amber-soft);}
+  .alert.warn{border-left-color:var(--warn);}
+  .alert.err{border-left-color:var(--down);}
+  .alert.amber{border-left-color:var(--amber);}
+  .alert .glyph{
+    font-family:var(--font-mono);font-size:11px;
+    color:var(--axis);letter-spacing:.1em;font-weight:600;
+    align-self:center;
+  }
+  .alert.warn .glyph{color:var(--warn);}
+  .alert.err .glyph{color:var(--down);}
+  .alert.amber .glyph{color:var(--amber);}
+  .alert .title{font-weight:500;color:var(--text-hi);margin-bottom:2px;}
+  .alert .desc{color:var(--text);font-size:11px;}
+  .alert .desc code{
+    font-family:var(--font-mono);background:var(--surface-2);
+    padding:0 4px;color:var(--amber);font-size:10.5px;
+  }
+  .alerts-empty{
+    text-align:center;font-family:var(--font-mono);font-size:11px;
+    color:var(--muted);padding:24px 0;letter-spacing:.1em;
+  }
+
+  /* FOOTNOTE */
+  .footer-strip{
+    margin-top:32px;padding:12px 0 0;border-top:1px solid var(--divider);
+    font-family:var(--font-mono);font-size:10px;color:var(--axis);
+    display:flex;justify-content:space-between;letter-spacing:.08em;
+    text-transform:uppercase;
+  }
+
+  /* small responsive concession */
+  @media (max-width: 1280px){
+    .ops{grid-template-columns:repeat(2,1fr);}
+    .ops-card:nth-child(2){border-right:0;}
+    .ops-card:nth-child(1),.ops-card:nth-child(2){border-bottom:1px solid var(--divider);}
+    .hero{grid-template-columns:1fr;}
+    .health{border-right:0;border-bottom:1px solid var(--divider);}
+    .twin{grid-template-columns:1fr;}
+    .twin-card{border-right:0;border-bottom:1px solid var(--divider);}
+    .twin-card:last-child{border-bottom:0;}
+  }
+  @media (max-width: 880px){
+    .shell{grid-template-columns:1fr;}
+    aside.nav{display:none;}
+    main{padding:24px 16px 48px;}
+    .beats{grid-template-columns:repeat(2,1fr);}
+    .beat:nth-child(2){border-right:0;}
+    .beat:nth-child(1),.beat:nth-child(2){border-bottom:1px solid var(--divider);}
+  }
+
+  /* === Tweaks panel === */
+  .tweaks{
+    position:fixed;right:16px;bottom:16px;z-index:50;
+    background:var(--surface-1);border:1px solid var(--divider);
+    width:240px;font-family:var(--font-mono);font-size:11px;
+  }
+  .tweaks header{
+    background:var(--surface-2);padding:6px 12px;
+    color:var(--amber);letter-spacing:.16em;text-transform:uppercase;
+    border-bottom:1px solid var(--divider);
+    display:flex;justify-content:space-between;cursor:pointer;
+  }
+  .tweaks header .x{color:var(--muted);}
+  .tweaks .body{padding:12px;display:flex;flex-direction:column;gap:10px;}
+  .tweaks label{
+    display:flex;justify-content:space-between;align-items:center;
+    color:var(--text);font-size:11px;letter-spacing:.06em;
+  }
+  .tweaks select{
+    background:var(--ground);color:var(--text-hi);
+    border:1px solid var(--divider);font-family:var(--font-mono);
+    font-size:11px;padding:2px 4px;
+  }
+  .tweaks.collapsed .body{display:none;}
+  .tweaks.collapsed header .x::before{content:"+";}
+  .tweaks:not(.collapsed) header .x::before{content:"−";}
+
+  /* density modes */
+  body.dense main{padding:20px 28px 48px;}
+  body.dense .hero,body.dense .ops,body.dense .twin,body.dense .health,body.dense .beat,body.dense .ops-card,body.dense .twin-card{padding-inline:14px;}
+  body.dense .beat{min-height:128px;}
+  body.dense .ph h1{font-size:clamp(32px,3.6vw,52px);}
+
+  body.light{
+    --ground:#F4F1E7;--surface-1:#FFFFFF;--surface-2:#EFEADD;
+    --divider:#C9C2AE;--divider-strong:#A89F87;
+    --amber:#9C6F0F;--amber-hi:#7A560B;--amber-soft:rgba(156,111,15,.10);--amber-line:rgba(156,111,15,.32);
+    --text-hi:#1C1916;--text:#3C3A33;--muted:#7A7665;--axis:#A89F87;
+  }
+</style>
+</head>
+<body>
+
+<!-- TOP CHROME -->
+<div class="chrome">
+  <div class="chrome-brand">
+    <span class="mark" aria-hidden="true"></span>
+    <span>ANP · STUDIO</span>
+  </div>
+  <div class="chrome-path">
+    <span class="crumb">SYS</span><span class="sep">/</span>
+    <span class="crumb active">COCKPIT</span><span class="sep">/</span>
+    <span class="crumb">01</span>
+  </div>
+  <div class="chrome-right">
+    <div class="chrome-ticker">
+      <span>QPS<em>1.4</em></span>
+      <span>BUDGET<em class="up">¥47.20</em><em style="color:var(--muted);font-size:10px;margin-left:6px">/ 200</em></span>
+      <span>TOKENS<em>12.4K</em><em class="down" style="margin-left:6px">−3%</em></span>
+      <span>QUEUE<em>3</em></span>
+    </div>
+    <span class="chrome-pill"><span class="dot"></span>HEALTHY</span>
+    <span class="chrome-clock">14:32:07 UTC+8</span>
+  </div>
+</div>
+
+<div class="shell">
+  <!-- LEFT NAV -->
+  <aside class="nav">
+    <div class="nav-group">
+      <div class="nav-group-label">PRIMARY <span class="ix">I — II</span></div>
+      <a class="nav-item active" href="#"><span>COCKPIT</span><span class="key">01</span></a>
+      <a class="nav-item" href="#"><span>TELEMETRY</span><span class="key">02</span></a>
+    </div>
+    <div class="nav-group">
+      <div class="nav-group-label">MODULES <span class="ix">III — V</span></div>
+      <a class="nav-item" href="#"><span>STORIES · 短篇</span><span class="key">03</span></a>
+      <a class="nav-item" href="#"><span>NOVELS · 长篇</span><span class="key">04</span></a>
+      <a class="nav-item" href="#"><span>THEMES · 题材</span><span class="key">05</span></a>
+    </div>
+    <div class="nav-group">
+      <div class="nav-group-label">SYSTEM <span class="ix">VI — VII</span></div>
+      <a class="nav-item" href="#"><span>LOGS</span><span class="key">06</span></a>
+      <a class="nav-item" href="#"><span>CONFIG</span><span class="key">07</span></a>
+    </div>
+    <div class="nav-foot">
+      <div class="row"><span>DB</span><em>anp.sqlite3</em></div>
+      <div class="row"><span>HOST</span><em>127.0.0.1:18000</em></div>
+      <div class="row"><span>VER</span><em>v0.7.2</em></div>
+      <div class="row" style="margin-top:8px;"><span>LOCAL ONLY</span><em style="color:var(--up);">●</em></div>
+    </div>
+  </aside>
+
+  <!-- MAIN -->
+  <main>
+
+    <!-- PAGE HEADER -->
+    <header class="ph">
+      <div>
+        <div class="ph-eyebrow"><span class="rule"></span><span>I · COCKPIT</span></div>
+        <h1>系统驾驶舱<span class="punct">.</span></h1>
+      </div>
+      <div style="display:flex;align-items:flex-end;gap:16px;">
+        <div class="ph-meta">
+          <div class="row"><span>UPTIME</span><em>04 D · 07 H · 22 M</em></div>
+          <div class="row"><span>MODE</span><em style="color:var(--amber);">SEMI-AUTO</em></div>
+          <div class="row"><span>DRY-RUN</span><em style="color:var(--up);">OFF</em></div>
+        </div>
+        <button class="ph-btn">REFRESH</button>
+        <button class="ph-btn primary">RUN TASK ▶</button>
+      </div>
+    </header>
+
+    <!-- HERO -->
+    <div class="hero">
+      <!-- HEALTH RING -->
+      <div class="health">
+        <div class="ring" style="--pct:98;">
+          <svg viewBox="0 0 100 100">
+            <circle class="bg" cx="50" cy="50" r="44" fill="none" stroke-width="6"/>
+            <circle class="fg" cx="50" cy="50" r="44" fill="none" stroke-width="6"
+              stroke-dasharray="276.46" stroke-dashoffset="5.5"/>
+          </svg>
+          <div class="center">
+            <div class="num">98<small>/100</small></div>
+            <div class="lbl">Health</div>
+          </div>
+        </div>
+        <div class="health-info">
+          <div class="eyebrow">系统健康度</div>
+          <h3>所有子系统在线</h3>
+          <div class="sub">最近 24 小时无错误事件，1 项低优提醒</div>
+          <div class="badge-row">
+            <span class="badge ok">SCHED ON</span>
+            <span class="badge ok">DB R/W</span>
+            <span class="badge amber">DRY-RUN OFF</span>
+            <span class="badge warn">LOGIN 06 D</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- BEATS -->
+      <div class="beats">
+        <div class="beat">
+          <div class="ix">01</div>
+          <div class="lbl">今日产出 / TODAY</div>
+          <div class="val">12 <small>篇</small></div>
+          <div class="sub"><em>vs 7d 均值</em><span class="delta up">+24%</span></div>
+          <div class="sparkbar" aria-label="14d sparkline">
+            <i style="height:30%"></i><i style="height:40%"></i><i style="height:25%"></i>
+            <i style="height:50%"></i><i style="height:60%"></i><i style="height:45%"></i>
+            <i style="height:55%"></i><i style="height:70%"></i><i style="height:50%"></i>
+            <i style="height:65%"></i><i style="height:75%"></i><i style="height:60%"></i>
+            <i style="height:55%"></i><i class="hi" style="height:90%"></i>
+          </div>
+        </div>
+        <div class="beat">
+          <div class="ix">02</div>
+          <div class="lbl">当前任务 / RUNNING</div>
+          <div class="val amber">02 <small>任务</small></div>
+          <div class="sub"><em>GEN s_47 · AIR s_46</em></div>
+          <div class="sparkbar">
+            <i class="muted" style="height:10%"></i><i class="muted" style="height:8%"></i>
+            <i class="muted" style="height:15%"></i><i class="muted" style="height:6%"></i>
+            <i class="muted" style="height:18%"></i><i class="muted" style="height:25%"></i>
+            <i class="muted" style="height:12%"></i><i class="hi" style="height:80%"></i>
+            <i class="hi" style="height:72%"></i><i class="hi" style="height:90%"></i>
+            <i class="muted" style="height:8%"></i><i class="muted" style="height:12%"></i>
+            <i class="muted" style="height:6%"></i><i class="muted" style="height:10%"></i>
+          </div>
+        </div>
+        <div class="beat">
+          <div class="ix">03</div>
+          <div class="lbl">作品库存 / LIBRARY</div>
+          <div class="val">247 <small>篇</small></div>
+          <div class="sub">
+            <em>已发布</em><span class="delta up">128</span>
+            <em>待审</em><span class="delta">23</span>
+          </div>
+          <div class="sparkbar">
+            <i style="height:18%"></i><i style="height:22%"></i><i style="height:28%"></i>
+            <i style="height:32%"></i><i style="height:36%"></i><i style="height:42%"></i>
+            <i style="height:48%"></i><i style="height:55%"></i><i style="height:60%"></i>
+            <i style="height:64%"></i><i style="height:72%"></i><i style="height:80%"></i>
+            <i style="height:88%"></i><i class="hi" style="height:96%"></i>
+          </div>
+        </div>
+        <div class="beat">
+          <div class="ix">04</div>
+          <div class="lbl">本月预算 / BUDGET</div>
+          <div class="val">¥47<small>.20 / 200</small></div>
+          <div class="sub"><em>已用</em><span class="delta">23.6%</span><em style="color:var(--axis)">· 26d 剩</em></div>
+          <div class="sparkbar">
+            <i style="height:5%"></i><i style="height:8%"></i><i style="height:10%"></i>
+            <i style="height:12%"></i><i style="height:15%"></i><i style="height:14%"></i>
+            <i style="height:18%"></i><i style="height:22%"></i><i style="height:20%"></i>
+            <i style="height:24%"></i><i style="height:26%"></i><i style="height:24%"></i>
+            <i class="hi" style="height:30%"></i><i class="hi" style="height:23%"></i>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- PULSE BAR -->
+    <div class="section-head"><span>STATUS PULSE · 作品状态脉搏</span><span class="ix">UPDATED 14:32:07</span></div>
+    <div class="pulse">
+      <div class="pulse-cell" style="--pct:0.32">
+        <div class="lbl">PENDING · 待生成</div>
+        <div class="val">18</div>
+      </div>
+      <div class="pulse-cell amber" style="--pct:0.18">
+        <div class="lbl">GENERATING · 生成中</div>
+        <div class="val">02</div>
+      </div>
+      <div class="pulse-cell amber" style="--pct:0.42">
+        <div class="lbl">AI REVIEW · 审核中</div>
+        <div class="val">07</div>
+      </div>
+      <div class="pulse-cell warn" style="--pct:0.55">
+        <div class="lbl">NEEDS HUMAN · 待人工</div>
+        <div class="val">04</div>
+      </div>
+      <div class="pulse-cell" style="--pct:0.86">
+        <div class="lbl">APPROVED · 已批准</div>
+        <div class="val">14</div>
+      </div>
+      <div class="pulse-cell" style="--pct:0.92">
+        <div class="lbl">PUBLISHED · 已发布</div>
+        <div class="val">128</div>
+      </div>
+      <div class="pulse-cell alert" style="--pct:0.08">
+        <div class="lbl">FAILED · 失败</div>
+        <div class="val">02</div>
+      </div>
+    </div>
+
+    <!-- OPS GRID -->
+    <div class="section-head"><span>OPERATIONS · 运营核心</span><span class="ix">IV PANELS</span></div>
+    <div class="ops">
+
+      <!-- THROUGHPUT -->
+      <div class="ops-card">
+        <div class="ops-head"><h4>任务流速</h4><span class="meta">24H · GEN+REV+PUB</span></div>
+        <div class="tp-bars">
+          <i style="height:18%"></i><i style="height:22%"></i><i style="height:28%"></i>
+          <i style="height:14%"></i><i style="height:38%"></i><i style="height:45%"></i>
+          <i style="height:32%"></i><i style="height:52%"></i><i style="height:65%"></i>
+          <i style="height:74%"></i><i style="height:58%"></i><i class="warn" style="height:88%"></i>
+          <i style="height:72%"></i><i style="height:64%"></i><i style="height:52%"></i>
+          <i style="height:48%"></i><i style="height:40%"></i><i style="height:36%"></i>
+          <i style="height:30%"></i><i style="height:26%"></i><i style="height:22%"></i>
+          <i style="height:18%"></i><i style="height:24%"></i><i style="height:34%"></i>
+        </div>
+        <div class="tp-axis"><span>00</span><span>06</span><span>12</span><span>18</span><span>24</span></div>
+        <div class="tp-meta">
+          <div class="row"><span>峰值 / 12:00–13:00</span><em>14 篇 / h</em></div>
+          <div class="row"><span>当前 / 14:00</span><em>3 篇 / h</em></div>
+          <div class="row"><span>24h 合计</span><em>247 任务</em></div>
+        </div>
+      </div>
+
+      <!-- BUDGET BURN -->
+      <div class="ops-card">
+        <div class="ops-head"><h4>预算燃烧</h4><span class="meta">月 · CNY</span></div>
+        <div class="burn">
+          <div class="ring ring-sm" style="--pct:24;">
+            <svg viewBox="0 0 100 100">
+              <circle class="bg" cx="50" cy="50" r="44" fill="none" stroke-width="6"/>
+              <circle class="fg" cx="50" cy="50" r="44" fill="none" stroke-width="6"
+                stroke-dasharray="276.46" stroke-dashoffset="210"/>
+            </svg>
+            <div class="center">
+              <div class="num">24<small>%</small></div>
+              <div class="lbl">USED</div>
+            </div>
+          </div>
+        </div>
+        <div class="burn-meta">
+          <div class="row"><span>已用</span><em>¥47.20</em></div>
+          <div class="row"><span>上限</span><em>¥200.00</em></div>
+          <div class="row"><span>剩余</span><em style="color:var(--up);">¥152.80</em></div>
+          <div class="row"><span>日均</span><em>¥9.44</em></div>
+          <div class="row"><span>预计耗尽</span><em style="color:var(--text);">06-21 (26 D)</em></div>
+        </div>
+      </div>
+
+      <!-- LONG NOVELS -->
+      <div class="ops-card">
+        <div class="ops-head"><h4>长篇小说</h4><span class="meta">书库 · TOP 3</span></div>
+        <div class="nov">
+          <div class="nov-state">03<em>本</em><small>在写</small></div>
+          <div class="nov-rows">
+            <div class="nov-row">
+              <span class="title">朱雀之翼</span>
+              <span class="pg">47 / 120</span>
+              <span class="status run">RUN</span>
+            </div>
+            <div class="nov-row">
+              <span class="title">海边旧书店</span>
+              <span class="pg">12 / 60</span>
+              <span class="status ok">OK</span>
+            </div>
+            <div class="nov-row">
+              <span class="title">雨夜归人</span>
+              <span class="pg">8 / 40</span>
+              <span class="status idle">IDLE</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- CONCURRENCY SLOTS -->
+      <div class="ops-card">
+        <div class="ops-head"><h4>并发槽位</h4><span class="meta">PIPELINE · 4×2</span></div>
+        <div class="slot-grid">
+          <div class="slot active">G1</div>
+          <div class="slot active">G2</div>
+          <div class="slot">G3</div>
+          <div class="slot idle">G4</div>
+          <div class="slot active">R1</div>
+          <div class="slot">R2</div>
+          <div class="slot warn">P1</div>
+          <div class="slot idle">P2</div>
+        </div>
+        <div class="slot-meta">
+          <div class="row"><span>使用</span><em>4 / 8 · 50%</em></div>
+          <div class="row"><span>GEN · 生成</span><em>2 / 4</em></div>
+          <div class="row"><span>REV · 审核</span><em>1 / 2</em></div>
+          <div class="row"><span>PUB · 发布</span><em>1 / 2 · 暂停</em></div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- TIMELINE + ALERTS -->
+    <div class="twin">
+      <div class="twin-card">
+        <h4>最近作品时间轴 <span class="meta">RECENT · 12 ENTRIES</span></h4>
+        <div class="stream">
+          <div class="ev"><span class="t">14:32:08</span><span class="tag PUB">PUB</span><span class="msg"><em>story_47</em> · 雨夜归人 · 番茄发布成功</span><span class="delta">+0.42s</span></div>
+          <div class="ev"><span class="t">14:18:02</span><span class="tag AIR">AIR</span><span class="msg"><em>story_46</em> · 海边旧书店 · 综合 85.2 / 100 → APPROVED</span><span class="delta">2.1s</span></div>
+          <div class="ev"><span class="t">13:55:11</span><span class="tag GEN">GEN</span><span class="msg"><em>story_45</em> · 朱雀之翼 ch.47 · 3,142 字</span><span class="delta">38.4s</span></div>
+          <div class="ev"><span class="t">13:42:03</span><span class="tag THM">THM</span><span class="msg">番茄榜单刷新 · 新增 12 条候选题材</span><span class="delta">5.6s</span></div>
+          <div class="ev"><span class="t">13:28:55</span><span class="tag PUB">PUB</span><span class="msg"><em>story_44</em> · 老巷新声 · 番茄发布成功</span><span class="delta">+0.51s</span></div>
+          <div class="ev"><span class="t">13:11:18</span><span class="tag AIR">AIR</span><span class="msg"><em>story_43</em> · 综合 72.8 → NEEDS_HUMAN（语言维度 60）</span><span class="delta">2.4s</span></div>
+          <div class="ev"><span class="t">12:54:02</span><span class="tag GEN">GEN</span><span class="msg"><em>story_42</em> · 短篇 · 1,856 字</span><span class="delta">21.7s</span></div>
+          <div class="ev"><span class="t">12:38:33</span><span class="tag ERR">ERR</span><span class="msg"><em>story_41</em> · Playwright timeout · 草稿编辑器加载失败</span><span class="delta">30.0s</span></div>
+          <div class="ev"><span class="t">12:24:51</span><span class="tag AIR">AIR</span><span class="msg"><em>story_40</em> · 综合 91.4 → APPROVED</span><span class="delta">1.9s</span></div>
+          <div class="ev"><span class="t">12:08:09</span><span class="tag GEN">GEN</span><span class="msg"><em>story_40</em> · 短篇 · 2,204 字</span><span class="delta">26.8s</span></div>
+          <div class="ev"><span class="t">11:42:33</span><span class="tag PUB">PUB</span><span class="msg"><em>story_39</em> · 番茄发布成功</span><span class="delta">+0.47s</span></div>
+          <div class="ev"><span class="t">11:21:14</span><span class="tag THM">THM</span><span class="msg">分类热度刷新 · 都市 +18% · 玄幻 −4%</span><span class="delta">3.1s</span></div>
+        </div>
+      </div>
+
+      <div class="twin-card">
+        <h4>智能提醒中心 <span class="meta">3 ACTIVE</span></h4>
+        <div class="alerts">
+          <div class="alert err">
+            <div class="glyph">▲ ERR</div>
+            <div>
+              <div class="title">story_41 发布失败 · Playwright 超时</div>
+              <div class="desc">12:38 番茄编辑器 30s 内未加载完成 · 建议 <code>检查登录态</code> 或重启浏览器进程</div>
+            </div>
+          </div>
+          <div class="alert warn">
+            <div class="glyph">◆ WARN</div>
+            <div>
+              <div class="title">番茄登录态接近过期</div>
+              <div class="desc">最近一次更新 06 D 前 · <code>data/browser/fansq_state.json</code> · 建议本周内手动续期</div>
+            </div>
+          </div>
+          <div class="alert amber">
+            <div class="glyph">● INFO</div>
+            <div>
+              <div class="title">本月预算已用 24% · 健康</div>
+              <div class="desc">按当前消耗节奏，预计 06-21 前不会超额</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="footer-strip">
+      <span>ANP · LOCAL STUDIO</span>
+      <span>SQLITE · 12.4MB · 4 BACKUPS</span>
+      <span>REGION · 127.0.0.1 ONLY</span>
+      <span>BUILD v0.7.2 · 2026-05-19</span>
+    </div>
+
+  </main>
+</div>
+
+<!-- TWEAKS -->
+<div class="tweaks" id="tweaks">
+  <header onclick="document.getElementById('tweaks').classList.toggle('collapsed')">
+    <span>TWEAKS</span><span class="x"></span>
+  </header>
+  <div class="body">
+    <label>密度
+      <select onchange="document.body.classList.toggle('dense',this.value==='dense')">
+        <option value="default">DEFAULT</option>
+        <option value="dense">DENSE</option>
+      </select>
+    </label>
+    <label>主题
+      <select onchange="document.body.classList.toggle('light',this.value==='light')">
+        <option value="dark">CHROME-AMBER</option>
+        <option value="light">PAPER-IRON</option>
+      </select>
+    </label>
+    <label>动效
+      <select onchange="document.body.style.setProperty('--motion-mul',this.value)">
+        <option value="1">ON</option>
+        <option value="0">OFF</option>
+      </select>
+    </label>
+  </div>
+</div>
+
+<script>
+  // tiny live clock — keeps the terminal feeling honest
+  function tick(){
+    const d=new Date();
+    const p=n=>String(n).padStart(2,'0');
+    const t=`${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())} UTC+8`;
+    document.querySelector('.chrome-clock').textContent=t;
+  }
+  setInterval(tick,1000);tick();
+
+  // subtle data flash on hover for events (the terminal blink)
+  document.querySelectorAll('.ev').forEach(el=>{
+    el.addEventListener('mouseenter',()=>{
+      el.style.transition='none';
+      el.style.background='rgba(212,160,23,.18)';
+      requestAnimationFrame(()=>{el.style.transition='background 240ms linear';el.style.background='';});
+    });
+  });
+</script>
+
+</body>
+</html>

@@ -7,12 +7,7 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-import os
-import sys
-import threading
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -21,8 +16,14 @@ from fastapi.responses import StreamingResponse
 
 from auto_start import (
     disable as autostart_disable,
+)
+from auto_start import (
     enable as autostart_enable,
+)
+from auto_start import (
     is_windows as autostart_is_windows,
+)
+from auto_start import (
     status as autostart_status,
 )
 from config_loader import load_from_environment

@@ -23,13 +23,11 @@ from config_loader import LoadedConfig
 from generator.api_client import ChatCompletion, ChatUsage
 from generator.c_pipeline.phase0_select import (
     PHASE0_OUTPUT_FIELDS,
-    Phase0Result,
     ThemePoolEmptyError,
     build_phase0_prompt,
     select_theme,
 )
 from scan.seed_evolver import load_seeds
-
 
 SEEDS_PATH = ROOT / "data" / "scan_seeds.yaml"
 SEEDS = load_seeds(SEEDS_PATH)

@@ -1,4 +1,3 @@
-import json
 
 # 字数统计
 final_path = "D:\\Development_alma\\anp\\data\\works\\1\\5_最终稿.md"

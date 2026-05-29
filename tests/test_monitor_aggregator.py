@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 import sys
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -16,9 +16,8 @@ if str(ROOT) not in sys.path:
 
 from config_loader import LoadedConfig
 from review_queue import monitor_aggregator as ma
-from review_queue.db import initialize_database, insert_story
-from review_queue.metrics import record_pipeline_event, ensure_metrics_schema
-from review_queue.models import Story
+from review_queue.db import initialize_database
+from review_queue.metrics import ensure_metrics_schema, record_pipeline_event
 
 
 @pytest.fixture(autouse=True)
@@ -98,8 +97,9 @@ def test_last_run_card_one_failure_warn(cfg: LoadedConfig) -> None:
 
 def test_login_card_default_missing(cfg: LoadedConfig, monkeypatch: pytest.MonkeyPatch) -> None:
     """CDP 离线 + 默认 storage_state 不存在 → chrome_offline，level=danger。"""
-    from review_queue import login_capture
     from publisher import chrome_launcher
+
+    from review_queue import login_capture
 
     monkeypatch.setattr(login_capture, "state_file", lambda: Path("/nope/missing.json"))
     monkeypatch.setattr(chrome_launcher, "is_cdp_ready", lambda *a, **kw: False)

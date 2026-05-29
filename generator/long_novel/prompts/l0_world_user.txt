@@ -1,0 +1,9 @@
+请为长篇小说《{title}》（{genre}题材）撰写「{section_name}」一节。
+
+题材定位参考：
+{premise_text}
+
+本节要求：
+{section_focus}
+
+只输出该节的 markdown 正文，不要写 ## 文件标题（系统会自动加），不要重复其他主题。

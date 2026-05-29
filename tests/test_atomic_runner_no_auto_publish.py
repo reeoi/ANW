@@ -10,7 +10,6 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -121,6 +120,7 @@ def test_run_publish_only_function_exists() -> None:
 def test_run_publish_only_calls_publish_with_approved_story(cfg: LoadedConfig, monkeypatch: pytest.MonkeyPatch) -> None:
     """run_publish_only 拿到 approved story 调 _publish_one。"""
     from publisher.base_publisher import PublishStatus
+
     from review_queue.db import initialize_database, insert_story
     from review_queue.models import Story
 
@@ -155,6 +155,7 @@ def test_run_publish_only_rejects_non_approved_status(cfg: LoadedConfig) -> None
 def test_run_publish_only_records_paused_status(cfg: LoadedConfig, monkeypatch: pytest.MonkeyPatch) -> None:
     """发布暂停（风控）→ status=paused。"""
     from publisher.base_publisher import PublishStatus
+
     from review_queue.db import initialize_database, insert_story
     from review_queue.models import Story
 

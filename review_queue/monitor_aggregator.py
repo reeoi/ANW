@@ -133,10 +133,22 @@ def _login_card() -> dict[str, Any]:
         if cached_at and now - cached_at < _LOGIN_CACHE_TTL:
             return _LOGIN_CACHE["card"]
     # 重新计算
-    login_state_validity = lambda: {"status":"unavailable"}
+    try:
+        from review_queue import login_capture
 
-    raw = login_state_validity()
+        cdp_ok = bool(login_capture.is_cdp_ready(timeout=0.0))
+        raw = login_capture.login_state_validity(login_capture.state_file())
+    except Exception:
+        cdp_ok = False
+        raw = {"status": "missing", "label": "登录态不可用", "days_left": None}
+
     status = str(raw.get("status") or "missing")
+    if status == "missing" and not cdp_ok:
+        status = "chrome_offline"
+        raw = {**raw, "label": "Chrome CDP 离线 / 登录态缺失"}
+    elif status == "missing" and cdp_ok:
+        status = "missing"
+        raw = {**raw, "label": "登录态缺失"}
     days_left = raw.get("days_left")
     if status in {"valid", "cdp_active"}:
         level = "ok"

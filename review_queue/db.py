@@ -128,6 +128,12 @@ def _migrate_add_cancel_requested(connection: sqlite3.Connection) -> None:
     """)
 
 
+def _migrate_add_cost_log_story_title(connection: sqlite3.Connection) -> None:
+    """Legacy no-op kept for compatibility with older imports."""
+
+    return None
+
+
 def get_database_path(config: LoadedConfig) -> Path:
     """Return the configured SQLite path."""
 
@@ -370,6 +376,50 @@ def insert_pipeline_cost_log(db_path: str | Path, entry: PipelineCostLogEntry) -
         return int(cursor.lastrowid)
 
 
+def list_pipeline_cost_logs(db_path: str | Path, limit: int = 80) -> list[dict[str, object]]:
+    """Return recent per-call API cost rows ordered newest first."""
+
+    capped = max(1, min(int(limit or 80), 500))
+    with sqlite3.connect(Path(db_path)) as connection:
+        connection.row_factory = sqlite3.Row
+        cols = {row[1] for row in connection.execute("PRAGMA table_info(pipeline_cost_log)").fetchall()}
+        title_expr = "COALESCE(pcl.story_title_snapshot, s.title, '')" if "story_title_snapshot" in cols else "COALESCE(s.title, '')"
+        rows = connection.execute(
+            f"""
+            SELECT
+                pcl.id,
+                pcl.story_id,
+                {title_expr} AS story_title,
+                pcl.phase,
+                pcl.model,
+                pcl.input_tokens,
+                pcl.cached_tokens,
+                pcl.output_tokens,
+                pcl.cost_cny,
+                pcl.occurred_at
+            FROM pipeline_cost_log AS pcl
+            LEFT JOIN stories AS s ON s.id = pcl.story_id
+            ORDER BY pcl.occurred_at DESC, pcl.id DESC
+            LIMIT ?
+            """,
+            (capped,),
+        ).fetchall()
+    return [
+        {
+            "id": int(row["id"]),
+            "story_id": int(row["story_id"]) if row["story_id"] is not None else None,
+            "story_title": str(row["story_title"] or ""),
+            "phase": str(row["phase"] or ""),
+            "model": str(row["model"] or ""),
+            "input_tokens": int(row["input_tokens"] or 0),
+            "cached_tokens": int(row["cached_tokens"] or 0),
+            "output_tokens": int(row["output_tokens"] or 0),
+            "cost_cny": float(row["cost_cny"] or 0.0),
+            "occurred_at": str(row["occurred_at"] or ""),
+        }
+        for row in rows
+    ]
+
 def upsert_daily_publish_plan(db_path: str | Path, plan: DailyPublishPlan) -> None:
     """Insert or replace a daily publish plan row for ``plan.date``."""
 
@@ -498,6 +548,7 @@ __all__ = [
     "insert_pipeline_cost_log",
     "insert_story",
     "is_cancel_requested",
+    "list_pipeline_cost_logs",
     "list_reviewable_stories",
     "request_story_cancel",
     "list_phase_transitions",

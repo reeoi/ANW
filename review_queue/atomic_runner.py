@@ -21,7 +21,6 @@ import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any, Callable
 
 from config_loader import LoadedConfig
@@ -113,6 +112,14 @@ class AtomicRunnerState:
         with self._lock:
             self._publish_fail_streak = 0
 
+    def reset(self) -> None:
+        """Reset process-local runner state for tests and fresh manual runs."""
+        with self._lock:
+            self._current = None
+            self._publish_fail_streak = 0
+        while self.is_busy():
+            self.release()
+
 
 state = AtomicRunnerState()
 
@@ -145,7 +152,6 @@ def run_generate_with_retry(
         run_pipeline,
     )
 
-    last_err: Exception | None = None
     resume_from: str | None = None
     for attempt in range(1, max_attempts + 1):
         state.update_phase(f"generate#{attempt}")
@@ -163,7 +169,6 @@ def run_generate_with_retry(
             sid = story_id if story_id is not None else None
             return int(sid) if sid is not None else 0, "cancelled"
         except PipelineError as exc:
-            last_err = exc
             resume_from = getattr(exc, "failed_phase", None)
             logger.warning(
                 "generate attempt %s/%s failed at %s: %s",
@@ -172,8 +177,7 @@ def run_generate_with_retry(
                 resume_from or "phase_0",
                 exc,
             )
-        except Exception as exc:  # pragma: no cover - defensive
-            last_err = exc
+        except Exception:  # pragma: no cover - defensive
             resume_from = None  # unknown failure → restart from scratch
             logger.exception("generate attempt %s crashed", attempt)
 

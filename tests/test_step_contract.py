@@ -1,6 +1,5 @@
 """Phase 1.4: Step contract schema tests."""
 import json
-import tempfile
 from pathlib import Path
 
 import pytest

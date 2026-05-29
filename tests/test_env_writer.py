@@ -12,7 +12,6 @@ from review_queue.env_writer import (
     write_env_fields,
 )
 
-
 SAMPLE_ENV = """\
 # 顶部注释 - 必须保留
 

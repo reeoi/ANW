@@ -7,7 +7,6 @@ import string
 from pathlib import Path
 
 from generator.c_pipeline.contract import StepManifest
-from generator.c_pipeline.contract_io import dump_manifest, load_manifest
 
 logger = logging.getLogger(__name__)
 

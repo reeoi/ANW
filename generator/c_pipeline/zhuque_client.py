@@ -14,19 +14,82 @@ selector 是基于经验 + 多候选 fallback 设计的，朱雀页面改版后�
 from __future__ import annotations
 
 import logging
+import shutil
+import subprocess
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
+from urllib.request import urlopen
 
 from playwright.sync_api import Page, sync_playwright
 
-from publisher.chrome_launcher import DEFAULT_CDP_PORT, ensure_chrome
-
 logger = logging.getLogger(__name__)
 
-ZHUQUE_URL = "https://matrix.tencent.com/ai-detect/"
+ZHUQUE_URL = "https://matrix.tencent.com/ai-detect/ai_gen_txt"
+DEFAULT_CDP_PORT = 9222
+
+
+@dataclass(frozen=True)
+class _ChromeEndpoint:
+    http_url: str
+
+
+def _is_cdp_ready(port: int) -> bool:
+    try:
+        with urlopen(f"http://127.0.0.1:{port}/json/version", timeout=1.0) as resp:
+            return resp.status == 200
+    except Exception:
+        return False
+
+
+def _chrome_candidates() -> list[str]:
+    candidates = [
+        shutil.which("chrome"),
+        shutil.which("chrome.exe"),
+        shutil.which("msedge"),
+        shutil.which("msedge.exe"),
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+    ]
+    return [str(p) for p in candidates if p and Path(str(p)).exists()]
+
+
+def ensure_chrome(port: int = DEFAULT_CDP_PORT) -> _ChromeEndpoint | None:
+    """Return a CDP endpoint, launching Chrome/Edge with remote debugging if needed."""
+    if _is_cdp_ready(port):
+        return _ChromeEndpoint(f"http://127.0.0.1:{port}")
+    candidates = _chrome_candidates()
+    if not candidates:
+        logger.error("zhuque_chrome_not_found")
+        return None
+    profile_dir = Path("data") / "chrome-zhuque-profile"
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        subprocess.Popen(
+            [
+                candidates[0],
+                f"--remote-debugging-port={port}",
+                f"--user-data-dir={profile_dir.resolve()}",
+                "--no-first-run",
+                "--no-default-browser-check",
+                ZHUQUE_URL,
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception as exc:
+        logger.exception("zhuque_chrome_launch_failed: %s", exc)
+        return None
+    deadline = time.time() + 8
+    while time.time() < deadline:
+        if _is_cdp_ready(port):
+            return _ChromeEndpoint(f"http://127.0.0.1:{port}")
+        time.sleep(0.4)
+    return None
 
 
 class ZhuqueLabel(StrEnum):

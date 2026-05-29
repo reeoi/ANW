@@ -19,7 +19,8 @@ if str(ROOT) not in sys.path:
 
 from config_loader import LoadedConfig
 from generator.c_pipeline.orchestrator import PipelineError
-from review_queue.atomic_runner import run_generate_with_retry, state as atomic_state
+from review_queue.atomic_runner import run_generate_with_retry
+from review_queue.atomic_runner import state as atomic_state
 
 
 def _config(tmp_path: Path) -> LoadedConfig:

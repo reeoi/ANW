@@ -26,11 +26,10 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from config_loader import LoadedConfig
-from review_queue.db import initialize_database, insert_story
 from review_queue import human_review as human_review_module
+from review_queue.db import initialize_database, insert_story
 from review_queue.human_review import app
 from review_queue.models import Story
-
 
 # ============================================================ helpers
 

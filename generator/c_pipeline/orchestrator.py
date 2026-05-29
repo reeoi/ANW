@@ -32,26 +32,29 @@ from __future__ import annotations
 
 import logging
 import time
-import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
 from config_loader import LoadedConfig
 from generator.api_client import DeepSeekClient
-from generator.c_pipeline import phase0_select, phase1_framework, phase2_outline
-from generator.c_pipeline import phase3_sections, phase4_polish, phase5_deslop
-from generator.c_pipeline import phase5_5_zhuque_loop
-from generator.c_pipeline import phase6_chapter_title
+from generator.c_pipeline import (
+    phase0_select,
+    phase1_framework,
+    phase2_outline,
+    phase3_sections,
+    phase4_polish,
+    phase5_5_zhuque_loop,
+    phase5_deslop,
+    phase6_chapter_title,
+)
 from generator.c_pipeline.concurrency import PipelineSemaphore, make_semaphore_from_config
 from generator.c_pipeline.cost_tracker import CostTracker
 from generator.c_pipeline.phase5_5_zhuque_loop import (
     ZhuqueAnomalyError,
     ZhuqueRejectedError,
 )
-from generator.c_pipeline.validators import count_chinese_chars
 from review_queue.db import (
-    get_database_path,
     get_story,
     initialize_database,
     insert_story,
@@ -245,7 +248,7 @@ def run_pipeline(
                 duration_seconds=result.duration_seconds,
                 warnings=result.warnings,
             )
-        except Exception as exc:
+        except Exception:
             logger.exception("preset runner failed, falling back to hardcoded pipeline")
             # Fall through to hardcoded path below
 

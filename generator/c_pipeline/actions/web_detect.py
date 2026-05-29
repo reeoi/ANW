@@ -21,7 +21,7 @@ class WebDetectAction(BaseAction):
             return ActionResult(ok=False, message="web_detect: text is empty")
 
         try:
-            from generator.c_pipeline.zhuque_client import ZhuqueClient, ZhuqueLabel
+            from generator.c_pipeline.zhuque_client import ZhuqueClient
 
             client = ZhuqueClient()
             result = client.detect(text)

@@ -72,7 +72,6 @@ deepseek:
   api_key: ""          # env: DEEPSEEK_API_KEY
   mock: true           # 无 key 时自动 mock
 runtime:
-  mode: "semi-auto"    # auto | semi-auto
   dry_run: true
 publisher:
   fansq:
@@ -81,11 +80,6 @@ publisher:
     min_publish_interval_minutes: 5
     max_publish_interval_minutes: 15
     pause_on_risk_control: true
-scheduler:
-  generate_cron: "0 9 * * *"
-  review_cron: "30 9 * * *"
-  publish_cron: "0 10 * * *"
-  backup_cron: "0 3 * * *"
 database:
   sqlite_path: "data/anp.sqlite3"
   backup_dir: "data/backups"
@@ -155,26 +149,23 @@ python -m cli.publish --real
 
 真实模式下 Sprint 7 MVP 只做正常浏览器自动化和草稿填充/安全暂停，不做风控绕过。最终提交、分类、章节规则建议人工复核。
 
-## 6. 调度与统一入口
+## 6. 统一入口
+
+`main.py` 当前只支持初始化配置／数据库与手动 SQLite 备份：
 
 ```bash
-# 半自动：初始化配置、数据库，并提示人工审核入口
-python main.py --mode semi-auto
+# 初始化配置、数据库，并提示本地 UI 入口
+python main.py
 
-# 全自动：启动 APScheduler，按 cron 串联生成、AI 审核、随机延迟发布、备份
-python main.py --mode auto
-
-# 本地端到端模拟，无 key/登录态也可运行
-python main.py --mode auto --dry-run
-
-# 只跑一次流水线后退出，便于验收/CI
-python main.py --mode auto --once
-
-# 手动备份 SQLite
-python main.py --backup-now --mode semi-auto
+# 手动备份 SQLite 后退出
+python main.py --backup-now
 ```
 
-发布任务会在配置的 5-15 分钟窗口内随机延迟，降低集中触发风险。SQLite 备份写入 `database.backup_dir`。
+> `--mode auto / semi-auto / once` 等调度模式已随 APScheduler 整体移除。
+> 生成 / AI 审核 / 发布等操作通过本地 UI 的"立即执行一次"按钮或直接使用
+> `cli/generate.py`、`cli/ai_review.py`、`cli/publish.py` 等独立 CLI 触发。
+
+SQLite 备份写入 `database.backup_dir`。
 
 ## 7. dry-run 验证与本次验收记录
 

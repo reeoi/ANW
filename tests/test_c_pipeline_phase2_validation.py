@@ -25,13 +25,13 @@ if str(ROOT) not in sys.path:
 from config_loader import LoadedConfig
 from generator.api_client import ChatCompletion, ChatUsage
 from generator.c_pipeline.phase2_outline import (
-    OutlineSection,
-    Phase2Result,
-    PhaseOutlineError,
     SECTION_CHARS_MAX,
     SECTION_CHARS_MIN,
     SECTION_COUNT_MAX,
     SECTION_COUNT_MIN,
+    OutlineSection,
+    Phase2Result,
+    PhaseOutlineError,
     build_phase2_prompt,
     parse_outline_md,
     render_outline_md,

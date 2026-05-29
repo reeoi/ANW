@@ -1,0 +1,723 @@
+<!-- ============ TOP CHROME (Bloomberg Terminal × Pentagram) ============ -->
+<div class="chrome">
+  <div class="chrome-brand">
+    <span class="mark" aria-hidden="true"></span>
+    <span>ANP · STUDIO</span>
+  </div>
+  <div class="chrome-path" id="chrome-path">
+    <span class="crumb">系统</span><span class="sep">/</span>
+    <span class="crumb active" id="chrome-crumb">监控面板</span><span class="sep">/</span>
+    <span class="crumb" id="chrome-num">01</span>
+  </div>
+  <div class="chrome-right">
+    <div class="chrome-ticker" id="chrome-ticker">
+      <span>HOST<em>127.0.0.1:18000</em></span>
+      <span>仅本机<em class="up">●</em></span>
+    </div>
+    <button id="display-settings-toggle" class="chrome-control-btn" type="button" aria-expanded="false" aria-controls="display-settings-panel">显示设置</button>
+    <span class="chrome-pill" id="chrome-health"><span class="dot"></span>就绪</span>
+    <span class="chrome-clock" id="chrome-clock">--:--:--</span>
+  </div>
+</div>
+
+<div id="display-settings-panel" class="display-settings-panel" hidden>
+  <label>主题
+    <select id="theme-select">
+      <option value="light">纸质浅色</option>
+      <option value="dark">深色终端</option>
+    </select>
+  </label>
+  <label>字体
+    <select id="font-size-select">
+      <option value="normal">默认</option>
+      <option value="large">大</option>
+      <option value="xlarge">特大</option>
+    </select>
+  </label>
+  <label>密度
+    <select id="density-select">
+      <option value="default">默认</option>
+      <option value="dense">紧凑</option>
+    </select>
+  </label>
+</div>
+
+<div class="layout">
+  <aside class="sidebar">
+    <button id="sidebar-toggle" class="sidebar-toggle" type="button" title="收起/展开侧边栏" aria-label="收起侧边栏">
+      <span class="sidebar-toggle-icon">◀</span>
+    </button>
+    <h1>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
+      ANP<span>STUDIO</span>
+    </h1>
+    <nav id="nav">
+      <button data-target="monitor" class="active">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line></svg>
+        监控面板
+      </button>
+      <div class="nav-group-header">功能模块</div>
+      <button data-target="generate" data-feature="short-story">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+        短篇小说
+      </button>
+      <button data-target="long-novel" data-feature="long-novel">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path></svg>
+        长篇小说
+      </button>
+      <button data-target="theme-pool" data-feature="theme-pool">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>
+        题材库
+      </button>
+      <div class="nav-group-header">系统</div>
+      <button data-target="logs">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+        日志
+      </button>
+      <button data-target="settings-edit">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+        设置
+      </button>
+      <div class="nav-group-header" style="margin-top:0.75rem">工具</div>
+      <button id="btn-restart-service" style="color: var(--warning)">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg>
+        重启服务
+      </button>
+    </nav>
+    <div class="sidebar-footer"><div class="system-status"><span class="status-dot active"></span> 系统运行正常</div><div class="footnote">
+      <div style="margin-bottom:0.5rem;font-weight:600;color:#94a3b8">连接信息</div>
+      数据库：<code>__DB_PATH__</code><br>
+      仅限本机访问
+    </div></div>
+  </aside>
+  <main>
+    <div id="critical-banner" class="hidden" role="alert"></div>
+    <div id="banner" class="banner" style="display: __BANNER_DISPLAY__;">__BANNER_MESSAGE__</div>
+
+    <section id="overview" class="section">
+      <div class="page-header">
+        <h2 data-kicker="I · Cockpit">总览驾驶舱</h2>
+        <div class="actions">
+          <span class="meta" id="overview-meta">加载中…</span>
+          <button class="ghost tiny" id="btn-overview-refresh" type="button">刷新</button>
+        </div>
+      </div>
+
+      <!-- 英雄区：健康环 + 运行节拍 + 模式徽章 -->
+      <div class="hero-deck" id="hero-deck">
+        <div class="hero-health" id="hero-health">
+          <div class="hero-health-ring" id="hero-health-ring"></div>
+          <div class="hero-health-info">
+            <div class="hero-eyebrow">系统健康度</div>
+            <div class="hero-health-label" id="hero-health-label">检测中…</div>
+            <div class="hero-health-sub" id="hero-health-sub">正在拉取系统指标</div>
+            <div class="hero-badges" id="hero-badges"></div>
+          </div>
+        </div>
+        <div class="hero-beats" id="hero-beats">
+          <div class="hero-beat" data-beat="today">
+            <div class="beat-eyebrow">今日产出</div>
+            <div class="beat-value" id="beat-today">—</div>
+            <div class="beat-sub" id="beat-today-sub">作品 · 调用 · 花费</div>
+          </div>
+          <div class="hero-beat" data-beat="running">
+            <div class="beat-eyebrow">当前任务</div>
+            <div class="beat-value" id="beat-running">空闲</div>
+            <div class="beat-sub" id="beat-running-sub">无任务在运行</div>
+          </div>
+          <div class="hero-beat" data-beat="library">
+            <div class="beat-eyebrow">作品库存</div>
+            <div class="beat-value" id="beat-library">0</div>
+            <div class="beat-sub" id="beat-library-sub">总篇数</div>
+          </div>
+          <div class="hero-beat" data-beat="budget">
+            <div class="beat-eyebrow">本月预算</div>
+            <div class="beat-value" id="beat-budget">—</div>
+            <div class="beat-sub" id="beat-budget-sub">已使用</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 状态脉搏条：6 类作品状态 -->
+      <div class="pulse-bar" id="overview-pulse"></div>
+
+      <!-- 运营核心卡片 (4) -->
+      <div class="ops-grid" id="ops-grid">
+        <div class="ops-card" id="ops-throughput">
+          <div class="ops-card-head">
+            <h3>任务流速</h3>
+            <span class="ops-card-eyebrow">最近 24 小时</span>
+          </div>
+          <div class="ops-card-body">
+            <div class="ops-throughput-bars" id="ops-throughput-bars"><div class="empty">加载中…</div></div>
+            <div class="ops-throughput-meta" id="ops-throughput-meta"></div>
+          </div>
+        </div>
+        <div class="ops-card" id="ops-burn">
+          <div class="ops-card-head">
+            <h3>预算燃烧</h3>
+            <span class="ops-card-eyebrow">本月</span>
+          </div>
+          <div class="ops-card-body">
+            <div class="ops-ring-wrap"><div id="ops-burn-ring"></div></div>
+            <div class="ops-ring-meta" id="ops-burn-meta"></div>
+          </div>
+        </div>
+        <div class="ops-card" id="ops-long-novel">
+          <div class="ops-card-head">
+            <h3>长篇小说</h3>
+            <span class="ops-card-eyebrow" id="ops-long-eyebrow">书库</span>
+          </div>
+          <div class="ops-card-body">
+            <div class="ops-login-state" id="ops-long-state">检测中…</div>
+            <div class="ops-login-meta" id="ops-long-meta"></div>
+          </div>
+        </div>
+        <div class="ops-card" id="ops-slots">
+          <div class="ops-card-head">
+            <h3>并发槽位</h3>
+            <span class="ops-card-eyebrow">流水线</span>
+          </div>
+          <div class="ops-card-body">
+            <div class="ops-slots-grid" id="ops-slots-grid"></div>
+            <div class="ops-slots-meta" id="ops-slots-meta"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 最近作品时间轴 -->
+      <div class="panel ov-panel">
+        <div class="ov-panel-head">
+          <h3>最近作品时间轴 <span class="meta" id="overview-recent-count"></span></h3>
+          <button class="ghost tiny" id="btn-overview-jump-stories" type="button">查看全部 →</button>
+        </div>
+        <div id="overview-recent" class="ov-timeline empty">加载中…</div>
+      </div>
+
+      <!-- 智能提醒中心 -->
+      <div class="panel ov-panel">
+        <div class="ov-panel-head">
+          <h3>智能提醒中心</h3>
+          <span class="meta" id="overview-warnings-meta"></span>
+        </div>
+        <div id="overview-warnings" class="alerts-empty">系统平稳运行 · 暂无提醒</div>
+      </div>
+    </section>
+
+    <section id="monitor" class="section active monitor-router">
+      <div class="monitor-router-head">
+        <div>
+          <div class="monitor-router-kicker">II · 监控数据</div>
+          <h2>监控数据中心<span>.</span></h2>
+          <p id="monitor-meta">正在同步本地创作流水线…</p>
+        </div>
+      </div>
+
+      <div class="router-section-label"><span>关键指标 KPI</span><em id="monitor-kpi-meta">共 6 项</em></div>
+      <div class="router-kpi-grid" id="monitor-kpis"></div>
+
+      <div class="router-dashboard-grid">
+        <div class="router-card router-chart-card">
+          <div class="router-card-head">
+            <div>
+              <h3>14 天趋势 · 双轴</h3>
+              <span>最近 14 天的花费、Tokens 和调用走势</span>
+            </div>
+            <span class="router-chart-mix">花费 × TOKENS × 调用</span>
+          </div>
+          <div id="monitor-daily" class="mon-trend router-chart empty">加载中…</div>
+        </div>
+
+        <div class="router-card router-side-card">
+          <div class="router-card-head">
+            <div>
+              <h3>系统信息</h3>
+              <span id="monitor-health-meta">检测中</span>
+            </div>
+          </div>
+          <div id="monitor-health" class="mon-compass empty">加载中…</div>
+          <div class="router-divider"></div>
+          <div class="router-card-head compact">
+            <div>
+              <h3>资源配额</h3>
+              <span id="monitor-quota-meta">预算 / Token / 并发</span>
+            </div>
+          </div>
+          <div id="monitor-quota" class="quota-rings empty">加载中…</div>
+        </div>
+      </div>
+
+      <div class="router-bottom-grid">
+        <div class="router-card router-long-card">
+          <div class="router-card-head">
+            <div>
+              <h3>长篇小说概览</h3>
+              <span id="monitor-long-meta"></span>
+            </div>
+          </div>
+          <div id="monitor-long-novel" class="ln-monitor-grid empty">加载中…</div>
+        </div>
+
+        <div class="router-card router-events-card">
+          <div class="router-card-head">
+            <div>
+              <h3>实时事件流</h3>
+              <span id="monitor-events-meta"></span>
+            </div>
+          </div>
+          <div id="monitor-events" class="mon-event-stream empty">加载中…</div>
+        </div>
+
+        <div class="router-card router-heat-card">
+          <div class="router-card-head">
+            <div>
+              <h3>错误热力图</h3>
+              <span>最近 7 天 × 24 小时</span>
+            </div>
+          </div>
+          <div id="monitor-errors" class="mon-heatmap empty">加载中…</div>
+          <div class="mon-heatmap-legend">
+            <span class="meta">少</span>
+            <span class="mon-heat-scale">
+              <i style="background:var(--mon-heat-0)"></i>
+              <i style="background:var(--mon-heat-1)"></i>
+              <i style="background:var(--mon-heat-2)"></i>
+              <i style="background:var(--mon-heat-3)"></i>
+              <i style="background:var(--mon-heat-4)"></i>
+            </span>
+            <span class="meta">多</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="generate" class="section">
+      <div class="page-header">
+        <h2 data-kicker="短篇小说">创作工作台</h2>
+        <div class="actions">
+          <button class="btn-primary tiny" id="btn-console-run">立即执行任务</button>
+          <button class="btn-danger tiny" id="btn-console-cancel" disabled>取消</button>
+        </div>
+      </div>
+
+      <div class="panel" id="inbox-panel">
+        <div class="inbox-head">
+          <h3>最近生成作品 <span class="meta" id="inbox-summary"></span></h3>
+          <button class="ghost tiny" id="btn-inbox-refresh" type="button">刷新列表</button>
+        </div>
+        <div id="inbox-list" class="empty">加载中…</div>
+      </div>
+
+      <div class="panel" id="prompts-panel">
+        <div class="inbox-head" style="cursor:pointer" id="prompts-panel-toggle">
+          <h3>提示词模板 <span class="meta" id="prompts-summary"></span></h3>
+          <span style="font-size:0.8rem;color:var(--muted)" id="prompts-chevron">展开 ⌵</span>
+        </div>
+        <div id="prompts-body" style="display:none; margin-top:1rem">
+          <div id="prompts-list" class="empty">加载中…</div>
+        </div>
+      </div>
+
+      <div class="panel" id="progress-panel" style="display:none;">
+        <h3>实时生成进度 <span id="progress-story" class="meta"></span></h3>
+        <div id="progress-retry-banner" class="retry-banner" style="display:none;"></div>
+        <div id="progress-strip" class="phase-strip"></div>
+        <div id="progress-section-sub" class="phase-section-sub"></div>
+        <div class="phase-timeline-wrap">
+          <div class="phase-timeline-head">运行日志流水</div>
+          <ol id="progress-timeline" class="phase-timeline"></ol>
+        </div>
+      </div>
+    </section>
+
+    <div id="artifact-modal" class="artifact-modal" style="display:none;">
+      <div class="artifact-modal-inner">
+        <div class="artifact-modal-head">
+          <span id="artifact-modal-title">产物预览</span>
+          <button class="ghost" id="artifact-modal-close" type="button">✕ 关闭</button>
+        </div>
+        <pre id="artifact-modal-body" class="artifact-modal-body">加载中…</pre>
+      </div>
+    </div>
+
+    <div id="inbox-detail-modal" class="modal-backdrop">
+      <div class="modal">
+        <div class="modal-head" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1.5rem">
+          <h3 id="inbox-detail-title" style="margin:0">作品详情</h3>
+          <button class="ghost" id="inbox-detail-close" type="button">✕</button>
+        </div>
+        <div class="modal-body">
+          <div class="modal-meta" id="inbox-detail-meta" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:1rem;margin-bottom:1.5rem;padding:1rem;background:var(--panel-soft);border-radius:var(--radius-sm)"></div>
+          <div id="inbox-detail-content">加载中…</div>
+        </div>
+        <div class="modal-actions" id="inbox-detail-foot"></div>
+      </div>
+    </div>
+
+    <section id="long-novel" class="section">
+      <!-- 书库视图（默认） -->
+      <div id="ln-library-view" class="ln-library-shell">
+        <div class="page-header ln-library-header">
+          <div>
+            <h2 data-kicker="长篇小说">书库</h2>
+            <p class="ln-library-subtitle">管理长篇项目、章节进度与当前连载状态。</p>
+          </div>
+          <div class="actions">
+            <button class="btn-primary" id="ln-btn-new-book">➕ 新建书籍</button>
+            <button class="ghost tiny" id="ln-btn-refresh-books">刷新</button>
+          </div>
+        </div>
+        <div class="ln-library-stats" aria-label="书库统计">
+          <div>
+            <span>书籍</span>
+            <strong><span id="ln-library-count">0</span><em>本</em></strong>
+          </div>
+          <div>
+            <span>连载中</span>
+            <strong><span id="ln-library-writing-count">0</span><em>本</em></strong>
+          </div>
+        </div>
+        <div class="ln-library-shelf">
+          <div class="ln-library-shelf-head">
+            <div>
+              <span class="section-code">BOOKS</span>
+              <h3>项目书架</h3>
+            </div>
+            <span id="ln-library-updated" class="meta">等待刷新</span>
+          </div>
+          <div id="ln-book-list" class="ln-library-grid empty">加载中…</div>
+        </div>
+      </div>
+
+      <!-- 书籍工作区（选书后显示） -->
+      <div id="ln-book-workspace" style="display:none">
+        <div class="page-header">
+          <h2 data-kicker="长篇小说"><span id="ln-ws-book-title"></span></h2>
+          <div class="actions">
+            <button class="ghost tiny" id="ln-btn-back-library">← 返回书库</button>
+            <span class="meta" id="ln-ws-progress"></span>
+          </div>
+        </div>
+        <!-- Long novel workspace navigation -->
+        <div class="ln-workspace-subnav">
+          <button class="btn-primary tiny" data-ln-sub="setup">设定</button>
+          <button class="ghost tiny" data-ln-sub="outline">大纲</button>
+          <button class="ghost tiny" data-ln-sub="writing">正文</button>
+          <button class="ghost tiny" data-ln-sub="benchmark">对标</button>
+          <button class="ghost tiny" data-ln-sub="tracking">追踪</button>
+          <button class="ghost tiny" data-ln-sub="pipeline">链路</button>
+        </div>
+        <!-- Global progress bar -->
+        <div id="ln-global-progress" style="display:none;margin-bottom:0.6rem;padding:0.4rem 0.75rem;background:var(--panel-soft);border-radius:6px;font-size:0.8rem;align-items:center;gap:0.5rem">
+          <span id="ln-global-progress-icon"></span>
+          <span id="ln-global-progress-text" style="flex:1">准备中…</span>
+          <button class="btn-danger tiny" id="ln-btn-cancel" style="font-size:0.7rem;padding:2px 8px">暂停</button>
+        </div>
+
+        <!-- ── 设定面板 ── -->
+        <div id="ln-setup-panel">
+          <div id="ln-setup-strip" class="phase-strip" style="display:flex;margin-bottom:1rem"></div>
+          <div id="ln-setup-preview" class="panel" style="display:none;margin-bottom:1rem">
+            <div class="ln-setup-preview-head">
+              <h4 id="ln-setup-preview-title">步骤产出</h4>
+              <div id="ln-setup-preview-actions" class="ln-setup-preview-actions"></div>
+            </div>
+            <div id="ln-setup-preview-content" style="white-space:normal;font-size:0.85rem;max-height:520px;overflow:auto"></div>
+          </div>
+        </div>
+
+        <!-- ── 大纲面板 ── -->
+        <div id="ln-outline-panel" style="display:none">
+          <div class="ln-outline-topbar">
+            <div id="ln-outline-phase-strip" class="phase-strip" style="display:flex;margin-bottom:0"></div>
+            <button class="btn-primary tiny" id="ln-btn-extend-chapters">➕ 追加章节</button>
+          </div>
+          <div class="panel ln-outline-preview-panel">
+            <div class="ln-setup-preview-head">
+              <h4 id="ln-outline-preview-title">选择上方阶段查看内容</h4>
+              <div id="ln-outline-preview-actions" class="ln-setup-preview-actions"></div>
+            </div>
+            <div id="ln-outline-preview-content" class="ln-outline-preview empty">点击上方「大纲 / 卷纲 / 章节细纲」查看内容</div>
+          </div>
+        </div>
+
+        <!-- ── 正文面板 ── -->
+        <!-- Content is rendered by ensureWritingPanelLayout() in dashboard.js -->
+        <div id="ln-writing-panel" style="display:none"></div>
+
+        <!-- ── 对标面板 ── -->
+        <div id="ln-benchmark-panel" style="display:none">
+          <div class="panel">
+            <div class="ln-tracking-head">
+              <h4 style="margin:0">对标作品分析</h4>
+              <button class="ghost tiny" id="ln-benchmark-refresh">↻ 刷新文件列表</button>
+            </div>
+            <div id="ln-benchmark-content" class="empty">加载中…</div>
+          </div>
+        </div>
+
+        <!-- ── 追踪面板 ── -->
+        <div id="ln-tracking-panel" style="display:none">
+          <div class="ln-tracking-head">
+            <div>
+              <h4>长期追踪记忆</h4>
+              <p>写完章节后自动更新；展开小卡片查看长期记忆。</p>
+            </div>
+            <button class="ghost tiny" id="ln-tracking-refresh">↻ 刷新</button>
+          </div>
+          <div id="ln-tracking-cards" class="ln-tracking-grid">
+            <div class="empty">加载中…</div>
+          </div>
+        </div>
+
+        <!-- ── 链路面板 ── -->
+        <div id="ln-pipeline-panel" style="display:none">
+          <div class="panel" style="margin-bottom:0.75rem">
+            <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;margin-bottom:0.5rem">
+              <h4 style="margin:0">生成链路</h4>
+              <div style="display:flex;gap:0.3rem">
+                <button class="ghost tiny" id="ln-pipeline-refresh">刷新</button>
+              </div>
+            </div>
+            <div id="ln-pipeline-graph" class="ln-pipeline-graph empty">加载中…</div>
+          </div>
+          <div id="ln-pipeline-detail" class="panel ln-pipeline-detail empty">点击上方任一节点查看该步骤的详情</div>
+        </div>
+      </div>
+
+      <div id="ln-new-book-modal" class="modal-backdrop" style="display:none">
+        <div class="modal" style="max-width:650px">
+          <h3>新建长篇小说</h3>
+          <div style="margin:0.5rem 0">
+            <button class="btn-primary" id="ln-btn-ai-suggest">AI 推荐选题</button>
+            <span class="meta" id="ln-suggest-status"></span>
+          </div>
+          <div id="ln-suggestions" style="display:none;margin:0.5rem 0"></div>
+          <div style="display:flex;flex-direction:column;gap:0.75rem;margin:1rem 0">
+            <label>书名 <input id="ln-new-title" placeholder="输入书名"></label>
+            <label>题材 <input id="ln-new-genre" placeholder="如：玄幻/都市/仙侠"></label>
+            <label>一句话梗概 <input id="ln-new-premise" placeholder="用一句话概括故事核心"></label>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem">
+              <label>计划总章数 <input type="number" id="ln-new-chapters" value="30" min="10" max="2000"></label>
+              <label>每章目标字数 <input type="number" id="ln-new-words" value="3000" min="1000" max="10000" step="500"></label>
+            </div>
+          </div>
+          <div class="modal-actions">
+            <button class="ghost" id="ln-new-book-cancel">取消</button>
+            <button class="btn-primary" id="ln-new-book-confirm">确认创建</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+<section id="theme-pool" class="section">
+      <div class="page-header">
+        <h2 data-kicker="题材库">题材库</h2>
+        <div class="actions">
+          <button class="btn-primary tiny" id="tp-btn-import-all">导入所有渠道</button>
+          <button class="btn-primary tiny" id="tp-btn-fetch-fanqie">拉取番茄榜单</button>
+          <span class="meta" id="tp-status"></span>
+        </div>
+      </div>
+
+      <div class="cards" style="grid-template-columns:repeat(4,1fr);margin-bottom:1rem" id="tp-stats"></div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:1rem">
+        <div class="panel">
+          <h4>数据来源渠道</h4>
+          <div id="tp-sources" class="empty">加载中…</div>
+        </div>
+        <div class="panel">
+          <h4>番茄实时热词 <span class="meta" id="tp-keywords-time"></span></h4>
+          <div id="tp-keywords" class="empty">加载中…</div>
+        </div>
+      </div>
+
+      <div class="panel" style="margin-bottom:1rem">
+        <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;margin-bottom:0.75rem">
+          <strong>筛选：</strong>
+          <select id="tp-filter-type" style="width:auto"><option value="">全部类型</option><option value="short">短篇</option><option value="long">长篇</option></select>
+          <select id="tp-filter-genre" style="width:auto"><option value="">全部分类</option></select>
+          <select id="tp-filter-source" style="width:auto"><option value="">全部来源</option><option value="fanqie">番茄</option></select>
+          <label style="font-size:0.85rem;display:flex;align-items:center;gap:0.3rem;cursor:pointer"><input type="checkbox" id="tp-filter-unused"> 仅未使用</label>
+          <span class="meta" id="tp-filter-count"></span>
+        </div>
+        <div id="tp-theme-list" class="empty" style="max-height:600px;overflow:auto">加载中…</div>
+      </div>
+
+      <!-- Category Trend Analysis -->
+      <div class="panel" style="margin-bottom:1rem" id="tp-trend-panel">
+        <h4>AI 风评分析 · 分类热度排名</h4>
+        <div style="font-size:0.78rem;color:var(--muted);margin-bottom:0.5rem">
+          数据来源：FanqieRankTracker 每日新书榜 · 更新时间 <span id="tp-trend-time">—</span>
+        </div>
+        <div id="tp-trend-list" class="empty">加载中…</div>
+      </div>
+    </section>
+
+
+    <section id="logs" class="section">
+      <div class="page-header">
+        <h2 data-kicker="III · Logs">系统日志</h2>
+        <div class="actions">
+          <label style="flex-direction:row; align-items:center; gap:0.6rem;">
+            显示行数
+            <input id="logs-lines" type="number" min="10" max="1000" value="150" style="width:100px;">
+          </label>
+          <button class="primary" id="btn-refresh-logs">刷新日志</button>
+        </div>
+      </div>
+      <div class="panel">
+        <h3>API 调用消耗 <span class="meta" id="logs-cost-meta">正在加载</span></h3>
+        <div id="logs-cost-summary" class="logs-cost-summary">
+          <div class="logs-cost-stat">
+            <span class="logs-cost-label">累计花费</span>
+            <strong>—</strong>
+            <em>最近调用窗口</em>
+          </div>
+          <div class="logs-cost-stat">
+            <span class="logs-cost-label">调用次数</span>
+            <strong>—</strong>
+            <em>单次 API 记录</em>
+          </div>
+          <div class="logs-cost-stat">
+            <span class="logs-cost-label">平均单次</span>
+            <strong>—</strong>
+            <em>按当前窗口计算</em>
+          </div>
+          <div class="logs-cost-stat">
+            <span class="logs-cost-label">最高单次</span>
+            <strong>—</strong>
+            <em>最近记录峰值</em>
+          </div>
+        </div>
+        <div class="logs-cost-table-wrap">
+          <table class="logs-cost-table">
+            <thead>
+              <tr>
+                <th>时间</th>
+                <th>阶段</th>
+                <th>模型</th>
+                <th>调用消耗</th>
+                <th>花费</th>
+              </tr>
+            </thead>
+            <tbody id="logs-cost-body">
+              <tr>
+                <td colspan="5" class="logs-cost-empty">正在加载 API 调用消耗...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="logs-file-line">日志路径：<code id="logs-file">未加载</code></p>
+        <pre id="logs-output" class="log">正在获取系统实时日志...</pre>
+      </div>
+    </section>
+
+    <section id="settings-edit" class="section settings-section">
+      <div class="page-header">
+        <h2 data-kicker="IV · Settings">设置</h2>
+        <div class="meta" id="settings-meta">更改将立即生效并同步到本地配置文件。</div>
+      </div>
+
+      <details class="settings-group" id="grp-generation" open>
+        <summary>AI 生成模型配置</summary>
+        <div class="group-body">
+          <div class="settings-row">
+            <label for="gen-key">DeepSeek API Key</label>
+            <div class="control">
+              <div class="secret-input">
+                <input type="password" id="gen-key" autocomplete="off" spellcheck="false">
+                <button class="eye" type="button" data-eye="gen-key" title="显示/隐藏"></button>
+              </div>
+              <div class="control-inline">
+                <button class="tiny primary" type="button" id="gen-test">测试连接</button>
+                <span class="meta" id="gen-test-msg"></span>
+              </div>
+            </div>
+          </div>
+          <div class="settings-advanced settings-advanced-static">
+            <summary>展开高级参数</summary>
+            <div class="group-body">
+              <div class="settings-row">
+                <label for="gen-model">模型识别码 (Model ID)</label>
+                <div class="control"><input type="text" id="gen-model" placeholder="deepseek-chat"></div>
+              </div>
+              <div class="settings-row">
+                <label for="gen-base">API 代理地址 (Base URL)</label>
+                <div class="control"><input type="text" id="gen-base" placeholder="https://api.deepseek.com"></div>
+              </div>
+              <div class="settings-row">
+                <label for="gen-timeout">请求超时 (秒)</label>
+                <div class="control"><input type="number" id="gen-timeout" min="5" max="900" step="5"></div>
+              </div>
+              <div class="settings-row">
+                <label for="gen-retries">最大重试次数</label>
+                <div class="control"><input type="number" id="gen-retries" min="0" max="20" step="1"></div>
+              </div>
+            </div>
+          </div>
+          <div class="group-actions">
+            <button class="ghost" data-reset="generation">↩ 还原修改</button>
+            <button class="primary" data-save="generation">保存本节设置</button>
+          </div>
+        </div>
+      </details>
+
+    </section>
+  </main>
+</div>
+
+    
+
+
+
+<div id="story-modal" class="modal-backdrop" role="dialog" aria-modal="true">
+  <div class="modal">
+    <div class="page-header">
+      <h3 id="story-modal-title">作品详情</h3>
+      <button class="ghost" id="story-modal-close">关闭</button>
+    </div>
+    <div id="story-modal-body" class="empty">加载中…</div>
+  </div>
+</div>
+
+<div id="prompt-modal" class="modal-backdrop" style="display:none" role="dialog" aria-modal="true">
+  <div class="modal" style="max-width:980px;max-height:90vh;overflow:auto">
+    <div class="page-header">
+      <h3 id="prompt-modal-title">提示词</h3>
+      <div class="actions">
+        <button class="btn-primary tiny" id="prompt-modal-save">保存提示词</button>
+        <button class="ghost tiny" id="prompt-modal-revert">恢复上一版</button>
+        <button class="ghost" id="prompt-modal-close">✕ 关闭</button>
+      </div>
+    </div>
+    <div class="panel">
+      <h4>系统提示词 (System Prompt)</h4>
+      <textarea id="prompt-system-content" class="prompt-editor" spellcheck="false">加载中…</textarea>
+    </div>
+    <div class="panel">
+      <h4>用户提示词模板 (User Prompt Template)</h4>
+      <div id="prompt-placeholder-hint" class="inbox-meta" style="margin-bottom:0.4rem"></div>
+      <textarea id="prompt-user-content" class="prompt-editor prompt-editor-user" spellcheck="false">加载中…</textarea>
+    </div>
+  </div>
+</div>
+
+<div id="title-edit-modal" class="modal-backdrop" style="display:none" role="dialog" aria-modal="true">
+  <div class="modal" style="max-width:520px">
+    <div class="page-header">
+      <h3>修改章节标题</h3>
+    </div>
+    <div style="padding:1.5rem">
+      <label style="display:block;margin-bottom:0.5rem;color:var(--text-hi);font-size:13px">新标题（6-14 字最佳）</label>
+      <input id="title-edit-input" type="text" style="width:100%;padding:10px 12px;font-size:14px;border:1px solid var(--divider);border-radius:6px;background:var(--surface-2);color:var(--text-hi);font-family:var(--font-sans)" placeholder="请输入章节标题">
+      <div style="display:flex;gap:12px;justify-content:flex-end;margin-top:1.5rem">
+        <button id="title-edit-cancel" class="ghost">取消</button>
+        <button id="title-edit-confirm" class="btn-primary">确认修改</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="toasts"></div>

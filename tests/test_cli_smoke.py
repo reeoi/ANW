@@ -8,11 +8,9 @@ scan / review module so the CLI wrappers run without real LLM calls.
 from __future__ import annotations
 
 import json
-import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
 
 import pytest
 

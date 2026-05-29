@@ -31,7 +31,6 @@ from generator.c_pipeline.phase1_framework import (
 )
 from scan.seed_evolver import load_seeds
 
-
 SEEDS_PATH = ROOT / "data" / "scan_seeds.yaml"
 SEEDS = load_seeds(SEEDS_PATH)
 

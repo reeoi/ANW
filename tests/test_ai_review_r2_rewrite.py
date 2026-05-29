@@ -18,7 +18,6 @@ Verifies the AI review loop in ``review_queue.ai_review`` and the
 
 from __future__ import annotations
 
-import sqlite3
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -37,7 +36,6 @@ from review_queue import ai_review as ai_review_module
 from review_queue.ai_review import ReviewResult, review_story_in_database
 from review_queue.db import get_story, initialize_database, insert_story
 from review_queue.models import Story
-
 
 # ============================================================ helpers
 

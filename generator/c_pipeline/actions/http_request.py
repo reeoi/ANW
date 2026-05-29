@@ -23,9 +23,9 @@ class HttpRequestAction(BaseAction):
         resolved_headers = {k: ctx.resolve_v2(str(v)) for k, v in headers_raw.items()} if isinstance(headers_raw, dict) else {}
         resolved_body = ctx.resolve_v2(str(body_raw)) if body_raw else None
 
-        import urllib.request
-        import urllib.error
         import json
+        import urllib.error
+        import urllib.request
 
         try:
             data_bytes = json.dumps(json.loads(resolved_body) if isinstance(resolved_body, str) and resolved_body.strip().startswith("{") else resolved_body or "").encode("utf-8") if resolved_body else None

@@ -27,7 +27,6 @@ from review_queue.phase_progress import (
     split_attempts,
 )
 
-
 # ============================================================ compute_phase_progress
 
 

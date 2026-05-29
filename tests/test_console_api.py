@@ -16,10 +16,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from review_queue.human_review import app
 from review_queue import atomic_runner
-from review_queue.atomic_runner import AtomicResult
-
+from review_queue.human_review import app
 
 SAMPLE_CONFIG = """\
 deepseek:

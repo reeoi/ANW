@@ -20,7 +20,9 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from dataclasses import dataclass, field
+from http.client import IncompleteRead, RemoteDisconnected
 from typing import Any, Iterable, Mapping, Sequence
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -32,6 +34,19 @@ logger = logging.getLogger(__name__)
 
 class DeepSeekClientError(RuntimeError):
     """Raised when a live DeepSeek request fails or returns invalid data."""
+
+
+_RETRYABLE_ERRORS = (
+    KeyError,
+    IndexError,
+    ValueError,
+    HTTPError,
+    URLError,
+    TimeoutError,
+    IncompleteRead,
+    RemoteDisconnected,
+    ConnectionError,
+)
 
 
 @dataclass(frozen=True)
@@ -192,7 +207,8 @@ class DeepSeekClient:
             payload["response_format"] = dict(response_format)
 
         last_error: Exception | None = None
-        for _attempt in range(max(self.settings.max_retries, 1)):
+        attempts = max(self.settings.max_retries, 1)
+        for attempt in range(attempts):
             try:
                 request = Request(
                     url,
@@ -205,8 +221,17 @@ class DeepSeekClient:
                 completion = _parse_completion(response_data, model)
                 self._record_usage(model, purpose, completion.usage, success=True)
                 return completion
-            except (KeyError, IndexError, ValueError, HTTPError, URLError, TimeoutError) as exc:
+            except _RETRYABLE_ERRORS as exc:
                 last_error = exc
+                logger.warning(
+                    "DeepSeek chat_completion attempt %d/%d failed for %s: %s",
+                    attempt + 1,
+                    attempts,
+                    purpose,
+                    exc,
+                )
+                if attempt < attempts - 1:
+                    time.sleep(min(2.0, 0.25 * (2 ** attempt)))
 
         self._record_usage_failure(model, purpose, str(last_error))
         raise DeepSeekClientError(f"DeepSeek chat_completion failed: {last_error}")

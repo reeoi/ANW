@@ -7,8 +7,11 @@ mode override, and flash-model routing.
 
 from __future__ import annotations
 
+import json
 import sys
+from http.client import IncompleteRead
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -186,6 +189,54 @@ def test_settings_overrides_picked_up_from_config() -> None:
     assert client.settings.prompt_cache_enabled is False
     assert client.settings.timeout_seconds == 240
     assert client.settings.max_retries == 5
+
+
+def test_live_completion_retries_incomplete_read() -> None:
+    config = LoadedConfig(
+        data={
+            "runtime": {"dry_run": False},
+            "deepseek": {
+                "api_key": "sk-real",
+                "base_url": "https://api.deepseek.com",
+                "model": "deepseek-v4-pro",
+                "timeout_seconds": 120,
+                "max_retries": 2,
+                "mock": False,
+            },
+        },
+        path=Path("config.yaml"),
+    )
+    client = DeepSeekClient(config)
+
+    class BrokenResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            raise IncompleteRead(b"x")
+
+    class GoodResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return json.dumps({
+                "model": "deepseek-v4-pro",
+                "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+            }).encode("utf-8")
+
+    with patch("generator.api_client.urlopen", side_effect=[BrokenResponse(), GoodResponse()]) as fake_urlopen:
+        result = client.chat_completion([{"role": "user", "content": "hello"}])
+
+    assert result.text == "ok"
+    assert fake_urlopen.call_count == 2
 
 
 def test_chat_usage_cache_hit_ratio_clamped_to_one() -> None:

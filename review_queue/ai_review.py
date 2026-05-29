@@ -30,7 +30,6 @@ from review_queue.db import (
     update_story_status,
 )
 
-
 DIMENSIONS: tuple[str, ...] = (
     "plot",
     "character",

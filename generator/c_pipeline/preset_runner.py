@@ -18,7 +18,6 @@ from generator.c_pipeline.actions.runner import ActionRunner
 from generator.c_pipeline.cost_tracker import CostTracker
 from generator.c_pipeline.preset_loader import load_preset
 from review_queue.db import (
-    get_database_path,
     get_story,
     initialize_database,
     update_story_phase,

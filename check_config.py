@@ -1,4 +1,5 @@
 import sys
+
 sys.path.insert(0, "D:\\Development_alma\\anp")
 from config_loader import load_config
 

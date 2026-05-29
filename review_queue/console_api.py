@@ -23,7 +23,8 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 
 from config_loader import load_from_environment
-from review_queue.atomic_runner import kick_off_async, state as atomic_state
+from review_queue.atomic_runner import kick_off_async
+from review_queue.atomic_runner import state as atomic_state
 from review_queue.db import (
     get_story,
     initialize_database,
@@ -185,7 +186,8 @@ def get_phase_controls() -> dict[str, Any]:
     config = load_from_environment()
     c_pipe = config.data.get("c_pipeline") or {}
     controls = dict(c_pipe.get("phase_controls") or {})
-    from review_queue.phase_progress import PHASES as PROGRESS_PHASES, PHASE_LABELS
+    from review_queue.phase_progress import PHASE_LABELS
+    from review_queue.phase_progress import PHASES as PROGRESS_PHASES
     result: dict[str, dict[str, str]] = {}
     for phase in PROGRESS_PHASES:
         result[phase] = {
@@ -238,7 +240,8 @@ PHASE_PROMPT_MAP: dict[str, str] = {
 @router.get("/prompts")
 def list_prompts() -> dict[str, Any]:
     """列出所有 phase 的 prompt 文件名、大小、是否存在。"""
-    from review_queue.phase_progress import PHASES as PROGRESS_PHASES, PHASE_LABELS
+    from review_queue.phase_progress import PHASE_LABELS
+    from review_queue.phase_progress import PHASES as PROGRESS_PHASES
     items: list[dict[str, Any]] = []
     for phase in PROGRESS_PHASES:
         fname = PHASE_PROMPT_MAP.get(phase)
@@ -348,6 +351,7 @@ def get_preset(name: str) -> dict[str, Any]:
 async def save_preset(name: str, request: Request) -> dict[str, Any]:
     """保存（覆写）一个预设 YAML 文件。body: 完整 preset dict。"""
     import yaml
+
     from generator.c_pipeline.preset_loader import DEFAULT_PRESETS_DIR
     payload = await _json_payload(request)
     if not payload:
@@ -461,8 +465,8 @@ async def generate_step(request: Request) -> dict[str, Any]:
 
 
 def _config_path() -> Path:
-    from pathlib import Path
     import os
+    from pathlib import Path
     raw = os.getenv("ANP_CONFIG")
     return Path(raw) if raw else Path("config.yaml")
 

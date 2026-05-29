@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -147,7 +146,7 @@ def suggest_books(
 
     suggestions: list[dict[str, Any]] = []
     try:
-        from generator.api_client import DeepSeekClient, DeepSeekClientError
+        from generator.api_client import DeepSeekClientError
         completion = client.chat_completion(
             messages=[
                 {"role": "system", "content": system},
@@ -286,7 +285,6 @@ def get_fanqie_trending_keywords(top_n: int = 20) -> list[dict[str, Any]]:
         categories = rankings_data.get("categories", []) if isinstance(rankings_data, dict) else []
 
         for cat in categories:
-            cat_name = cat.get("name", "")
             books = cat.get("books", [])
             for book in books:
                 title = book.get("title", "")
@@ -306,7 +304,8 @@ def get_fanqie_trending_keywords(top_n: int = 20) -> list[dict[str, Any]]:
 def get_fanqie_dates() -> list[str]:
     """Get list of available dates from FanqieRankTracker."""
     try:
-        import urllib.request, json as _json
+        import json as _json
+        import urllib.request
         url = "https://raw.githubusercontent.com/reeoi/FanqieRankTracker/main/data/dates.json"
         req = urllib.request.Request(url, headers={"User-Agent": "ANP/1.0"})
         with urllib.request.urlopen(req, timeout=15) as resp:
@@ -528,7 +527,7 @@ def suggest_hot_opening(
                 pass
 
         # Fallback 2: heuristic line extraction
-        raw_lines = [l.strip() for l in text.split("\n") if len(l.strip()) > 6 and not l.strip().startswith(("#", "```", "**", ">"))]
+        raw_lines = [line.strip() for line in text.split("\n") if len(line.strip()) > 6 and not line.strip().startswith(("#", "```", "**", ">"))]
         if len(raw_lines) >= 2:
             logger.info("Hot opening using heuristic parse: %d lines", len(raw_lines))
             return {

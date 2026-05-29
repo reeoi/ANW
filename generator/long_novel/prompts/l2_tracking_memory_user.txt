@@ -1,0 +1,18 @@
+请为第{chapter_number}章提取追踪长期记忆。
+
+已有追踪记录（节选）：
+{tracking_context}
+
+第{chapter_number}章定稿正文：
+{chapter_text}
+
+必须输出 JSON：
+{{
+  "summary_short": "120-220字章节摘要",
+  "summary_long": "300-600字详细摘要，包含冲突、选择、结果、章尾状态",
+  "timeline_events": ["按发生顺序列出3-8条事件"],
+  "character_updates": ["角色名：位置/身份/关系/伤势/能力/秘密/情绪状态变化"],
+  "foreshadowing_updates": ["新增/推进/回收/悬置的伏笔，说明状态"],
+  "continuation_constraints": ["下一章必须遵守的续写约束"],
+  "key_entities": ["后续要保持一致的地名/组织/道具/术语"]
+}}

@@ -26,16 +26,14 @@ the cost across sections (PLAN §6 cost estimate).
 
 from __future__ import annotations
 
-import json
 import logging
-import re
 import string
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Iterable, Mapping, Sequence
 
 from config_loader import LoadedConfig
-from generator.api_client import ChatCompletion, DeepSeekClient
+from generator.api_client import DeepSeekClient
 from generator.c_pipeline.cost_tracker import CostTracker
 from generator.c_pipeline.phase2_outline import (
     OutlineSection,

@@ -30,8 +30,7 @@ if str(ROOT) not in sys.path:
 from config_loader import LoadedConfig
 from generator.api_client import ChatCompletion, ChatUsage
 from generator.c_pipeline.orchestrator import PipelineError, run_pipeline
-from review_queue.db import get_database_path, get_story, initialize_database
-
+from review_queue.db import get_database_path, get_story
 
 # ============================================================ helpers
 

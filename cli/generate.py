@@ -15,9 +15,7 @@ Phase 0's pitch synthesis (see phase0_select.select_theme).
 from __future__ import annotations
 
 import argparse
-import json
 import sys
-from pathlib import Path
 
 from config_loader import load_from_environment
 from generator.c_pipeline.orchestrator import PipelineError, run_pipeline

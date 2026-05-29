@@ -1,15 +1,61 @@
 # Local runtime artifacts
 .venv/
+venv/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+*.egg-info/
+dist/
+build/
+
+# Logs — any level
+logs/
+*.log
 
 # Local secrets and generated data
 .env
 .env.*
 data/*
 !data/scan_seeds.yaml
-logs/
+!data/scan_seeds_long_novel.yaml
+
+# Browser profile data (large, auto-generated)
+data/browser/
+
+# SQLite databases (auto-generated)
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+
+# Local screenshots, temp, backup
+screenshots/
+tmp/
+bak/
+.codex/
+.diff_current.patch
+.pytest_*.out
+.studio-*.png
+.sweep-*.png
+.tmp_*.py
+*.bak
+*.bak-*
+*.bak_*
+*.tmp
+
+# OS metadata
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
 
 # Alma workspace snapshots
 .alma-snapshots/
+
+# Node (if any frontend artifacts sneak in)
+node_modules/

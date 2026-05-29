@@ -28,7 +28,6 @@ from generator.c_pipeline.validators import (
     summarize_section_validations,
 )
 
-
 # ------------------------------------------------------------ count_chinese_chars
 
 

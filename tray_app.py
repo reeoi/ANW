@@ -21,6 +21,7 @@ import argparse
 import contextlib
 import json
 import logging
+import logging.handlers
 import os
 import socket
 import subprocess
@@ -43,7 +44,12 @@ def _setup_tray_log_file() -> Path:
     log_dir = PROJECT_ROOT / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     tray_log = log_dir / "tray.log"
-    handler = logging.FileHandler(tray_log, encoding="utf-8")
+    handler = logging.handlers.RotatingFileHandler(
+        tray_log,
+        encoding="utf-8",
+        maxBytes=10 * 1024 * 1024,  # 10 MB
+        backupCount=5,
+    )
     handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s [%(name)s] %(message)s"))
     handler.setLevel(logging.DEBUG)
     root = logging.getLogger()
@@ -84,18 +90,24 @@ def _resolve_console_python() -> str:
 
 
 def launch_uvicorn(host: str, port: int, project_root: Path | None = None) -> subprocess.Popen | None:
-    """在子进程里启 uvicorn,如端口已占用则返回 None。
+    """在子进程里启 uvicorn;若端口已占用,先尝试清理孤儿 worker 后再启动。
 
     子进程的 stdout / stderr 重定向到 ``logs/uvicorn.log``,即使父进程是
     ``pythonw.exe`` 也能看到 uvicorn 的启动错误。
     """
     if is_port_in_use(host, port):
-        logger.info("Port %s already in use; assuming external uvicorn is running", port)
-        return None
+        logger.info("Port %s in use at launch; trying to release orphan worker", port)
+        if not _force_release_port(host, port, timeout=8.0):
+            logger.warning("Port %s still busy after cleanup; uvicorn launch may fail", port)
+            return None
     cwd = project_root or PROJECT_ROOT
     log_dir = cwd / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     log_path = log_dir / "uvicorn.log"
+    # Rotate uvicorn.log if it exceeds 10 MB to prevent unbounded growth
+    if log_path.exists() and log_path.stat().st_size > 10 * 1024 * 1024:
+        rotated = log_path.with_suffix(".log.1")
+        log_path.replace(rotated)
     args = [
         _resolve_console_python(),
         "-m",
@@ -106,6 +118,12 @@ def launch_uvicorn(host: str, port: int, project_root: Path | None = None) -> su
         "--port",
         str(port),
     ]
+    # Hot reload: 默认关闭。watchfiles 子进程在 socket inheritance 下
+    # 容易残留孤儿(父挂掉但子还监听端口),让托盘重启失败。
+    # 需要时显式设置 ANP_HOT_RELOAD=1。
+    if os.getenv("ANP_HOT_RELOAD", "0").strip().lower() in ("1", "true", "yes"):
+        args.append("--reload")
+        logger.info("ANP_HOT_RELOAD enabled: uvicorn --reload is active")
     creation = 0
     if sys.platform == "win32":
         creation = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -124,6 +142,19 @@ def stop_proc(proc: subprocess.Popen | None, label: str = "process", timeout: fl
     if proc is None:
         return
     try:
+        # On Windows, kill entire process tree (handles uvicorn --reload child workers)
+        if sys.platform == "win32" and proc.pid:
+            try:
+                subprocess.run(
+                    ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=10.0,
+                )
+                proc.wait(timeout=timeout)
+                return
+            except Exception:
+                pass  # fall through to terminate/kill
         proc.terminate()
         try:
             proc.wait(timeout=timeout)
@@ -132,6 +163,59 @@ def stop_proc(proc: subprocess.Popen | None, label: str = "process", timeout: fl
             proc.wait(timeout=timeout)
     except Exception as exc:  # pragma: no cover - subprocess teardown is OS-specific
         logger.warning("Failed to stop %s: %s", label, exc)
+
+
+def _force_release_port(host: str, port: int, timeout: float = 10.0) -> bool:
+    # netstat 的 OwningProcess 在 Windows 上是 socket 创建者的 PID,
+    # 而 socket inheritance 后真正监听的可能是其子进程; 父进程死掉后
+    # netstat 还显示死 PID,基于 netstat 的 taskkill 等于空操作。
+    # 这里遍历所有 python 进程,直接查每个进程实际持有的 socket fd。
+    if not is_port_in_use(host, port):
+        return True
+    try:
+        import psutil
+    except ImportError:
+        logger.warning("psutil not available; cannot force-release port %s", port)
+        return False
+
+    current_pid = os.getpid()
+    killed: list[int] = []
+    for proc in psutil.process_iter():
+        try:
+            if proc.pid == current_pid:
+                continue
+            name = (proc.name() or "").lower()
+            if "python" not in name:
+                continue
+            holds_port = False
+            for c in proc.net_connections(kind="inet"):
+                laddr = getattr(c, "laddr", None)
+                if laddr and getattr(laddr, "port", None) == port:
+                    holds_port = True
+                    break
+            if not holds_port:
+                continue
+            for child in proc.children(recursive=True):
+                try:
+                    child.kill()
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+            proc.kill()
+            killed.append(proc.pid)
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            continue
+
+    if killed:
+        logger.info("Force-released port %s by killing pids=%s", port, killed)
+    else:
+        logger.warning("No live python process found holding port %s", port)
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not is_port_in_use(host, port):
+            return True
+        time.sleep(0.25)
+    return not is_port_in_use(host, port)
 
 
 # ============================================================================
@@ -323,38 +407,113 @@ class TrayApp:
             logger.warning("Run-now failed: %s", exc)
 
     def _restart_uvicorn(self) -> None:
+        """Stop uvicorn, force-release port (incl orphan workers), then relaunch."""
         with self._restart_lock:
+            logger.info("Restart uvicorn requested")
             stop_proc(self.uvicorn_proc, "uvicorn")
-            time.sleep(1.0)
-            self.uvicorn_proc = launch_uvicorn(self.host, self.port)
+            self.uvicorn_proc = None
+
+            # 强制释放端口:覆盖 socket inheritance 留下的孤儿 worker
+            if not _force_release_port(self.host, self.port, timeout=10.0):
+                logger.error("Port %s could not be released; aborting restart", self.port)
+                try:
+                    self.icon.notify("端口无法释放，重启失败", "ANP")
+                except Exception:
+                    pass
+                return
+
+            # Launch (don't use launch_uvicorn's port check, force it)
+            cwd = PROJECT_ROOT
+            log_dir = cwd / "logs"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            log_path = log_dir / "uvicorn.log"
+            python_exe = _resolve_console_python()
+            logger.info("Launching uvicorn: %s -m uvicorn ... --port %s", python_exe, self.port)
+            creation = getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0
+            for attempt in range(1, 4):
+                try:
+                    log_handle = log_path.open("ab", buffering=0)
+                    self.uvicorn_proc = subprocess.Popen(
+                        [python_exe, "-m", "uvicorn", "review_queue.human_review:app",
+                         "--host", self.host, "--port", str(self.port)],
+                        cwd=str(cwd),
+                        creationflags=creation,
+                        stdout=log_handle,
+                        stderr=subprocess.STDOUT,
+                        stdin=subprocess.DEVNULL,
+                    )
+                    # Wait briefly and check it's still alive
+                    time.sleep(1.5)
+                    if self.uvicorn_proc.poll() is None:
+                        logger.info("Uvicorn relaunched (attempt %d, pid=%s)", attempt, self.uvicorn_proc.pid)
+                        try:
+                            self.icon.notify("服务已重启", "ANP")
+                        except Exception:
+                            pass
+                        return
+                    logger.warning("Uvicorn exited immediately (attempt %d, rc=%s)", attempt, self.uvicorn_proc.returncode)
+                except Exception as exc:
+                    logger.error("Launch attempt %d failed: %s", attempt, exc)
+                time.sleep(2.0)
+
+            logger.error("Failed to relaunch uvicorn after 3 attempts")
+            try:
+                self.icon.notify("重启失败", "请手动启动服务")
+            except Exception:
+                pass
 
     @staticmethod
     def _ensure_chrome_background() -> None:
-        """A1：anp 启动时后台尝试拉起带 CDP 端口的 Chrome。
-
-        失败不阻塞 anp 主流程（用户可在 UI 上手动触发重试）。
-        最多重试 5 次（每次间隔 15s），覆盖 Chrome 冷启动慢的场景。
-        """
-
-        if is_cdp_ready():
-            logger.info("chrome_cdp already online, skipping background launch")
-            return
-        for attempt in range(1, 6):
-            logger.info("chrome_background_launch attempt=%s", attempt)
-            endpoint = ensure_chrome(wait_seconds=12.0)
-            if endpoint is not None:
-                logger.info("chrome_cdp online via background launch endpoint=%s", endpoint.http_url)
-                return
-            if attempt < 5:
-                time.sleep(15.0)
-        logger.warning("chrome_background_launch failed after 5 attempts — user can retry from UI")
+        """Chrome CDP — disabled (publishing removed)."""
+        pass
 
     def _quit(self) -> None:
-        self.health.stop()
-        self.notif.stop()
-        stop_proc(self.uvicorn_proc, "uvicorn")
+        # pystray 菜单回调跑在 GUI 主线程,如果在这里同步做 stop_proc(等 5s)、
+        # httpx 关闭等阻塞操作,托盘看上去"点了没反应"。所以这里只触发后台
+        # 清理,主线程立即停掉 icon,然后用守护线程在 5 秒后兜底 os._exit。
+        logger.info("Quit requested")
+
+        def _shutdown() -> None:
+            try:
+                self.health.stop()
+            except Exception:
+                logger.exception("health.stop failed")
+            try:
+                self.notif.stop()
+            except Exception:
+                logger.exception("notif.stop failed")
+            try:
+                stop_proc(self.uvicorn_proc, "uvicorn", timeout=3.0)
+            except Exception:
+                logger.exception("stop_proc uvicorn failed")
+            logger.info("Quit shutdown complete")
+            # 兜底:某些后台线程(SSE httpx.stream timeout=None)在 daemon 退出
+            # 时偶发卡 logging.shutdown,直接结束进程。
+            try:
+                logging.shutdown()
+            except Exception:
+                pass
+            os._exit(0)
+
+        threading.Thread(target=_shutdown, daemon=True, name="anp-shutdown").start()
+
         if self.icon is not None:
-            self.icon.stop()
+            try:
+                self.icon.visible = False
+            except Exception:
+                pass
+            try:
+                self.icon.stop()
+            except Exception:
+                logger.exception("icon.stop failed")
+
+        # 5 秒后强制退出,防止任何路径 hang 住
+        def _hard_exit() -> None:
+            time.sleep(5.0)
+            logger.warning("Quit watchdog: forcing os._exit(0)")
+            os._exit(0)
+
+        threading.Thread(target=_hard_exit, daemon=True, name="anp-quit-watchdog").start()
 
     # -- callbacks --
 
@@ -424,6 +583,7 @@ __all__ = [
     "HealthClient",
     "NotificationStreamClient",
     "TrayApp",
+    "_force_release_port",
     "is_port_in_use",
     "launch_uvicorn",
     "stop_proc",

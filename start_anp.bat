@@ -1,5 +1,5 @@
 @echo off
-setlocal EnableExtensions EnableDelayedExpansion
+setlocal
 chcp 65001 > nul
 
 cd /d "%~dp0"
@@ -49,21 +49,11 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
-> ".venv\.installed" echo installed
+echo installed > ".venv\.installed"
 
 :after_install
 
-if exist ".env" (
-  echo [3/5] 加载 .env ...
-  for /f "usebackq tokens=1,* delims==" %%A in (".env") do (
-    set "_line=%%A"
-    if defined _line if not "!_line:~0,1!"=="#" (
-      set "%%A=%%B"
-    )
-  )
-) else (
-  echo [3/5] 未发现 .env，跳过
-)
+echo [3/5] .env 由 Python config_loader 自动加载，跳过
 
 echo [4/5] 初始化目录和数据库 ...
 if not exist data mkdir data
@@ -80,7 +70,6 @@ set ANP_REVIEW_HOST=127.0.0.1
 if "%ANP_REVIEW_PORT%"=="" set ANP_REVIEW_PORT=18000
 
 echo [4.5/5] 释放端口 %ANP_REVIEW_PORT% ...
-set "_KILLED="
 for /f "tokens=5" %%P in ('netstat -ano ^| findstr "LISTENING" ^| findstr /C:":%ANP_REVIEW_PORT% "') do (
   echo   占用进程 PID=%%P，正在停止 ...
   taskkill /F /PID %%P >nul 2>&1
@@ -91,8 +80,7 @@ for /f "tokens=5" %%P in ('netstat -ano ^| findstr "LISTENING" ^| findstr /C:":%
     set "_KILLED=1"
   )
 )
-if defined _KILLED (
-  REM 短暂等待 TIME_WAIT/socket 释放
+if "%_KILLED%"=="1" (
   ping -n 2 127.0.0.1 >nul 2>&1
 ) else (
   echo   端口 %ANP_REVIEW_PORT% 当前空闲。
@@ -114,7 +102,7 @@ set "_OK="
 set /a _ATTEMPT=0
 
 :probe_loop
-if defined _OK goto :probe_done
+if "%_OK%"=="1" goto :probe_done
 if %_ATTEMPT% GEQ 15 goto :probe_done
 set /a _ATTEMPT+=1
 ping -n 2 127.0.0.1 >nul 2>&1
@@ -122,7 +110,7 @@ curl -sf -o nul http://%ANP_REVIEW_HOST%:%ANP_REVIEW_PORT%/api/health 2>nul && s
 goto :probe_loop
 
 :probe_done
-if defined _OK goto :probe_ok
+if "%_OK%"=="1" goto :probe_ok
 
 echo.
 echo [警告] 服务在 15 秒内未可达。请检查日志:

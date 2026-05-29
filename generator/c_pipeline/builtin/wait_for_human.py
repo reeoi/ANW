@@ -6,7 +6,6 @@ import json
 import logging
 import sqlite3
 import threading
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -91,7 +90,7 @@ def provide_input(story_id: int, payload: dict, db_path: str | Path) -> bool:
                  datetime.now(timezone.utc).isoformat(), story_id),
             )
             conn.commit()
-    except Exception as exc:
+    except Exception:
         logger.exception("provide_input DB write failed")
         return False
 

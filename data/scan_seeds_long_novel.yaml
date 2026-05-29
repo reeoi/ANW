@@ -1,0 +1,90 @@
+# ========================================================================
+# 长篇小说专区（target_type: long）
+# 每章 2500-3500 字，计划 30+ 章，总字数 10 万+
+# 主要发布平台：番茄小说长篇 / 起点中文网
+# ========================================================================
+long_novel:
+  platforms:
+    番茄长篇:
+      word_count_per_chapter: [2500, 3500]
+      target_chapters: [30, 100]
+      audience: "下沉市场为主，男女频各半，年龄 20-40"
+      flagship_genres: ["都市爽文", "玄幻修仙", "重生逆袭", "系统文", "年代文", "赘婿流"]
+    起点中文网:
+      word_count_per_chapter: [2000, 4000]
+      target_chapters: [100, 2000]
+      audience: "男频为主，年龄 18-35"
+      flagship_genres: ["玄幻", "仙侠", "都市", "历史", "科幻", "游戏"]
+
+  # 长篇特有题材公式（补充短篇已有的21个公式）
+  genre_additions:
+    - id: xuan_huan_xiu_xian
+      name: "玄幻修仙"
+      formula: "废材开局 → 金手指觉醒 → 宗门/学院 → 等级突破 → 势力扩张 → 飞升/称霸"
+      emotion_arc: "憋屈→爽→更爽→巅峰"
+      core_mechanics: ["修炼体系", "越级战斗", "秘境探索", "宗门大比", "势力争霸"]
+      hot_score: 3
+    - id: du_shi_shuang_wen
+      name: "都市爽文"
+      formula: "底层身份 → 获得能力/系统 → 打脸逆袭 → 财富积累 → 势力建立 → 人生巅峰"
+      emotion_arc: "爽→更爽→极爽"
+      core_mechanics: ["系统/金手指", "财富逆袭", "身份反转", "红颜知己"]
+      hot_score: 3
+    - id: chong_sheng_ni_xi_chang_pian
+      name: "重生逆袭（长篇）"
+      formula: "前世惨死 → 重生到关键节点 → 利用先知先觉 → 步步领先 → 改变命运 → 超越前世"
+      emotion_arc: "遗憾→弥补→爽→圆满"
+      core_mechanics: ["先知优势", "截胡机缘", "避开陷阱", "培养势力"]
+      hot_score: 3
+    - id: xi_tong_liu
+      name: "系统流"
+      formula: "获得系统 → 新手任务 → 能力提升 → 高级任务 → 系统升级 → 无敌"
+      emotion_arc: "好奇→爽→更爽→无敌"
+      core_mechanics: ["任务系统", "积分/点数", "抽奖/商城", "属性面板"]
+      hot_score: 3
+    - id: nian_dai_wen
+      name: "年代文"
+      formula: "穿越/重生到特定年代 → 利用时代信息差 → 事业起步 → 家庭建设 → 时代弄潮"
+      emotion_arc: "新鲜→奋斗→成就→满足"
+      core_mechanics: ["时代细节", "信息差", "政策红利", "家族关系"]
+      hot_score: 2
+    - id: zhui_xu_liu
+      name: "赘婿流"
+      formula: "赘婿身份 → 隐藏实力/身份 → 被轻视 → 逐渐展露 → 身份揭露 → 全员震惊"
+      emotion_arc: "憋屈→压抑→释放→极爽→满足"
+      core_mechanics: ["隐藏身份", "伪装", "实力碾压", "身份反转"]
+      hot_score: 2
+    - id: ke_huan_mo_shi
+      name: "科幻末世"
+      formula: "末世/灾变降临 → 获得能力/基地 → 生存斗争 → 势力扩张 → 文明重建"
+      emotion_arc: "紧迫→成长→爽→史诗"
+      core_mechanics: ["生存压力", "能力进化", "基地建设", "资源争夺"]
+      hot_score: 2
+    - id: li_shi_jia_kong
+      name: "历史架空"
+      formula: "穿越古代 → 利用现代知识 → 科举/经商/种田 → 步步高升 → 改变历史"
+      emotion_arc: "有趣→积累→权谋→巅峰"
+      core_mechanics: ["历史知识", "制度创新", "权谋斗争", "科技碾压"]
+      hot_score: 2
+
+  # 章节更新结构（长篇特有）
+  chapter_structures:
+    daily_update:
+      words_per_chapter: [2500, 3500]
+      chapters_per_week: 7
+      hook_requirements: ["每章结尾必须有钩子", "每3章一个小高潮", "每卷结尾一个大高潮"]
+    frequent_update:
+      words_per_chapter: [2000, 3000]
+      chapters_per_week: 14
+      hook_requirements: ["每章结尾悬念", "每2章一个小爽点", "每周一个大事件"]
+
+  # 大纲结构层级（长篇特有）
+  outline_structure:
+    book_level: ["全书梗概（500-1000字）", "卷划分（每卷30-50章）", "核心冲突线", "升级/成长主线"]
+    volume_level: ["卷名+卷级梗概", "本卷核心冲突", "本卷爽点节奏图", "本卷伏笔规划（埋设+回收）", "本卷新角色"]
+    chapter_level: ["核心事件", "章首钩子", "爽点类型", "章尾钩子（悬念/预告/反转）", "出场角色", "字数目标", "伏笔操作（埋/回收）"]
+
+  # 伏笔体系（长篇特有）
+  foreshadowing:
+    types: ["短期（3-10章回收）", "中期（10-30章回收）", "长期（跨卷回收）"]
+    tracking: ["每个伏笔有唯一ID", "记录埋设章节和预计回收章节", "状态：未埋/已埋/已回收/已过期"]

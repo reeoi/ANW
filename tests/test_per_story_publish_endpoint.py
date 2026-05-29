@@ -11,7 +11,6 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -20,9 +19,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from review_queue.human_review import app
 from review_queue import atomic_runner
-
+from review_queue.human_review import app
 
 SAMPLE_CONFIG = """\
 deepseek:

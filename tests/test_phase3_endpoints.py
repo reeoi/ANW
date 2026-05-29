@@ -23,7 +23,6 @@ from review_queue.db import (
 from review_queue.human_review import app
 from review_queue.models import Story
 
-
 # ============================================================================
 # c_pipeline schema 幂等
 # ============================================================================

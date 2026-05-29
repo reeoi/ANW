@@ -6,11 +6,10 @@ No runtime logic here — just schema + validation.
 
 from __future__ import annotations
 
-from enum import Enum, StrEnum
+from enum import Enum
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-
 
 # ── Enums ──────────────────────────────────────────────────────────────────
 

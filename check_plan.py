@@ -1,4 +1,5 @@
 import sqlite3
+
 conn = sqlite3.connect("D:\\Development_alma\\anp\\data\\anp.h3_test.sqlite3")
 c = conn.execute("SELECT date, slots_json FROM daily_publish_plan ORDER BY date DESC LIMIT 1")
 r = c.fetchone()

@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from tray_icons import make_icon, make_icon_bytes, PALETTE
+from tray_icons import PALETTE, make_icon, make_icon_bytes
 
 
 @pytest.mark.parametrize("color", ["green", "yellow", "red", "gray"])

@@ -1,0 +1,41 @@
+Review chapter {chapter_number}.
+
+Chapter outline:
+{outline}
+
+Book settings, outline, and long memory:
+{context}
+
+Chapter text:
+{chapter_text}
+
+Check these six dimensions:
+1. continuity: {continuity_rule}
+2. logic: cause and effect are coherent.
+3. plot_progress: plot actually moves forward.
+4. character_integrity: character names, motives, voice, relationships and arcs match settings.
+5. environment: scene, era, world rules and power system are appropriate.
+6. empathy: reader can feel tension, emotion, hooks and pain points.
+
+Scoring rules:
+- APPROVE 90-100: solid, no actionable issue.
+- APPROVE 80-89: pass with only minor optional suggestions.
+- CONCERNS 68-79: one or more real but fixable issues; cite exact evidence.
+- REJECT 20-59: serious contradiction, missing core scene, broken logic, or character collapse.
+- A finding must name the concrete problem and where it appears. Positive statements are strengths, not findings.
+
+Return JSON exactly like:
+{{
+  "overall": "APPROVE|CONCERNS|REJECT",
+  "score": 0,
+  "pass_score": 80,
+  "dimensions": {{
+    "continuity": {{"verdict": "...", "score": 0, "strengths": [], "findings": [], "recommendations": []}},
+    "logic": {{"verdict": "...", "score": 0, "strengths": [], "findings": [], "recommendations": []}},
+    "plot_progress": {{"verdict": "...", "score": 0, "strengths": [], "findings": [], "recommendations": []}},
+    "character_integrity": {{"verdict": "...", "score": 0, "strengths": [], "findings": [], "recommendations": []}},
+    "environment": {{"verdict": "...", "score": 0, "strengths": [], "findings": [], "recommendations": []}},
+    "empathy": {{"verdict": "...", "score": 0, "strengths": [], "findings": [], "recommendations": []}}
+  }},
+  "recommendations": []
+}}

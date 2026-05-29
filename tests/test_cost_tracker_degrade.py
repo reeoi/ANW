@@ -22,7 +22,6 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -36,9 +35,6 @@ from generator.c_pipeline.cost_tracker import (
     BudgetExceededError,
     CostTracker,
 )
-from review_queue.db import insert_story
-from review_queue.models import Story
-
 
 # ============================================================ helpers
 

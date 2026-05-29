@@ -1,5 +1,6 @@
-import sqlite3
 import json
+import sqlite3
+
 conn = sqlite3.connect("D:\\Development_alma\\anp\\data\\anp.h3_test.sqlite3")
 c = conn.execute("SELECT id, title, status, summary, final_content_path FROM stories WHERE id=1")
 r = c.fetchone()

@@ -24,7 +24,8 @@ from config_loader import (
     DEFAULT_DOTENV_PATH,
     load_from_environment,
 )
-from review_queue.env_writer import read_env, write_env_field, write_env_fields
+from review_queue.env_writer import read_env, write_env_fields
+from review_queue import login_capture
 from review_queue.yaml_writer import load_yaml, save_yaml, update_yaml_field
 
 logger = logging.getLogger(__name__)
@@ -307,8 +308,121 @@ async def set_audit(request: Request) -> dict[str, Any]:
 
 
 # ============================================================================
-# 发布
+# 发布 (含番茄登录)
 # ============================================================================
+
+
+def _get_login_state() -> dict[str, Any]:
+    """Return CDP status + login state file validity."""
+    fansq_cfg = load_yaml(_config_path()).get("publisher", {}).get("fansq", {})
+    state_path_str = str(fansq_cfg.get("login_state_path") or "").strip()
+
+    # CDP readiness check
+    cdp_ok = login_capture.is_cdp_ready(timeout=0.5)
+
+    # Login state file validity
+    current_state_path = login_capture.state_file()
+    if not current_state_path.exists():
+        if cdp_ok:
+            return {"status": "cdp_active", "state_path": str(current_state_path)}
+        return {"status": "chrome_offline", "state_path": str(current_state_path)}
+
+    validity = login_capture.login_state_validity(current_state_path)
+    return {
+        "status": validity["status"],
+        "days_left": validity["days_left"],
+        "state_path": str(current_state_path),
+    }
+
+
+def _get_login_session() -> dict[str, Any]:
+    """Return the current login session status."""
+    session = login_capture.get_session_status()
+    return {
+        "status": session.get("status", "none"),
+        "task_id": session.get("task_id"),
+        "started_at": session.get("started_at"),
+    }
+
+
+@router.get("/publish")
+def get_publish() -> dict[str, Any]:
+    cfg = load_yaml(_config_path())
+    f = cfg.get("publisher", {}).get("fansq", {})
+    return {
+        "login_state": _get_login_state(),
+        "login_session": _get_login_session(),
+        "draft_url": str(f.get("draft_url") or "https://fanqienovel.com/"),
+        "min_publish_interval_minutes": int(f.get("min_publish_interval_minutes") or 5),
+        "max_publish_interval_minutes": int(f.get("max_publish_interval_minutes") or 15),
+        "pause_on_risk_control": bool(f.get("pause_on_risk_control", True)),
+        "login_state_path": str(f.get("login_state_path") or ""),
+    }
+
+
+@router.post("/publish")
+async def post_publish(request: Request) -> dict[str, Any]:
+    payload = await _json_payload(request)
+    cfg = load_yaml(_config_path())
+    fansq = cfg.setdefault("publisher", {}).setdefault("fansq", {})
+
+    if "draft_url" in payload:
+        raw = str(payload["draft_url"]).strip()
+        if raw and not raw.startswith("http"):
+            raise HTTPException(status_code=400, detail="draft_url 必须是 http(s):// 开头")
+        fansq["draft_url"] = raw or "https://fanqienovel.com/"
+
+    for key in ("min_publish_interval_minutes", "max_publish_interval_minutes"):
+        if key in payload:
+            try:
+                v = int(payload[key])
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=400, detail=f"{key} 必须是整数")
+            if v < 0:
+                raise HTTPException(status_code=400, detail=f"{key} 不能为负")
+            fansq[key] = v
+
+    mi = int(fansq.get("min_publish_interval_minutes") or 5)
+    ma = int(fansq.get("max_publish_interval_minutes") or 15)
+    if mi > ma:
+        raise HTTPException(status_code=400, detail="最小间隔不能大于最大间隔")
+
+    if "pause_on_risk_control" in payload:
+        fansq["pause_on_risk_control"] = _to_bool(payload["pause_on_risk_control"])
+
+    save_yaml(_config_path(), cfg)
+    return {"ok": True, "message": "发布配置已保存"}
+
+
+# --- 番茄登录子端点 ---
+
+
+@router.post("/publish/login")
+async def post_login() -> dict[str, Any]:
+    """Start a login session (opens a browser login page)."""
+    result = login_capture.start_login_session()
+    return result
+
+
+@router.get("/publish/login/status")
+async def get_login_status() -> dict[str, Any]:
+    """Return login session status + login state info."""
+    return {
+        "session": _get_login_session(),
+        "login_state": _get_login_state(),
+    }
+
+
+@router.post("/publish/login/cancel")
+async def post_login_cancel() -> dict[str, Any]:
+    """Cancel the current login session."""
+    return login_capture.cancel_login_session()
+
+
+@router.post("/publish/login/finish")
+async def post_login_finish() -> dict[str, Any]:
+    """Wait for the login worker to finish and validate the state."""
+    return login_capture.finish_login_session(timeout_seconds=30)
 
 
 # ============================================================================

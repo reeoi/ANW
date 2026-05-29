@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from pathlib import Path
 from typing import Any
@@ -132,18 +131,12 @@ def api_fanqie_keywords() -> dict[str, Any]:
 
 @router.get("/trending/sources")
 def api_source_info() -> dict[str, Any]:
-    return {
-        "ok": True,
-        "sources": [
-            {
-                "id": "seeds",
-                "name": "scan_seeds.yaml 演化",
-                "icon": "📋",
-                "desc": "21个短篇公式 + 8个长篇公式 → LLM每周演化100条 → theme_pool.json",
-                "frequency": "每周一 03:00 自动演化",
-                "format": "theme + genre + emotion + formula + hint_title + target_length ...",
-                "url": None,
-            },
+    stats = get_theme_stats(_db_path())
+    source_counts = {
+        str(item.get("source")): int(item.get("count") or 0)
+        for item in stats.get("sources", [])
+    }
+    sources = [
             {
                 "id": "fanqie",
                 "name": "FanqieRankTracker",
@@ -153,26 +146,16 @@ def api_source_info() -> dict[str, Any]:
                 "format": "title + author + reads + intro → AI标准化为统一格式",
                 "url": "https://raw.githubusercontent.com/reeoi/FanqieRankTracker/main/data/fanqie_female_new_ranks_YYYYMMDD.json",
             },
-            {
-                "id": "manual",
-                "name": "手动录入",
-                "icon": "✏️",
-                "desc": "直接在界面中添加/编辑题材",
-                "frequency": "按需",
-                "format": "统一格式",
-                "url": None,
-            },
-            {
-                "id": "history",
-                "name": "历史数据分析",
-                "icon": "📊",
-                "desc": "分析已生成作品的评分/完成率 → 提取高产题材特征",
-                "frequency": "按需",
-                "format": "从stories表聚合提取",
-                "url": None,
-            },
-        ],
-    }
+    ]
+    active_sources = []
+    for src in sources:
+        count = source_counts.get(src["id"], 0)
+        if count <= 0:
+            continue
+        item = dict(src)
+        item["count"] = count
+        active_sources.append(item)
+    return {"ok": True, "sources": active_sources}
 
 
 # ── AI Suggest ────────────────────────────────────────────────────────

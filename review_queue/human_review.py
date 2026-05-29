@@ -13,20 +13,33 @@ from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import FastAPI, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.staticfiles import StaticFiles
 
 from config_loader import LoadedConfig, load_from_environment
+from generator.long_novel.api import router as long_novel_router
+from generator.long_novel.db import initialize_long_novel_tables
+from generator.long_novel.theme_api import router as theme_router
+from generator.long_novel.theme_db import initialize_theme_tables
+from review_queue import dashboard_assets as _assets  # hot-reload: _assets.DASHBOARD_* reads from disk each request
 from review_queue.ai_review import review_story_in_database, run_review_batch
-from review_queue.dashboard_assets import (
-    DASHBOARD_BODY_TEMPLATE,
-    DASHBOARD_CSS,
-    DASHBOARD_JS,
+from review_queue.console_api import router as console_router
+from review_queue.control_api import router as control_router
+from review_queue.db import (
+    get_database_path,
+    get_story,
+    initialize_database,
+    list_pipeline_cost_logs,
+    list_phase_transitions,
+    list_reviewable_stories,
+    story_from_row,
+    update_story_metadata,
+    update_story_status,
 )
 from review_queue.metrics import query_overview, record_pipeline_event
+from review_queue.models import Story
 from review_queue.phase_progress import (
-    PHASE_ARTIFACTS,
     PhaseAttempt,
-    PhaseProgress,
     PhaseStep,
     PhaseTimelineEntry,
     WorkDirFile,
@@ -40,29 +53,18 @@ from review_queue.phase_progress import (
     normalize_resume_from,
     read_work_dir_file,
 )
-from review_queue.settings_api import mode_router, router as settings_router
-from review_queue.control_api import router as control_router
 from review_queue.scan_plan_api import router as scan_plan_router
-from review_queue.console_api import router as console_router
-from generator.long_novel.api import router as long_novel_router
-from generator.long_novel.theme_api import router as theme_router
-from review_queue.db import (
-    get_database_path,
-    get_story,
-    initialize_database,
-    list_phase_transitions,
-    list_reviewable_stories,
-    story_from_row,
-    update_story_metadata,
-    update_story_status,
-)
-from review_queue.models import Story
+from review_queue.settings_api import mode_router
+from review_queue.settings_api import router as settings_router
 from runtime_helpers import configure_logging, recent_log_lines
 
 logger = logging.getLogger(__name__)
 
 
 app = FastAPI(title="ANP Local Studio")
+static_dir = Path(__file__).resolve().parent / "static"
+if static_dir.is_dir():
+    app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 app.include_router(settings_router)
 app.include_router(mode_router)
 app.include_router(control_router)
@@ -72,8 +74,6 @@ app.include_router(long_novel_router)
 app.include_router(theme_router)
 
 # Ensure long-novel + theme tables exist on startup
-from generator.long_novel.db import initialize_long_novel_tables
-from generator.long_novel.theme_db import initialize_theme_tables
 
 
 @app.on_event("startup")
@@ -102,12 +102,14 @@ def api_dashboard() -> dict[str, Any]:
     config = _load_config()
     db_path = _database_path(config)
     stats = _queue_stats(db_path)
+    long_novel = _long_novel_stats(db_path)
     recent = _list_stories(db_path, limit=12)
     latest = recent[0] if recent else None
     return {
         "ok": True,
         "stats": stats,
         **stats,
+        "long_novel": long_novel,
         "recent": [_story_payload(story, preview=180) for story in recent],
         "latest": _story_payload(latest, preview=120) if latest else None,
         "dry_run": bool(config.is_dry_run),
@@ -675,7 +677,7 @@ def api_approve_story(story_id: int) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="Story not found")
     record_pipeline_event(db_path, kind="review", status="approved", story_id=story_id, message="manual")
     logger.info("Dashboard review action: approved story_id=%s", story_id)
-    return {"ok": True, "message": "已批准，进入待发布队列。"}
+    return {"ok": True, "message": "已批准。"}
 
 
 @app.post("/api/review/{story_id}/reject")
@@ -732,6 +734,30 @@ def api_logs(max_lines: int = 120) -> dict[str, Any]:
     return {"ok": True, "log_file": str(log_file), "lines": lines}
 
 
+@app.get("/api/logs/costs")
+def api_log_costs(limit: int = 80) -> dict[str, Any]:
+    config = _load_config()
+    db_path = _database_path(config)
+    rows = list_pipeline_cost_logs(db_path, limit=max(10, min(limit, 200)))
+    count = len(rows)
+    total_cost = round(sum(float(row.get("cost_cny") or 0.0) for row in rows), 4)
+    avg_cost = round((total_cost / count), 4) if count else 0.0
+    peak_cost = round(max((float(row.get("cost_cny") or 0.0) for row in rows), default=0.0), 4)
+    latest_at = rows[0]["occurred_at"] if rows else None
+    return {
+        "ok": True,
+        "items": rows,
+        "summary": {
+            "count": count,
+            "total_cost_cny": total_cost,
+            "avg_cost_cny": avg_cost,
+            "peak_cost_cny": peak_cost,
+            "latest_at": latest_at,
+            "window_label": f"最近 {count} 次调用" if count else "暂无调用记录",
+        },
+    }
+
+
 @app.get("/api/monitor")
 def api_monitor() -> dict[str, Any]:
     """Return aggregated metrics for the monitoring dashboard."""
@@ -744,6 +770,7 @@ def api_monitor() -> dict[str, Any]:
     spent_30d = overview["usage"]["d30"]["cost_cny"]
     tokens_24h = overview["usage"]["d1"]["total_tokens"]
     health = _system_health(config, db_path)
+    long_novel = _long_novel_stats(db_path)
     return {
         "ok": True,
         "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -759,6 +786,7 @@ def api_monitor() -> dict[str, Any]:
             "daily_token_used_pct": _pct(tokens_24h, daily_token_limit),
         },
         "health": health,
+        "long_novel": long_novel,
         **overview,
     }
 
@@ -929,6 +957,119 @@ def _queue_stats(db_path: str | Path) -> dict[str, int]:
     stats["total"] = int(total)
     stats["failed"] = int(stats.get("failed", 0) + stats.get("publish_failed", 0))
     return stats
+
+
+def _long_novel_stats(db_path: str | Path) -> dict[str, Any]:
+    """Small long-novel summary for the main dashboard and monitor page."""
+
+    try:
+        initialize_long_novel_tables(db_path)
+        with sqlite3.connect(Path(db_path)) as connection:
+            connection.row_factory = sqlite3.Row
+            book_rows = connection.execute(
+                """
+                SELECT
+                    b.*,
+                    COUNT(c.id) AS chapters_total,
+                    COALESCE(SUM(CASE
+                        WHEN c.status IN ('published', 'draft', 'final', 'finalized', 'done')
+                             OR COALESCE(c.draft_path, '') != ''
+                             OR COALESCE(c.actual_words, 0) > 0
+                        THEN 1 ELSE 0 END), 0) AS chapters_done,
+                    COALESCE(SUM(CASE WHEN c.status = 'writing' THEN 1 ELSE 0 END), 0) AS chapters_writing,
+                    COALESCE(SUM(CASE WHEN c.status = 'outline_only' THEN 1 ELSE 0 END), 0) AS chapters_outline,
+                    COALESCE(SUM(c.actual_words), 0) AS words_total
+                FROM ln_books b
+                LEFT JOIN ln_chapters c ON c.book_id = b.id
+                GROUP BY b.id
+                ORDER BY b.updated_at DESC, b.id DESC
+                """
+            ).fetchall()
+            chapter_status = {
+                str(row[0]): int(row[1])
+                for row in connection.execute(
+                    "SELECT status, COUNT(*) FROM ln_chapters GROUP BY status"
+                ).fetchall()
+            }
+    except Exception:
+        logger.exception("long_novel_stats_failed")
+        return {
+            "books_total": 0,
+            "status": {},
+            "chapters_total": 0,
+            "chapters_planned": 0,
+            "chapters_done": 0,
+            "chapters_writing": 0,
+            "chapters_outline": 0,
+            "chapters_remaining": 0,
+            "words_total": 0,
+            "progress_pct": 0.0,
+            "chapter_status": {},
+            "recent": [],
+        }
+
+    book_status: dict[str, int] = {}
+    recent: list[dict[str, Any]] = []
+    chapters_total = 0
+    chapters_planned = 0
+    chapters_done = 0
+    chapters_writing = 0
+    chapters_outline = 0
+    words_total = 0
+    for row in book_rows:
+        status = str(row["status"] or "unknown")
+        book_status[status] = book_status.get(status, 0) + 1
+        total = int(row["chapters_total"] or 0)
+        done = int(row["chapters_done"] or 0)
+        writing = int(row["chapters_writing"] or 0)
+        outline = int(row["chapters_outline"] or 0)
+        words = int(row["words_total"] or 0)
+        target = int(row["target_chapters"] or 0)
+        planned = max(total, target)
+        denom = max(planned, 1)
+        chapters_total += total
+        chapters_planned += planned
+        chapters_done += done
+        chapters_writing += writing
+        chapters_outline += outline
+        words_total += words
+        if len(recent) < 8:
+            recent.append(
+                {
+                    "id": int(row["id"]),
+                    "title": row["title"],
+                    "genre": row["genre"],
+                    "status": status,
+                    "current_chapter": int(row["current_chapter"] or 0),
+                    "target_chapters": target,
+                    "chapters_total": total,
+                    "chapters_planned": planned,
+                    "chapters_done": done,
+                    "chapters_writing": writing,
+                    "chapters_outline": outline,
+                    "chapters_remaining": max(0, planned - done - writing),
+                    "words_total": words,
+                    "progress_pct": round(done / denom * 100, 1),
+                    "updated_at": row["updated_at"],
+                    "created_at": row["created_at"],
+                }
+            )
+
+    progress_denom = max(chapters_planned, 1)
+    return {
+        "books_total": len(book_rows),
+        "status": book_status,
+        "chapters_total": chapters_total,
+        "chapters_planned": chapters_planned,
+        "chapters_done": chapters_done,
+        "chapters_writing": chapters_writing,
+        "chapters_outline": chapters_outline,
+        "chapters_remaining": max(0, chapters_planned - chapters_done - chapters_writing),
+        "words_total": words_total,
+        "progress_pct": round(chapters_done / progress_denom * 100, 1),
+        "chapter_status": chapter_status,
+        "recent": recent,
+    }
 
 
 def _list_stories(db_path: str | Path, status: str | None = None, limit: int = 50) -> list[Story]:
@@ -1104,7 +1245,7 @@ def _render_dashboard(message: str | None = None) -> str:
     banner_display = "block" if safe_message else "none"
     db_text = _e(db_path)
     body = (
-        DASHBOARD_BODY_TEMPLATE
+        _assets.DASHBOARD_BODY_TEMPLATE
         .replace("__BANNER_DISPLAY__", banner_display)
         .replace("__BANNER_MESSAGE__", safe_message)
         .replace("__LEGACY_STORY_CARDS__", legacy_story_cards)
@@ -1117,10 +1258,11 @@ def _render_dashboard(message: str | None = None) -> str:
         "  <meta charset=\"utf-8\">\n"
         "  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n"
         "  <title>ANP Local Studio</title>\n"
-        f"  <style>{DASHBOARD_CSS}</style>\n"
+        f"  <style>{_assets.DASHBOARD_CSS}</style>\n"
+        "  <script src=\"https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js\"></script>\n"
         "</head>\n"
         f"<body>{body}\n"
-        f"<script>{DASHBOARD_JS}</script>\n"
+        f"<script>{_assets.DASHBOARD_JS}</script>\n"
         "</body></html>\n"
     )
 

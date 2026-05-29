@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import ast as _ast
 import logging
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import dataclass
 
 from generator.c_pipeline.actions.runner import _ACTION_REGISTRY
 from generator.c_pipeline.contract import StepManifest
