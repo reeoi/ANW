@@ -548,6 +548,30 @@ def _run_story_review_legacy(
         "summary": f"正文审查完成：{parsed.get('overall') or overall}",
     }
 
+
+def summarize_review_recommendations(review: dict[str, Any]) -> str:
+    """Flatten a normalized story-review into actionable revision instructions.
+
+    Used by the rewrite step so each fix attempt addresses concrete findings
+    rather than doing a vague second polish. Returns a markdown bullet list,
+    capped to keep the rewrite prompt focused.
+    """
+    lines: list[str] = []
+    for rec in review.get("recommendations") or []:
+        if str(rec).strip():
+            lines.append(str(rec).strip())
+    for name, dim in (review.get("dimensions") or {}).items():
+        if not isinstance(dim, dict):
+            continue
+        for item in dim.get("findings") or []:
+            if str(item).strip():
+                lines.append(f"[{name} 问题] {item}")
+        for item in dim.get("recommendations") or []:
+            if str(item).strip():
+                lines.append(f"[{name} 建议] {item}")
+    return "\n".join(f"- {line}" for line in lines)[:6000]
+
+
 def run_story_review(
     client: DeepSeekClient,
     chapter_content: str,
@@ -631,4 +655,5 @@ __all__ = [
     "review_consistency",
     "run_full_review",
     "run_story_review",
+    "summarize_review_recommendations",
 ]

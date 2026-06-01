@@ -9,7 +9,7 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from fastapi import APIRouter, Body, HTTPException, Request
 from starlette.concurrency import run_in_threadpool
@@ -1033,6 +1033,145 @@ def api_book_tree(book_id: int) -> dict[str, Any]:
 # ── Pipeline: Book Setup (L0) - async with polling ──────────────────
 
 
+def _finalize_book_setup(book_id: int, book: dict[str, Any], work_dir: Path) -> None:
+    """Create chapter rows from the generated 细纲 and flip the book to 'writing'.
+
+    Idempotent: chapters that already have a draft are left untouched, so this
+    is safe to re-run from either the manual finalize phase or the autopilot.
+    """
+    db = _db_path()
+    for ch_num in range(1, book["target_chapters"] + 1):
+        outline_path = work_dir / "大纲" / f"细纲_第{ch_num:03d}章.md"
+        existing_chapter = get_chapter(db, book_id, ch_num)
+        if existing_chapter and existing_chapter.get("draft_path"):
+            continue
+        upsert_chapter(
+            db, book_id, volume_number=1, chapter_number=ch_num,
+            title=(existing_chapter or {}).get("title") or f"第{ch_num}章",
+            status=(existing_chapter or {}).get("status") or "outline_only",
+            target_words=book["target_words_per_chapter"],
+            outline_path=str(outline_path) if outline_path.exists() else None,
+        )
+    upsert_volume(db, book_id, 1, title="第一卷", chapter_count=book["target_chapters"], status="outlined")
+    update_book(db, book_id, status="writing", total_volumes=1, current_volume=1)
+
+
+def _autopilot_chapters_to_write(db: Path, book_id: int, count: int) -> list[int]:
+    """Return the next ``count`` chapter numbers that still need a draft.
+
+    A chapter "needs a draft" when it has no ``draft_path`` yet, so chapters the
+    autopilot already finished — including ones flagged ``needs_human`` (they do
+    have a saved draft) — are not rewritten on a later run.
+    """
+    chapters = list_chapters(db, book_id)
+    pending = [
+        int(c["chapter_number"])
+        for c in sorted(chapters, key=lambda c: int(c.get("chapter_number") or 0))
+        if not c.get("draft_path")
+    ]
+    return pending[: max(0, count)]
+
+
+def _autopilot_write_one_chapter(
+    client: Any,
+    db: Path,
+    book_id: int,
+    book: dict[str, Any],
+    work_dir: Path,
+    chapter_number: int,
+    report: Callable[..., None],
+    *,
+    max_revisions: int = 3,
+) -> dict[str, Any]:
+    """Write → review → (revise ≤ ``max_revisions``) → persist one chapter.
+
+    Mirrors the manual write+review+revise workbench flow, but unattended:
+
+    1. ``run_full_chapter`` produces 正文.md and refreshes the tracking memory.
+    2. ``run_story_review`` scores it against the six-dimension gate.
+    3. While it has not passed and revisions remain, ``revise_chapter_once``
+       rewrites against the findings; each revision re-saves the chapter text
+       and refreshes the tracking memory from the newest version.
+
+    The draft and tracking memory are always persisted — even when the gate
+    never passes — so the next chapter keeps continuity. A chapter still failing
+    after ``max_revisions`` is flagged ``needs_human`` (its draft is kept). The
+    upsert carries the chapter's existing title/outline_path through so the
+    status change does not wipe them.
+    """
+    from generator.long_novel.l2_chapter_write import (
+        count_chinese_chars,
+        revise_chapter_once,
+        run_full_chapter,
+        update_tracking_files,
+    )
+    from generator.long_novel.l4_review import run_story_review
+
+    ch = get_chapter(db, book_id, chapter_number) or {}
+    chapter_title = str(ch.get("title") or "")
+    volume_number = int(ch.get("volume_number") or 1)
+    target_words = int(ch.get("target_words") or book.get("target_words_per_chapter") or 3000)
+    outline_text = _outline_for_chapter(ch)
+
+    # Mark writing without clobbering existing metadata (upsert overwrites all columns).
+    upsert_chapter(
+        db, book_id, volume_number, chapter_number,
+        title=chapter_title, status="writing", target_words=target_words,
+        actual_words=int(ch.get("actual_words") or 0),
+        outline_path=ch.get("outline_path"), draft_path=ch.get("draft_path"),
+        review_status=ch.get("review_status"), ai_review_json=ch.get("ai_review_json"),
+    )
+    update_book(db, book_id, current_chapter=chapter_number)
+
+    report("drafting", f"第{chapter_number}章 初稿/扩写/润色/去AI…")
+    result = run_full_chapter(client, work_dir, chapter_number, chapter_title, target_words)
+    draft_path = Path(result["draft_path"])
+    text = draft_path.read_text(encoding="utf-8") if draft_path.exists() else ""
+
+    report("reviewing", f"第{chapter_number}章 审核中…")
+    review = run_story_review(client, text, work_dir, chapter_number, outline_text)
+
+    revisions = 0
+    while not review.get("passed") and revisions < max_revisions:
+        revisions += 1
+        report("revising", f"第{chapter_number}章 第{revisions}次重写…", revisions)
+        text, review = revise_chapter_once(
+            client, work_dir, chapter_number, review,
+            source_text=text, outline=outline_text,
+        )
+        # Persist the improved text and refresh tracking from the newest version.
+        draft_path.write_text(text, encoding="utf-8")
+        update_tracking_files(work_dir, chapter_number, text, client)
+
+    final_words = count_chinese_chars(text)
+    passed = bool(review.get("passed"))
+    status = "draft" if passed else "needs_human"
+    review_json = json.dumps(review, ensure_ascii=False)
+
+    # Persist the review next to the chapter for parity with the manual flow.
+    review_path = _step_file_path(work_dir, chapter_number, chapter_title, "review")
+    review_path.parent.mkdir(parents=True, exist_ok=True)
+    review_path.write_text(json.dumps(review, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    upsert_chapter(
+        db, book_id, volume_number, chapter_number,
+        title=chapter_title, status=status, target_words=target_words,
+        actual_words=final_words,
+        outline_path=ch.get("outline_path"), draft_path=str(draft_path),
+        review_status=str(review.get("overall") or "CONCERNS"),
+        ai_review_json=review_json,
+    )
+
+    return {
+        "chapter": chapter_number,
+        "status": "passed" if passed else "needs_human",
+        "words": final_words,
+        "score": int(review.get("score") or 0),
+        "review_overall": str(review.get("overall") or ""),
+        "revisions": revisions,
+    }
+
+
 @router.post("/books/{book_id}/setup-phase/{phase}")
 async def api_start_setup_phase(book_id: int, phase: str, request: Request) -> dict[str, Any]:
     """Start a single L0 phase in background. Poll /setup-phase/{phase}/status for progress."""
@@ -1184,20 +1323,7 @@ async def api_start_setup_phase(book_id: int, phase: str, request: Request) -> d
                 _write("running", "正在写入数据库...")
                 if _cancelled():
                     return
-                for ch_num in range(1, book["target_chapters"] + 1):
-                    outline_path = work_dir / "大纲" / f"细纲_第{ch_num:03d}章.md"
-                    existing_chapter = get_chapter(_db_path(), book_id, ch_num)
-                    if existing_chapter and existing_chapter.get("draft_path"):
-                        continue
-                    upsert_chapter(
-                        _db_path(), book_id, volume_number=1, chapter_number=ch_num,
-                        title=(existing_chapter or {}).get("title") or f"第{ch_num}章",
-                        status=(existing_chapter or {}).get("status") or "outline_only",
-                        target_words=book["target_words_per_chapter"],
-                        outline_path=str(outline_path) if outline_path.exists() else None,
-                    )
-                upsert_volume(_db_path(), book_id, 1, title="第一卷", chapter_count=book["target_chapters"], status="outlined")
-                update_book(_db_path(), book_id, status="writing", total_volumes=1, current_volume=1)
+                _finalize_book_setup(book_id, book, work_dir)
                 _write("done", f"开书设定完成，共{book['target_chapters']}章")
         except Exception as e:
             _write("error", str(e)[:300])
@@ -1236,6 +1362,135 @@ def api_setup_phase_status(book_id: int, phase: str) -> dict[str, Any]:
             st = "cancelled"
     return {"ok": True, "status": st, "detail": data.get("detail", ""),
             "updated_at": data.get("updated_at", "")}
+
+
+# ── Autopilot: run the whole open-book pipeline in one background job ──
+
+
+@router.post("/books/{book_id}/autopilot/start")
+async def api_autopilot_start(book_id: int, request: Request) -> dict[str, Any]:
+    """Run 设定 → 大纲 → 入库 →〔正文 × N〕as one background job.
+
+    Body: ``{"additional_prompt": "...", "chapter_count": N, "max_revisions": 3}``.
+    When ``chapter_count > 0`` the job continues past 入库 into the 正文 autopilot:
+    it writes the next ``chapter_count`` unwritten chapters, each run_full_chapter
+    → 审核 → 失败重写 ≤ ``max_revisions`` 次 → 仍不过标记 needs_human（仍更新追踪/
+    伏笔/进度）→ 下一章. Everything streams to the same ``/autopilot/status`` /
+    monitor panel. ``POST /cancel`` stops after the current stage or chapter.
+    Stages and chapters already complete are skipped, so re-running resumes an
+    interrupted book (and writing more chapters later just adds to it).
+    """
+    book = get_book(_db_path(), book_id)
+    if not book:
+        raise HTTPException(status_code=404, detail="书籍不存在")
+
+    payload = await _json_payload(request)
+    additional_prompt = str(payload.get("additional_prompt") or "").strip()
+    chapter_count = max(0, int(payload.get("chapter_count") or 0))
+    max_revisions = max(0, int(payload.get("max_revisions") or 3))
+
+    work_dir = Path(book["work_dir"])
+    work_dir.mkdir(parents=True, exist_ok=True)
+    _set_cancel(book_id, False)
+
+    def _run() -> None:
+        from generator.api_client import DeepSeekClient
+        from generator.long_novel.autopilot import (
+            AutopilotStage,
+            build_l0_stages,
+            run_chapter_loop,
+            run_stages,
+            write_autopilot_file,
+        )
+
+        try:
+            config = load_from_environment()
+            client = DeepSeekClient(config)
+            stages = build_l0_stages(
+                client, work_dir,
+                title=book["title"], genre=book["genre"], premise=book.get("premise", ""),
+                target_chapters=book["target_chapters"],
+                words_per_chapter=book["target_words_per_chapter"],
+                additional_prompt=additional_prompt,
+            )
+            stages.append(AutopilotStage(
+                phase="finalize", label="入库",
+                run=lambda: _finalize_book_setup(book_id, book, work_dir),
+                is_done=lambda: (get_book(_db_path(), book_id) or {}).get("status") == "writing",
+            ))
+
+            def _setup_progress(snap: dict[str, Any]) -> None:
+                # When chapters will follow, don't let setup's terminal "done"
+                # stop the frontend poller — bridge it to a "running" handoff.
+                if chapter_count > 0 and snap.get("state") == "done":
+                    snap = {**snap, "state": "running", "detail": "设定完成，开始写正文…"}
+                write_autopilot_file(work_dir, snap)
+
+            setup_result = run_stages(
+                stages,
+                write_progress=_setup_progress,
+                is_cancelled=lambda: _is_cancelled(book_id),
+            )
+            if setup_result.get("state") != "done":
+                return  # error / cancelled snapshot already written
+            if chapter_count <= 0 or _is_cancelled(book_id):
+                return  # setup-only run; real terminal "done" already written
+
+            db = _db_path()
+            fresh_book = get_book(db, book_id) or book
+            setup_completed = [s.phase for s in stages]
+            chapter_numbers = _autopilot_chapters_to_write(db, book_id, chapter_count)
+
+            def _write_one(ch_num: int, report: Callable[..., None]) -> dict[str, Any]:
+                return _autopilot_write_one_chapter(
+                    client, db, book_id, fresh_book, work_dir, ch_num, report,
+                    max_revisions=max_revisions,
+                )
+
+            run_chapter_loop(
+                chapter_numbers,
+                write_chapter=_write_one,
+                write_progress=lambda snap: write_autopilot_file(work_dir, snap),
+                is_cancelled=lambda: _is_cancelled(book_id),
+                setup_completed=setup_completed,
+            )
+        except Exception as exc:
+            from generator.long_novel.autopilot import write_autopilot_file
+            write_autopilot_file(work_dir, {
+                "state": "error", "stage": "", "detail": str(exc)[:300],
+                "updated_at": datetime.now().strftime("%H:%M:%S"),
+            })
+            logger.exception("autopilot failed for book %s", book_id)
+
+    from generator.long_novel.autopilot import write_autopilot_file
+    write_autopilot_file(work_dir, {
+        "state": "running", "stage": "", "detail": "启动中...", "total": 0,
+        "updated_at": datetime.now().strftime("%H:%M:%S"),
+    })
+    threading.Thread(target=_run, daemon=True).start()
+    msg = "autopilot 已启动"
+    if chapter_count > 0:
+        msg = f"autopilot 已启动（设定 + 正文 {chapter_count} 章）"
+    return {"ok": True, "message": msg, "chapter_count": chapter_count}
+
+
+@router.get("/books/{book_id}/autopilot/status")
+def api_autopilot_status(book_id: int) -> dict[str, Any]:
+    """Poll autopilot progress. Flags a dead worker (>5 min without update)."""
+    book = get_book(_db_path(), book_id)
+    if not book:
+        raise HTTPException(status_code=404, detail="书籍不存在")
+    from generator.long_novel.autopilot import AUTOPILOT_FILE, read_autopilot_file
+
+    data = read_autopilot_file(Path(book["work_dir"]))
+    if not data:
+        return {"ok": True, "state": "idle"}
+    if data.get("state") == "running":
+        progress_file = setup_file_read(Path(book["work_dir"]), AUTOPILOT_FILE)
+        if progress_file.exists() and (time.time() - progress_file.stat().st_mtime) > 300:
+            data["state"] = "cancelled"
+            data["detail"] = "进程中断（服务重启或超时），可重新开始"
+    return {"ok": True, **data}
 
 
 @router.post("/books/{book_id}/extend-chapters")
@@ -1646,7 +1901,10 @@ _PHASE_PROMPT_INFO = {
         "label": "卷纲",
         "system_file": "l0_volume_outline_system.txt",
         "user_file": "l0_volume_outline_user.txt",
-        "placeholders": ["title", "genre", "volume_name", "target_chapters", "words_per_chapter", "vol_num", "ch_start", "ch_end", "chapter_count", "volume_words", "plan_title", "all_settings", "book_outline", "full_plan_brief"],
+        "placeholders": [
+            "title", "genre", "volume_name", "target_chapters", "words_per_chapter", "vol_num", "ch_start",
+            "ch_end", "chapter_count", "volume_words", "plan_title", "all_settings", "book_outline", "full_plan_brief",
+        ],
         "user_template": """请基于已有设定和全书大纲生成卷纲：
 
 书名：{title} 题材：{genre}
@@ -1712,7 +1970,10 @@ _CHAPTER_PROMPT_INFO = {
         "label": "追加章节规划",
         "system_file": "l0_extend_chapters_system.txt",
         "user_file": "l0_extend_chapters_user.txt",
-        "placeholders": ["title", "genre", "start_ch", "end_ch", "old_target_chapters", "new_target_chapters", "words_per_chapter", "extension_context"],
+        "placeholders": [
+            "title", "genre", "start_ch", "end_ch", "old_target_chapters",
+            "new_target_chapters", "words_per_chapter", "extension_context",
+        ],
     },
     "draft": {
         "label": "正文初稿",
