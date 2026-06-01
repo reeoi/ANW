@@ -2735,10 +2735,180 @@
           var el = $(_lnPanels[k].el);
           if (el) el.style.display = (k === 'setup') ? '' : 'none';
         });
-      _startGlobalProgressPolling();
-      // Auto-trigger L0 setup
-      _lnRunSetupPhases();
+      // 不再自动跑设定；让用户选择「全自动 / 手动」。
+      _lnShowSetupChoice(title);
     } catch (err) { toast('创建失败：' + err.message, 'error'); }
+  }
+
+  // ── 开书后：全自动 / 手动 选择 + autopilot 监控 ──
+  var _lnAutopilotTimer = null;
+  var _lnAutopilotChapterCount = 0;
+
+  function _lnAutopilotStageDefs() {
+    // 9 stages: 5 setup + 3 outline + finalize（入库）
+    return _lnAllSetupPhases().concat([{ id: 'finalize', label: '入库' }]);
+  }
+
+  function _lnShowSetupChoice(title) {
+    var titleEl = $('ln-choice-title');
+    if (titleEl) titleEl.textContent = title || '';
+    ['ln-setup-strip', 'ln-setup-preview', 'ln-autopilot-monitor'].forEach(function(id) {
+      var el = $(id); if (el) el.style.display = 'none';
+    });
+    var choice = $('ln-setup-choice');
+    if (choice) choice.style.display = '';
+    var autoBtn = $('ln-btn-autopilot');
+    var manualBtn = $('ln-btn-manual-setup');
+    if (autoBtn) autoBtn.onclick = _lnStartAutopilot;
+    if (manualBtn) manualBtn.onclick = _lnChooseManualSetup;
+  }
+
+  function _lnChooseManualSetup() {
+    var choice = $('ln-setup-choice'); if (choice) choice.style.display = 'none';
+    var monitor = $('ln-autopilot-monitor'); if (monitor) monitor.style.display = 'none';
+    loadSetupPanel();  // 渲染逐 phase chip（带「运行」按钮）
+    toast('已切换到手动模式：在下方每一步点开后「运行」', 'info');
+  }
+
+  async function _lnStartAutopilot() {
+    if (!_lnActiveBookId) { toast('请先选择一本书', 'error'); return; }
+    var chapterCount = parseInt(($('ln-autopilot-chapters') || {}).value, 10);
+    if (isNaN(chapterCount) || chapterCount < 0) chapterCount = 0;
+    var maxRev = parseInt(($('ln-autopilot-max-rev') || {}).value, 10);
+    if (isNaN(maxRev) || maxRev < 0) maxRev = 3;
+    _lnAutopilotChapterCount = chapterCount;
+    var choice = $('ln-setup-choice'); if (choice) choice.style.display = 'none';
+    var monitor = $('ln-autopilot-monitor'); if (monitor) monitor.style.display = '';
+    var cancelBtn = $('ln-btn-autopilot-cancel');
+    if (cancelBtn) cancelBtn.onclick = _lnCancelAutopilot;
+    _lnRenderAutopilotMonitor({ state: 'running', detail: '启动中…' });
+    try {
+      await api('/api/long-novel/books/' + _lnActiveBookId + '/autopilot/start', {
+        method: 'POST',
+        body: { chapter_count: chapterCount, max_revisions: maxRev },
+      });
+      _lnStartAutopilotPolling();
+    } catch (err) {
+      toast('启动全自动失败：' + err.message, 'error');
+      _lnShowSetupChoice(($('ln-choice-title') || {}).textContent || '');
+    }
+  }
+
+  async function _lnCancelAutopilot() {
+    if (!_lnActiveBookId) return;
+    if (!await showConfirmAsync('暂停全自动生成？已生成的步骤会保留，重新点「全自动」会从中断处继续。')) return;
+    try {
+      await api('/api/long-novel/books/' + _lnActiveBookId + '/cancel', { method: 'POST' });
+      toast('已发送暂停信号，将在当前步骤完成后停止', 'warning');
+    } catch (err) { toast('暂停失败：' + err.message, 'error'); }
+  }
+
+  function _lnStartAutopilotPolling() {
+    if (_lnAutopilotTimer) clearInterval(_lnAutopilotTimer);
+    _lnPollAutopilot();
+    _lnAutopilotTimer = setInterval(_lnPollAutopilot, 2000);
+  }
+
+  function _lnStopAutopilotPolling() {
+    if (_lnAutopilotTimer) { clearInterval(_lnAutopilotTimer); _lnAutopilotTimer = null; }
+  }
+
+  async function _lnPollAutopilot() {
+    if (!_lnActiveBookId) { _lnStopAutopilotPolling(); return; }
+    try {
+      var data = await api('/api/long-novel/books/' + _lnActiveBookId + '/autopilot/status');
+      _lnRenderAutopilotMonitor(data);
+      if (['done', 'error', 'cancelled', 'idle'].indexOf(data.state) >= 0) {
+        _lnStopAutopilotPolling();
+        if (data.state === 'done') {
+          var w = data.writing;
+          if (w && w.total) {
+            var human = (w.needs_human || []).length;
+            var msg = '全自动完成！正文已写 ' + w.total + ' 章';
+            msg += human ? ('，其中 ' + human + ' 章未过审已转人工复核') : '，全部通过审核';
+            toast(msg, human ? 'warning' : 'success');
+          } else {
+            toast('开书设定全部完成！可以到「正文」开始写作了', 'success');
+          }
+          if (typeof loadBookOverview === 'function') { try { loadBookOverview(); } catch (e) {} }
+        } else if (data.state === 'error') {
+          toast('全自动中断：' + (data.detail || '未知错误') + '（可重新开始，已完成步骤会自动跳过）', 'error');
+        } else if (data.state === 'cancelled') {
+          toast('已暂停。重新点「全自动」会从中断处继续', 'warning');
+        }
+      }
+    } catch (err) { /* 瞬时轮询错误，继续重试 */ }
+  }
+
+  function _lnRenderAutopilotMonitor(data) {
+    data = data || {};
+    var stagesEl = $('ln-autopilot-stages');
+    var detailEl = $('ln-autopilot-detail');
+    var defs = _lnAutopilotStageDefs();
+    var completed = data.completed || [];
+    var current = data.stage || '';
+    var failedAt = data.failed_at || '';
+    if (stagesEl) {
+      stagesEl.innerHTML = defs.map(function(s) {
+        var icon = '○', color = 'var(--muted)';
+        if (completed.indexOf(s.id) >= 0) { icon = '✓'; color = 'var(--success)'; }
+        if (s.id === failedAt) { icon = '✕'; color = 'var(--danger)'; }
+        else if (s.id === current && data.state === 'running') { icon = '●'; color = 'var(--primary)'; }
+        return '<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:0.75rem;color:' + color + ';border:1px solid ' + color + '">' + icon + ' ' + escapeHtml(s.label) + '</span>';
+      }).join('');
+    }
+    _lnRenderAutopilotWriting(data.writing, data.state);
+    if (detailEl) {
+      var head = data.state === 'done' ? '✓ 全部完成'
+        : data.state === 'error' ? '✕ 失败'
+        : data.state === 'cancelled' ? '⏸ 已暂停'
+        : (data.label ? ('正在：' + data.label) : '准备中…');
+      var detail = data.detail ? ('\n' + String(data.detail).substring(0, 2000)) : '';
+      detailEl.textContent = '[' + (data.updated_at || '') + '] ' + head + detail;
+    }
+  }
+
+  var _LN_WRITE_STATUS_LABEL = {
+    writing: '写作中', drafting: '初稿/扩写/润色/去AI', reviewing: '审核中',
+    revising: '重写中', passed: '已通过', needs_human: '需人工', error: '出错',
+  };
+
+  function _lnRenderAutopilotWriting(writing, state) {
+    var el = $('ln-autopilot-writing');
+    if (!el) return;
+    if (!writing || !writing.total) { el.style.display = 'none'; el.innerHTML = ''; return; }
+    el.style.display = '';
+    var total = writing.total || 0;
+    var done = writing.done || 0;
+    var pct = total ? Math.round((done / total) * 100) : 0;
+    var cur = writing.current || 0;
+    var curStatus = _LN_WRITE_STATUS_LABEL[writing.current_status] || writing.current_status || '';
+    var revs = writing.current_revisions || 0;
+    var humanCount = (writing.needs_human || []).length;
+
+    var header = '正文进度：' + done + ' / ' + total + ' 章（' + pct + '%）';
+    if (state === 'running' && cur) {
+      header += ' · 第' + cur + '章 ' + escapeHtml(curStatus) + (revs ? ('（重写' + revs + '次）') : '');
+    }
+    if (humanCount) header += ' · ' + humanCount + ' 章需人工';
+
+    var bar = '<div style="height:6px;border-radius:4px;background:var(--border,#333);overflow:hidden;margin:0.4rem 0">'
+      + '<div style="height:100%;width:' + pct + '%;background:var(--primary)"></div></div>';
+
+    var chips = (writing.results || []).map(function(r) {
+      var ok = r.status === 'passed';
+      var color = ok ? 'var(--success)' : 'var(--warning)';
+      var icon = ok ? '✓' : '⚠';
+      var label = '第' + r.chapter + '章';
+      if (r.score) label += ' ' + r.score + '分';
+      if (r.revisions) label += '·重写' + r.revisions;
+      var title = ok ? '已通过审核' : '未过审，已转人工复核';
+      return '<span title="' + title + '" style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:0.72rem;color:' + color + ';border:1px solid ' + color + '">' + icon + ' ' + escapeHtml(label) + '</span>';
+    }).join('');
+
+    el.innerHTML = '<div style="font-size:0.82rem;font-weight:600;margin-bottom:0.2rem">📖 ' + escapeHtml(header) + '</div>'
+      + bar
+      + (chips ? '<div style="display:flex;flex-wrap:wrap;gap:0.35rem;margin-top:0.35rem">' + chips + '</div>' : '');
   }
 
   // ── 创作准备 ──
