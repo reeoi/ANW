@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import shutil
 import threading
 import time
 from datetime import datetime
@@ -24,6 +25,7 @@ from generator.long_novel.db import (
     list_books,
     list_chapters,
     list_volumes,
+    normalize_saved_chapter_statuses,
     update_book,
     upsert_chapter,
     upsert_volume,
@@ -57,6 +59,8 @@ _EXPAND_AUTO_SKIP_WORDS = 3000
 # ── Cancel tokens for book operations ──────────────────────────────────
 _cancel_tokens: dict[int, bool] = {}
 _cancel_lock = threading.Lock()
+_autopilot_jobs: set[int] = set()
+_autopilot_jobs_lock = threading.Lock()
 _chapter_step_jobs: set[tuple[int, int, str]] = set()
 _chapter_step_jobs_lock = threading.Lock()
 _CHAPTER_STEP_STALE_SECONDS = 60 * 60 * 2
@@ -72,6 +76,19 @@ def _set_cancel(book_id: int, value: bool) -> None:
         _cancel_tokens[book_id] = value
 
 
+def _autopilot_job_active(book_id: int) -> bool:
+    with _autopilot_jobs_lock:
+        return int(book_id) in _autopilot_jobs
+
+
+def _autopilot_job_mark(book_id: int, active: bool) -> None:
+    with _autopilot_jobs_lock:
+        if active:
+            _autopilot_jobs.add(int(book_id))
+        else:
+            _autopilot_jobs.discard(int(book_id))
+
+
 def _db_path() -> Path:
     config = load_from_environment()
     return initialize_database(config) or Path("data/anp.sqlite3")
@@ -80,6 +97,46 @@ def _db_path() -> Path:
 def _project_root() -> Path:
     config = load_from_environment()
     return Path(str(config.data.get("runtime", {}).get("project_root") or ".")).resolve()
+
+
+def _deepseek_client(book: dict[str, Any] | None = None) -> Any:
+    """Create a client and bind long-novel usage records to the current book."""
+    from generator.api_client import DeepSeekClient
+
+    client = DeepSeekClient(load_from_environment())
+    if book:
+        client.set_usage_context(
+            work_type="long_novel",
+            work_id=int(book["id"]),
+            work_title=str(book.get("title") or ""),
+        )
+    return client
+
+
+def _upsert_chapter_preserving(
+    db_path: Path,
+    chapter: dict[str, Any],
+    **changes: Any,
+) -> None:
+    """Update one chapter without clearing metadata omitted by the caller."""
+    values = {
+        "title": str(chapter.get("title") or ""),
+        "status": str(chapter.get("status") or "outline_only"),
+        "target_words": int(chapter.get("target_words") or 3000),
+        "actual_words": int(chapter.get("actual_words") or 0),
+        "outline_path": chapter.get("outline_path"),
+        "draft_path": chapter.get("draft_path"),
+        "review_status": chapter.get("review_status"),
+        "ai_review_json": chapter.get("ai_review_json"),
+    }
+    values.update(changes)
+    upsert_chapter(
+        db_path,
+        int(chapter["book_id"]),
+        int(chapter.get("volume_number") or 1),
+        int(chapter["chapter_number"]),
+        **values,
+    )
 
 
 async def _json_payload(request: Request) -> dict[str, Any]:
@@ -609,11 +666,13 @@ async def api_create_book(request: Request) -> dict[str, Any]:
 
 @router.get("/books/{book_id}")
 def api_get_book(book_id: int) -> dict[str, Any]:
-    book = get_book(_db_path(), book_id)
+    db = _db_path()
+    book = get_book(db, book_id)
     if not book:
         raise HTTPException(status_code=404, detail="书籍不存在")
-    volumes = list_volumes(_db_path(), book_id)
-    chapters = list_chapters(_db_path(), book_id)
+    normalize_saved_chapter_statuses(db, book_id)
+    volumes = list_volumes(db, book_id)
+    chapters = list_chapters(db, book_id)
     book["volumes"] = volumes
     book["chapters"] = chapters
     book["total_words"] = sum(c.get("actual_words", 0) for c in chapters)
@@ -837,9 +896,7 @@ async def api_suggest_books(request: Request) -> dict[str, Any]:
     target_type = str(payload.get("type") or "long")
     count = int(payload.get("count") or 5)
 
-    from generator.api_client import DeepSeekClient
-    config = load_from_environment()
-    client = DeepSeekClient(config)
+    client = _deepseek_client()
 
     suggestions = suggest_books(client, target_type=target_type, count=count)
     return {"ok": True, "suggestions": suggestions, "count": len(suggestions)}
@@ -930,10 +987,7 @@ async def api_regenerate_artifact(book_id: int, request: Request) -> dict[str, A
     if not str(safe_path).startswith(str(work_dir)):
         raise HTTPException(status_code=403, detail="路径不允许")
 
-    from generator.api_client import DeepSeekClient
-
-    config = load_from_environment()
-    client = DeepSeekClient(config)
+    client = _deepseek_client(book)
     existing = safe_path.read_text(encoding="utf-8")[:4000] if safe_path.exists() else ""
 
     context_parts = []
@@ -1072,6 +1126,104 @@ def _autopilot_chapters_to_write(db: Path, book_id: int, count: int) -> list[int
     return pending[: max(0, count)]
 
 
+def _autopilot_chapters_to_write_range(db: Path, book_id: int, start: int, end: int) -> list[int]:
+    """Return an explicit contiguous draft range, refusing to skip earlier gaps."""
+    start = int(start)
+    end = int(end)
+    if start < 1 or end < 1:
+        raise HTTPException(status_code=400, detail="正文起止章必须大于 0")
+    if end < start:
+        raise HTTPException(status_code=400, detail="正文结束章不能小于起始章")
+
+    chapters = sorted(list_chapters(db, book_id), key=lambda c: int(c.get("chapter_number") or 0))
+    if not chapters:
+        raise HTTPException(status_code=400, detail="章节队列还没有生成，请先完成章节细纲并入库")
+
+    by_number = {int(c.get("chapter_number") or 0): c for c in chapters}
+    pending = [
+        int(c["chapter_number"])
+        for c in chapters
+        if not c.get("draft_path")
+    ]
+    if not pending:
+        raise HTTPException(status_code=400, detail="所有章节已有正文")
+
+    earliest = pending[0]
+    if start != earliest:
+        raise HTTPException(
+            status_code=400,
+            detail=f"需要从第{earliest}章开始连续写，不能跳到第{start}章，否则追踪/伏笔会断。",
+        )
+
+    for chapter_number in range(start, end + 1):
+        chapter = by_number.get(chapter_number)
+        if not chapter:
+            raise HTTPException(status_code=400, detail=f"章节队列缺少第{chapter_number}章，请先生成章节细纲并入库")
+        if chapter.get("draft_path"):
+            raise HTTPException(status_code=400, detail=f"第{chapter_number}章已有正文，请从最早未写章节连续生成")
+
+    return list(range(start, end + 1))
+
+
+_REVIEW_DIM_LABELS = {
+    "continuity": "连续性",
+    "logic": "逻辑",
+    "plot_progress": "剧情推进",
+    "character_integrity": "人物一致性",
+    "environment": "环境/设定",
+    "empathy": "共情",
+    "architecture": "故事架构",
+    "characters": "角色对话",
+    "writing_quality": "文字质量",
+    "consistency": "事实一致性",
+}
+
+
+def _short_review_text(value: Any, *, limit: int = 90) -> str:
+    text = str(value or "").strip().replace("\n", " ")
+    return text[:limit] + ("..." if len(text) > limit else "")
+
+
+def _review_blocking_reasons(review: dict[str, Any], *, limit: int = 3) -> list[str]:
+    """Return concise reasons explaining why review/rewrite is blocked."""
+    reasons: list[str] = []
+    dims = review.get("dimensions") if isinstance(review, dict) else {}
+    if isinstance(dims, dict):
+        for key, dim in dims.items():
+            if not isinstance(dim, dict):
+                continue
+            verdict = str(dim.get("verdict") or "").upper()
+            score = int(dim.get("score") or 0)
+            pass_score = int(dim.get("pass_score") or review.get("pass_score") or 80)
+            passed = bool(dim.get("passed"))
+            if passed and verdict == "APPROVE" and score >= pass_score:
+                continue
+            label = _REVIEW_DIM_LABELS.get(str(key), str(key))
+            detail = ""
+            for item in (dim.get("findings") or []) + (dim.get("recommendations") or []):
+                detail = _short_review_text(item)
+                if detail:
+                    break
+            score_text = f"{score}/{pass_score}" if score else f"{verdict or '未通过'}"
+            reasons.append(f"{label}{score_text}：{detail or (verdict or '未通过')}")
+            if len(reasons) >= limit:
+                return reasons
+
+    for item in review.get("recommendations") or []:
+        detail = _short_review_text(item)
+        if detail:
+            reasons.append(detail)
+        if len(reasons) >= limit:
+            return reasons
+
+    summary = _short_review_text(review.get("summary") or review.get("overall") or "审查未通过")
+    return reasons or [summary]
+
+
+def _review_rewrite_reason(review: dict[str, Any]) -> str:
+    return "；".join(_review_blocking_reasons(review))
+
+
 def _autopilot_write_one_chapter(
     client: Any,
     db: Path,
@@ -1081,29 +1233,23 @@ def _autopilot_write_one_chapter(
     chapter_number: int,
     report: Callable[..., None],
     *,
-    max_revisions: int = 3,
+    max_revisions: int = 0,
 ) -> dict[str, Any]:
-    """Write → review → (revise ≤ ``max_revisions``) → persist one chapter.
+    """Write → review once for reference → persist one chapter.
 
-    Mirrors the manual write+review+revise workbench flow, but unattended:
+    Mirrors the manual write workbench flow, but unattended:
 
     1. ``run_full_chapter`` produces 正文.md and refreshes the tracking memory.
-    2. ``run_story_review`` scores it against the six-dimension gate.
-    3. While it has not passed and revisions remain, ``revise_chapter_once``
-       rewrites against the findings; each revision re-saves the chapter text
-       and refreshes the tracking memory from the newest version.
+    2. ``run_story_review`` scores it against the six-dimension gate for display.
 
-    The draft and tracking memory are always persisted — even when the gate
-    never passes — so the next chapter keeps continuity. A chapter still failing
-    after ``max_revisions`` is flagged ``needs_human`` (its draft is kept). The
-    upsert carries the chapter's existing title/outline_path through so the
-    status change does not wipe them.
+    The score is advisory: it never triggers an automatic rewrite and never
+    blocks the next chapter. ``max_revisions`` remains in the signature only for
+    backward compatibility with older callers. The upsert carries the chapter's
+    existing title/outline_path through so the status change does not wipe them.
     """
     from generator.long_novel.l2_chapter_write import (
         count_chinese_chars,
-        revise_chapter_once,
         run_full_chapter,
-        update_tracking_files,
     )
     from generator.long_novel.l4_review import run_story_review
 
@@ -1112,6 +1258,12 @@ def _autopilot_write_one_chapter(
     volume_number = int(ch.get("volume_number") or 1)
     target_words = int(ch.get("target_words") or book.get("target_words_per_chapter") or 3000)
     outline_text = _outline_for_chapter(ch)
+
+    def _report(status: str, detail: str = "", revisions: int = 0, **extra: Any) -> None:
+        try:
+            report(status, detail, revisions, **extra)
+        except TypeError:
+            report(status, detail, revisions)
 
     # Mark writing without clobbering existing metadata (upsert overwrites all columns).
     upsert_chapter(
@@ -1123,29 +1275,16 @@ def _autopilot_write_one_chapter(
     )
     update_book(db, book_id, current_chapter=chapter_number)
 
-    report("drafting", f"第{chapter_number}章 初稿/扩写/润色/去AI…")
+    _report("drafting", f"第{chapter_number}章 初稿/扩写/润色/去AI…")
     result = run_full_chapter(client, work_dir, chapter_number, chapter_title, target_words)
     draft_path = Path(result["draft_path"])
     text = draft_path.read_text(encoding="utf-8") if draft_path.exists() else ""
 
-    report("reviewing", f"第{chapter_number}章 审核中…")
+    _report("reviewing", f"第{chapter_number}章 审核中…")
     review = run_story_review(client, text, work_dir, chapter_number, outline_text)
-
     revisions = 0
-    while not review.get("passed") and revisions < max_revisions:
-        revisions += 1
-        report("revising", f"第{chapter_number}章 第{revisions}次重写…", revisions)
-        text, review = revise_chapter_once(
-            client, work_dir, chapter_number, review,
-            source_text=text, outline=outline_text,
-        )
-        # Persist the improved text and refresh tracking from the newest version.
-        draft_path.write_text(text, encoding="utf-8")
-        update_tracking_files(work_dir, chapter_number, text, client)
-
     final_words = count_chinese_chars(text)
-    passed = bool(review.get("passed"))
-    status = "draft" if passed else "needs_human"
+    reason = "" if review.get("passed") else _review_rewrite_reason(review)
     review_json = json.dumps(review, ensure_ascii=False)
 
     # Persist the review next to the chapter for parity with the manual flow.
@@ -1155,7 +1294,7 @@ def _autopilot_write_one_chapter(
 
     upsert_chapter(
         db, book_id, volume_number, chapter_number,
-        title=chapter_title, status=status, target_words=target_words,
+        title=chapter_title, status="draft", target_words=target_words,
         actual_words=final_words,
         outline_path=ch.get("outline_path"), draft_path=str(draft_path),
         review_status=str(review.get("overall") or "CONCERNS"),
@@ -1164,11 +1303,14 @@ def _autopilot_write_one_chapter(
 
     return {
         "chapter": chapter_number,
-        "status": "passed" if passed else "needs_human",
+        "status": "passed",
         "words": final_words,
         "score": int(review.get("score") or 0),
         "review_overall": str(review.get("overall") or ""),
         "revisions": revisions,
+        "reason": reason,
+        "review_reference_only": True,
+        "review_summary": str(review.get("summary") or ""),
     }
 
 
@@ -1203,7 +1345,6 @@ async def api_start_setup_phase(book_id: int, phase: str, request: Request) -> d
     _set_cancel(book_id, False)
 
     def _run():
-        from generator.api_client import DeepSeekClient
         from generator.long_novel.l0_book_setup import (
             run_l0_book_outline,
             run_l0_chapter_outlines,
@@ -1214,8 +1355,7 @@ async def api_start_setup_phase(book_id: int, phase: str, request: Request) -> d
             run_l0_volume_outline,
             run_l0_world,
         )
-        config = load_from_environment()
-        client = DeepSeekClient(config)
+        client = _deepseek_client(book)
 
         def _cancelled() -> bool:
             if _is_cancelled(book_id):
@@ -1342,8 +1482,12 @@ def api_setup_phase_status(book_id: int, phase: str) -> dict[str, Any]:
     book = get_book(_db_path(), book_id)
     if not book:
         raise HTTPException(status_code=404, detail="书籍不存在")
-    progress_file = setup_file_read(Path(book["work_dir"]), f"_setup_{phase}.json")
+    work_dir = Path(book["work_dir"])
+    progress_file = setup_file_read(work_dir, f"_setup_{phase}.json")
     if not progress_file.exists():
+        inferred = _inferred_setup_phase_status(work_dir, phase)
+        if inferred is not None:
+            return {"ok": True, **inferred}
         return {"ok": True, "status": "pending", "detail": "尚未开始"}
     import json as _json_lib
     import time as _time
@@ -1364,6 +1508,29 @@ def api_setup_phase_status(book_id: int, phase: str) -> dict[str, Any]:
             "updated_at": data.get("updated_at", "")}
 
 
+def _inferred_setup_phase_status(work_dir: Path, phase: str) -> dict[str, Any] | None:
+    """Infer setup status for autopilot and legacy books without phase files."""
+    from generator.long_novel.autopilot import l0_phase_done, read_autopilot_file
+
+    autopilot = read_autopilot_file(work_dir) or {}
+    completed = {str(item) for item in (autopilot.get("completed") or [])}
+    if phase in completed:
+        return {
+            "status": "done",
+            "detail": "全自动生成已完成",
+            "updated_at": str(autopilot.get("updated_at") or ""),
+        }
+    if autopilot.get("state") == "running" and autopilot.get("stage") == phase:
+        return {
+            "status": "running",
+            "detail": str(autopilot.get("detail") or "全自动生成中"),
+            "updated_at": str(autopilot.get("updated_at") or ""),
+        }
+    if phase != "finalize" and l0_phase_done(work_dir, phase):
+        return {"status": "done", "detail": "检测到已有产物", "updated_at": ""}
+    return None
+
+
 # ── Autopilot: run the whole open-book pipeline in one background job ──
 
 
@@ -1371,11 +1538,11 @@ def api_setup_phase_status(book_id: int, phase: str) -> dict[str, Any]:
 async def api_autopilot_start(book_id: int, request: Request) -> dict[str, Any]:
     """Run 设定 → 大纲 → 入库 →〔正文 × N〕as one background job.
 
-    Body: ``{"additional_prompt": "...", "chapter_count": N, "max_revisions": 3}``.
+    Body: ``{"additional_prompt": "...", "chapter_count": N, "chapter_start": 1, "chapter_end": 3}``.
     When ``chapter_count > 0`` the job continues past 入库 into the 正文 autopilot:
     it writes the next ``chapter_count`` unwritten chapters, each run_full_chapter
-    → 审核 → 失败重写 ≤ ``max_revisions`` 次 → 仍不过标记 needs_human（仍更新追踪/
-    伏笔/进度）→ 下一章. Everything streams to the same ``/autopilot/status`` /
+    → 审核评分（仅供参考）→ 保存成稿并更新追踪/伏笔/进度 → 下一章.
+    Everything streams to the same ``/autopilot/status`` /
     monitor panel. ``POST /cancel`` stops after the current stage or chapter.
     Stages and chapters already complete are skipped, so re-running resumes an
     interrupted book (and writing more chapters later just adds to it).
@@ -1383,18 +1550,38 @@ async def api_autopilot_start(book_id: int, request: Request) -> dict[str, Any]:
     book = get_book(_db_path(), book_id)
     if not book:
         raise HTTPException(status_code=404, detail="书籍不存在")
+    if _autopilot_job_active(book_id):
+        raise HTTPException(status_code=409, detail="该书的全自动生成任务仍在运行")
 
     payload = await _json_payload(request)
     additional_prompt = str(payload.get("additional_prompt") or "").strip()
-    chapter_count = max(0, int(payload.get("chapter_count") or 0))
-    max_revisions = max(0, int(payload.get("max_revisions") or 3))
+    range_start_raw = payload.get("chapter_start")
+    range_end_raw = payload.get("chapter_end")
+    has_chapter_range = range_start_raw not in (None, "") or range_end_raw not in (None, "")
+    chapter_range: tuple[int, int] | None = None
+    if has_chapter_range:
+        if range_start_raw in (None, "") or range_end_raw in (None, ""):
+            raise HTTPException(status_code=400, detail="正文范围需要同时填写起始章和结束章")
+        try:
+            chapter_start = int(range_start_raw)
+            chapter_end = int(range_end_raw)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="正文范围必须是章节数字") from None
+        if chapter_start < 1 or chapter_end < chapter_start:
+            raise HTTPException(status_code=400, detail="正文范围无效")
+        chapter_range = (chapter_start, chapter_end)
+        chapter_count = chapter_end - chapter_start + 1
+        if list_chapters(_db_path(), book_id):
+            _autopilot_chapters_to_write_range(_db_path(), book_id, chapter_start, chapter_end)
+    else:
+        chapter_count = max(0, int(payload.get("chapter_count") or 0))
+    max_revisions = 0
 
     work_dir = Path(book["work_dir"])
     work_dir.mkdir(parents=True, exist_ok=True)
     _set_cancel(book_id, False)
 
     def _run() -> None:
-        from generator.api_client import DeepSeekClient
         from generator.long_novel.autopilot import (
             AutopilotStage,
             build_l0_stages,
@@ -1404,8 +1591,7 @@ async def api_autopilot_start(book_id: int, request: Request) -> dict[str, Any]:
         )
 
         try:
-            config = load_from_environment()
-            client = DeepSeekClient(config)
+            client = _deepseek_client(book)
             stages = build_l0_stages(
                 client, work_dir,
                 title=book["title"], genre=book["genre"], premise=book.get("premise", ""),
@@ -1439,7 +1625,10 @@ async def api_autopilot_start(book_id: int, request: Request) -> dict[str, Any]:
             db = _db_path()
             fresh_book = get_book(db, book_id) or book
             setup_completed = [s.phase for s in stages]
-            chapter_numbers = _autopilot_chapters_to_write(db, book_id, chapter_count)
+            if chapter_range:
+                chapter_numbers = _autopilot_chapters_to_write_range(db, book_id, chapter_range[0], chapter_range[1])
+            else:
+                chapter_numbers = _autopilot_chapters_to_write(db, book_id, chapter_count)
 
             def _write_one(ch_num: int, report: Callable[..., None]) -> dict[str, Any]:
                 return _autopilot_write_one_chapter(
@@ -1461,36 +1650,136 @@ async def api_autopilot_start(book_id: int, request: Request) -> dict[str, Any]:
                 "updated_at": datetime.now().strftime("%H:%M:%S"),
             })
             logger.exception("autopilot failed for book %s", book_id)
+        finally:
+            _autopilot_job_mark(book_id, False)
 
     from generator.long_novel.autopilot import write_autopilot_file
     write_autopilot_file(work_dir, {
         "state": "running", "stage": "", "detail": "启动中...", "total": 0,
         "updated_at": datetime.now().strftime("%H:%M:%S"),
     })
-    threading.Thread(target=_run, daemon=True).start()
+    _autopilot_job_mark(book_id, True)
+    try:
+        threading.Thread(target=_run, daemon=True).start()
+    except Exception:
+        _autopilot_job_mark(book_id, False)
+        raise
     msg = "autopilot 已启动"
     if chapter_count > 0:
-        msg = f"autopilot 已启动（设定 + 正文 {chapter_count} 章）"
-    return {"ok": True, "message": msg, "chapter_count": chapter_count}
+        if chapter_range:
+            msg = f"autopilot 已启动（设定 + 正文 第{chapter_range[0]}-{chapter_range[1]}章）"
+        else:
+            msg = f"autopilot 已启动（设定 + 正文 {chapter_count} 章）"
+    return {"ok": True, "message": msg, "chapter_count": chapter_count, "chapter_range": chapter_range}
 
 
 @router.get("/books/{book_id}/autopilot/status")
 def api_autopilot_status(book_id: int) -> dict[str, Any]:
     """Poll autopilot progress. Flags a dead worker (>5 min without update)."""
-    book = get_book(_db_path(), book_id)
+    db = _db_path()
+    book = get_book(db, book_id)
     if not book:
         raise HTTPException(status_code=404, detail="书籍不存在")
-    from generator.long_novel.autopilot import AUTOPILOT_FILE, read_autopilot_file
+    normalize_saved_chapter_statuses(db, book_id)
+    from generator.long_novel.autopilot import AUTOPILOT_FILE, read_autopilot_file, write_autopilot_file
 
-    data = read_autopilot_file(Path(book["work_dir"]))
+    work_dir = Path(book["work_dir"])
+    data = read_autopilot_file(work_dir)
     if not data:
         return {"ok": True, "state": "idle"}
-    if data.get("state") == "running":
-        progress_file = setup_file_read(Path(book["work_dir"]), AUTOPILOT_FILE)
+    if data.get("state") == "running" and not _autopilot_job_active(book_id):
+        progress_file = setup_file_read(work_dir, AUTOPILOT_FILE)
         if progress_file.exists() and (time.time() - progress_file.stat().st_mtime) > 300:
             data["state"] = "cancelled"
             data["detail"] = "进程中断（服务重启或超时），可重新开始"
+            data["updated_at"] = datetime.now().strftime("%H:%M:%S")
+            write_autopilot_file(work_dir, data)
+    data = _sync_paused_autopilot_snapshot(book_id, work_dir, data)
+    data = _normalize_reference_only_writing_snapshot(data)
     return {"ok": True, **data}
+
+
+def _normalize_reference_only_writing_snapshot(data: dict[str, Any]) -> dict[str, Any]:
+    """Hide legacy score-gate retries now that chapter scores are advisory."""
+    writing = data.get("writing")
+    if not isinstance(writing, dict):
+        return data
+
+    normalized = dict(data)
+    normalized_writing = dict(writing)
+    results = []
+    for result in writing.get("results") or []:
+        item = dict(result)
+        if item.get("status") == "needs_human":
+            item["status"] = "passed"
+        item["revisions"] = 0
+        results.append(item)
+    normalized_writing["results"] = results
+    normalized_writing["needs_human"] = []
+    normalized_writing["current_revisions"] = 0
+    if normalized_writing.get("current_status") == "needs_human":
+        normalized_writing["current_status"] = "passed"
+    if normalized.get("state") == "done":
+        normalized["detail"] = f"正文写作完成：共 {int(normalized_writing.get('total') or 0)} 章"
+    normalized["writing"] = normalized_writing
+    return normalized
+
+
+def _sync_paused_autopilot_snapshot(book_id: int, work_dir: Path, data: dict[str, Any]) -> dict[str, Any]:
+    """Merge manually completed setup phases into a paused autopilot snapshot."""
+    if _autopilot_job_active(book_id) or data.get("state") not in {"cancelled", "error"}:
+        return data
+
+    from generator.long_novel.autopilot import write_autopilot_file
+
+    stages = [
+        ("premise", "题材定位"),
+        ("world", "世界观"),
+        ("characters", "角色设计"),
+        ("factions", "势力"),
+        ("relations", "关系"),
+        ("outline", "全书大纲"),
+        ("volume_outline", "卷纲"),
+        ("chapter_outlines", "章节细纲"),
+        ("finalize", "入库"),
+    ]
+    completed = {str(phase) for phase in (data.get("completed") or [])}
+    for phase, _label in stages:
+        progress_file = setup_file_read(work_dir, f"_setup_{phase}.json")
+        if not progress_file.exists():
+            continue
+        try:
+            progress = json.loads(progress_file.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if progress.get("status") == "done":
+            completed.add(phase)
+
+    ordered_completed = [phase for phase, _label in stages if phase in completed]
+    next_index = next((index for index, (phase, _label) in enumerate(stages) if phase not in completed), len(stages))
+    next_phase, next_label = stages[next_index] if next_index < len(stages) else ("", "")
+    all_done = next_index == len(stages)
+    if (
+        ordered_completed == list(data.get("completed") or [])
+        and next_phase == str(data.get("stage") or "")
+        and (not all_done or data.get("state") == "done")
+    ):
+        return data
+
+    synced = {
+        **data,
+        "state": "done" if all_done else data.get("state"),
+        "stage": next_phase,
+        "label": next_label,
+        "index": next_index,
+        "total": len(stages),
+        "stage_status": "done" if all_done else "",
+        "detail": "全自动生成完成" if all_done else "已同步手动生成结果，可继续全自动",
+        "completed": ordered_completed,
+        "updated_at": datetime.now().strftime("%H:%M:%S"),
+    }
+    write_autopilot_file(work_dir, synced)
+    return synced
 
 
 @router.post("/books/{book_id}/extend-chapters")
@@ -1561,11 +1850,9 @@ async def api_extend_chapters(book_id: int, request: Request) -> dict[str, Any]:
     def _run() -> None:
         try:
             _write("running", f"正在生成第{old_target + 1}-{new_target}章续写规划与细纲...")
-            from generator.api_client import DeepSeekClient
             from generator.long_novel.l0_book_setup import run_l0_extend_chapter_outlines
 
-            config = load_from_environment()
-            client = DeepSeekClient(config)
+            client = _deepseek_client(book)
             result = run_l0_extend_chapter_outlines(
                 client,
                 work_dir,
@@ -2222,14 +2509,14 @@ def api_setup_pipeline(book_id: int) -> dict[str, Any]:
     import json as _json_lib
 
     phase_meta = [
-        {"id": "premise", "label": "题材定位", "icon": "📌", "output": "设定/题材定位.md"},
-        {"id": "world", "label": "世界观", "icon": "🌍", "output": "设定/世界观/"},
-        {"id": "characters", "label": "角色设计", "icon": "👤", "output": "设定/角色/"},
-        {"id": "factions", "label": "势力", "icon": "🏛️", "output": "设定/势力/"},
-        {"id": "relations", "label": "关系", "icon": "🔗", "output": "设定/关系.md"},
-        {"id": "outline", "label": "全书大纲", "icon": "📋", "output": "大纲/大纲.md"},
-        {"id": "volume_outline", "label": "卷纲", "icon": "📚", "output": "大纲/卷纲_第N卷.md × N"},
-        {"id": "chapter_outlines", "label": "章节细纲", "icon": "📝", "output": "大纲/细纲_第NNN章.md × N"},
+        {"id": "premise", "label": "题材定位", "icon": "", "output": "设定/题材定位.md"},
+        {"id": "world", "label": "世界观", "icon": "", "output": "设定/世界观/"},
+        {"id": "characters", "label": "角色设计", "icon": "", "output": "设定/角色/"},
+        {"id": "factions", "label": "势力", "icon": "", "output": "设定/势力/"},
+        {"id": "relations", "label": "关系", "icon": "", "output": "设定/关系.md"},
+        {"id": "outline", "label": "全书大纲", "icon": "", "output": "大纲/大纲.md"},
+        {"id": "volume_outline", "label": "卷纲", "icon": "", "output": "大纲/卷纲_第N卷.md × N"},
+        {"id": "chapter_outlines", "label": "章节细纲", "icon": "", "output": "大纲/细纲_第NNN章.md × N"},
     ]
 
     phases: list[dict[str, Any]] = []
@@ -2254,14 +2541,14 @@ def api_setup_pipeline(book_id: int) -> dict[str, Any]:
                 1 for _ in setup_glob(work_dir, f"_setup_{ph_id}_*_trace.json")
                 if _.name != trace_path.name
             )
-        # output_exists: dir → 至少有一个 .md；single file → exists；陈年 NNN 模板 → 看第一章
-        if "×" in meta["output"]:
-            out_exists = (work_dir / "大纲" / "细纲_第001章.md").exists()
-        elif meta["output"].endswith("/"):
-            out_dir = work_dir / meta["output"].rstrip("/")
-            out_exists = out_dir.exists() and any(out_dir.glob("*.md"))
-        else:
-            out_exists = (work_dir / meta["output"]).exists()
+        from generator.long_novel.autopilot import l0_phase_done
+        out_exists = l0_phase_done(work_dir, ph_id)
+        if status == "pending":
+            inferred = _inferred_setup_phase_status(work_dir, ph_id)
+            if inferred is not None:
+                status = str(inferred["status"])
+                detail = str(inferred.get("detail") or "")
+                updated_at = str(inferred.get("updated_at") or "")
         phases.append({
             **meta,
             "status": status,
@@ -2378,27 +2665,18 @@ def _api_write_chapter_blocking(book_id: int, chapter_number: int) -> dict[str, 
     if not ch:
         raise HTTPException(status_code=404, detail="章节不存在")
 
-    from generator.api_client import DeepSeekClient
     from generator.long_novel.l2_chapter_write import run_full_chapter
 
-    config = load_from_environment()
-    client = DeepSeekClient(config)
+    client = _deepseek_client(book)
     work_dir = Path(book["work_dir"])
 
-    upsert_chapter(_db_path(), book_id, 1, chapter_number, status="writing")
+    _upsert_chapter_preserving(_db_path(), ch, status="writing")
     update_book(_db_path(), book_id, current_chapter=chapter_number)
 
     result = run_full_chapter(
         client, work_dir, chapter_number,
         chapter_title=ch.get("title", ""),
         target_words=ch.get("target_words", book["target_words_per_chapter"]),
-    )
-
-    upsert_chapter(
-        _db_path(), book_id, 1, chapter_number,
-        status="draft",
-        draft_path=result["draft_path"],
-        actual_words=result["final_words"],
     )
 
     # Auto-run 4-dimension review
@@ -2412,8 +2690,11 @@ def _api_write_chapter_blocking(book_id: int, chapter_number: int) -> dict[str, 
     )
 
     import json as _json
-    upsert_chapter(
-        _db_path(), book_id, 1, chapter_number,
+    _upsert_chapter_preserving(
+        _db_path(), ch,
+        status="draft",
+        draft_path=result["draft_path"],
+        actual_words=result["final_words"],
         review_status=review["overall"],
         ai_review_json=_json.dumps(review, ensure_ascii=False),
     )
@@ -2553,10 +2834,10 @@ def _api_write_chapter_step_blocking(
     if not ch:
         raise HTTPException(status_code=404, detail="章节不存在")
 
-    from generator.api_client import DeepSeekClient
     from generator.long_novel.l2_chapter_write import (
         assemble_context,
         count_chinese_chars,
+        ensure_chapter_heading,
         run_continuity_check,
         run_deslop,
         run_draft,
@@ -2565,8 +2846,7 @@ def _api_write_chapter_step_blocking(
         update_tracking_files,
     )
 
-    config = load_from_environment()
-    client = DeepSeekClient(config)
+    client = _deepseek_client(book)
     work_dir = Path(book["work_dir"])
     target_words = ch.get("target_words", book["target_words_per_chapter"])
     chapter_title = ch.get("title", "")
@@ -2575,7 +2855,7 @@ def _api_write_chapter_step_blocking(
     if step_name == "draft":
         if ch.get("status") not in ("outline_only", "writing"):
             raise HTTPException(status_code=400, detail=f"章节状态 {ch.get('status')} 无法开始写作")
-        upsert_chapter(_db_path(), book_id, 1, chapter_number, status="writing")
+        _upsert_chapter_preserving(_db_path(), ch, status="writing")
         update_book(_db_path(), book_id, current_chapter=chapter_number)
         _archive_step_version(work_dir, chapter_number, chapter_title, "draft")
         draft = run_draft(client, work_dir, chapter_number, chapter_title, target_words)
@@ -2696,7 +2976,7 @@ def _api_write_chapter_step_blocking(
             source = draft_path.read_text(encoding="utf-8")
         else:
             raise HTTPException(status_code=400, detail="请先运行 draft 步骤")
-        final = run_deslop(client, source)
+        final = ensure_chapter_heading(run_deslop(client, source), chapter_number)
         final_words = count_chinese_chars(final)
         deslop_path = _step_file_path(work_dir, chapter_number, chapter_title, "deslop")
         _archive_step_version(work_dir, chapter_number, chapter_title, "deslop")
@@ -2748,12 +3028,17 @@ def _api_write_chapter_step_blocking(
         if not final_text:
             raise HTTPException(status_code=400, detail="请先运行至少一个写作步骤")
 
+        final_text = ensure_chapter_heading(final_text, chapter_number)
         final_words = count_chinese_chars(final_text)
 
         final_draft_path = chapter_final_path(work_dir, chapter_number, chapter_title)
         if final_draft_path.exists():
             backup = final_draft_path.with_suffix(".md.bak")
-            final_draft_path.rename(backup)
+            if backup.exists():
+                backup = final_draft_path.with_name(
+                    f"{final_draft_path.stem}.{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.md.bak"
+                )
+            shutil.copy2(final_draft_path, backup)
         final_draft_path.write_text(final_text, encoding="utf-8")
 
         update_tracking_files(work_dir, chapter_number, final_text, client)
@@ -2769,9 +3054,12 @@ def _api_write_chapter_step_blocking(
             review_path.write_text(json.dumps(review, ensure_ascii=False, indent=2), encoding="utf-8")
 
         upsert_chapter(
-            _db_path(), book_id, 1, chapter_number,
+            _db_path(), book_id, int(ch.get("volume_number") or 1), chapter_number,
+            title=str(ch.get("title") or ""),
             status="draft", draft_path=str(final_draft_path),
+            target_words=int(ch.get("target_words") or book["target_words_per_chapter"]),
             actual_words=final_words,
+            outline_path=ch.get("outline_path"),
             review_status=review.get("overall", "CONCERNS"),
             ai_review_json=json.dumps(review, ensure_ascii=False),
         )
@@ -2919,6 +3207,35 @@ def api_write_chapter_step_output(book_id: int, chapter_number: int, step_name: 
                 "skip": marker_data,
                 "message": message,
                 "threshold": threshold,
+            }
+        if step_name == "review" and ch.get("ai_review_json"):
+            raw = str(ch["ai_review_json"])
+            try:
+                review = json.loads(raw)
+            except Exception:
+                review = {"overall": "CONCERNS", "dimensions": {}, "raw": raw}
+            review = _normalize_review_gate(review, chapter_number)
+            return {
+                "ok": True,
+                "step": "review",
+                "review": review,
+                "force_pass": {},
+                "content": raw,
+                "word_count": count_chinese_chars(raw),
+                "fallback_from_final": True,
+            }
+        final_draft_path = Path(ch["draft_path"]) if ch.get("draft_path") else None
+        if step_name in {"draft", "expand", "polish", "deslop"} and final_draft_path and final_draft_path.exists():
+            content = final_draft_path.read_text(encoding="utf-8")
+            return {
+                "ok": True,
+                "step": step_name,
+                "content": content,
+                "source_before": "",
+                "word_count": count_chinese_chars(content),
+                "target_words": int(ch.get("target_words") or book.get("target_words_per_chapter") or 0),
+                "fallback_from_final": True,
+                "message": "该步骤的中间产物不存在，已显示最终成稿。",
             }
         raise HTTPException(status_code=404, detail="步骤产物不存在")
 
@@ -3116,11 +3433,9 @@ def _api_revise_chapter_step_blocking(
     if not ch:
         raise HTTPException(status_code=404, detail="章节不存在")
 
-    from generator.api_client import DeepSeekClient
-    from generator.long_novel.l2_chapter_write import count_chinese_chars, run_deslop
+    from generator.long_novel.l2_chapter_write import count_chinese_chars, ensure_chapter_heading, run_deslop
 
-    config = load_from_environment()
-    client = DeepSeekClient(config)
+    client = _deepseek_client(book)
     work_dir = Path(book["work_dir"])
     chapter_title = str(ch.get("title") or "")
     extra_prompt = str(payload.get("prompt") or "").strip()
@@ -3146,7 +3461,7 @@ def _api_revise_chapter_step_blocking(
             "source": source,
         })
         revised = _chat_text(client, system, user, thinking=True).strip()
-        revised = run_deslop(client, revised)
+        revised = ensure_chapter_heading(run_deslop(client, revised), chapter_number)
         deslop_path = _step_file_path(work_dir, chapter_number, chapter_title, "deslop")
         _archive_step_version(work_dir, chapter_number, chapter_title, "deslop")
         deslop_path.write_text(revised, encoding="utf-8")
@@ -3211,7 +3526,7 @@ def _api_revise_chapter_step_blocking(
         "source": source,
     })
     revised = _chat_text(client, system, user, thinking=True).strip()
-    revised = run_deslop(client, revised)
+    revised = ensure_chapter_heading(run_deslop(client, revised), chapter_number)
     deslop_path = _step_file_path(work_dir, chapter_number, chapter_title, "deslop")
     if deslop_path.exists():
         deslop_path.with_suffix(".md.bak").write_text(deslop_path.read_text(encoding="utf-8"), encoding="utf-8")
@@ -3372,9 +3687,7 @@ async def api_generate_chapter_title(book_id: int, chapter_number: int) -> dict[
     if not sample_text and not outline:
         raise HTTPException(status_code=400, detail="本章还没有大纲或正文，无法生成标题")
 
-    from generator.api_client import DeepSeekClient
-    config = load_from_environment()
-    client = DeepSeekClient(config)
+    client = _deepseek_client(book)
     system = "你是中文网文资深编辑，根据章节内容拟一个 6 到 14 字、有钩子、不剧透太多的章节小标题。只输出标题文本，不要序号、不要书名号、不要解释。"
     user = f"""书名：{book.get("title", "")}
 题材：{book.get("genre", "")}
@@ -3411,11 +3724,9 @@ async def api_review_chapter(book_id: int, chapter_number: int) -> dict[str, Any
     if not ch or not ch.get("draft_path"):
         raise HTTPException(status_code=400, detail="章节尚未生成正文")
 
-    from generator.api_client import DeepSeekClient
     from generator.long_novel.l4_review import run_full_review
 
-    config = load_from_environment()
-    client = DeepSeekClient(config)
+    client = _deepseek_client(book)
     work_dir = Path(book["work_dir"])
 
     draft_path = Path(ch["draft_path"])
@@ -3426,8 +3737,8 @@ async def api_review_chapter(book_id: int, chapter_number: int) -> dict[str, Any
     review = run_full_review(client, chapter_content, work_dir, chapter_number, outline_text)
 
     import json as _json
-    upsert_chapter(
-        _db_path(), book_id, 1, chapter_number,
+    _upsert_chapter_preserving(
+        _db_path(), ch,
         review_status=review["overall"],
         ai_review_json=_json.dumps(review, ensure_ascii=False),
     )
@@ -3445,34 +3756,46 @@ async def api_rewrite_chapter(book_id: int, chapter_number: int) -> dict[str, An
     if not book:
         raise HTTPException(status_code=404, detail="书籍不存在")
 
-    from generator.api_client import DeepSeekClient
     from generator.long_novel.l2_chapter_write import (
         count_chinese_chars,
+        ensure_chapter_heading,
+        rewrite_chapter_from_source,
         run_continuity_check,
         run_deslop,
         run_polish,
         update_tracking_files,
     )
 
-    config = load_from_environment()
-    client = DeepSeekClient(config)
+    client = _deepseek_client(book)
     work_dir = Path(book["work_dir"])
 
-    # Backup old draft
     ch = get_chapter(_db_path(), book_id, chapter_number)
-    if ch and ch.get("draft_path"):
-        old_path = Path(ch["draft_path"])
-        if old_path.exists():
-            backup = old_path.with_suffix(".md.bak")
-            old_path.rename(backup)
+    if not ch or not ch.get("draft_path"):
+        raise HTTPException(status_code=400, detail="本章尚未生成正文")
+    old_path = Path(ch["draft_path"])
+    if not old_path.exists():
+        raise HTTPException(status_code=400, detail="本章正文文件不存在")
+    source_text = old_path.read_text(encoding="utf-8")
 
-    # Rewrite
-    from generator.long_novel.l2_chapter_write import run_draft, run_expand
-    draft = run_draft(client, work_dir, chapter_number, ch.get("title", "") if ch else "", book["target_words_per_chapter"])
-    if count_chinese_chars(draft) < book["target_words_per_chapter"] * 0.9:
-        draft = run_expand(client, draft, book["target_words_per_chapter"])
+    # Keep the prior text available even if rewriting fails midway.
+    backup = old_path.with_suffix(".md.bak")
+    if backup.exists():
+        backup = old_path.with_name(
+            f"{old_path.stem}.{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.md.bak"
+        )
+    shutil.copy2(old_path, backup)
+
+    # Rewrite this chapter from its own source text. Loading global tracking
+    # here would leak later chapters into rewrites of an earlier chapter.
+    draft = rewrite_chapter_from_source(
+        client,
+        source_text,
+        chapter_number,
+        str(ch.get("title") or ""),
+        _outline_for_chapter(ch),
+    )
     polished = run_polish(client, draft)
-    final = run_deslop(client, polished)
+    final = ensure_chapter_heading(run_deslop(client, polished), chapter_number)
 
     # Save new draft into the per-chapter folder
     draft_path = chapter_final_path(work_dir, chapter_number, ch.get("title", "") if ch else "")
@@ -3495,12 +3818,29 @@ async def api_rewrite_chapter(book_id: int, chapter_number: int) -> dict[str, An
         if ck.get("issue_count", 0) > 0:
             cascade_issues.append({"chapter": cn, "issues": ck["issues"]})
 
-    update_tracking_files(work_dir, chapter_number, final, client)
+    has_later_draft = any(
+        int(c.get("chapter_number") or 0) > chapter_number
+        and c.get("draft_path")
+        and Path(c["draft_path"]).exists()
+        for c in all_chapters
+    )
+    update_tracking_files(
+        work_dir,
+        chapter_number,
+        final,
+        client,
+        advance_current=not has_later_draft,
+    )
 
     upsert_chapter(
-        _db_path(), book_id, 1, chapter_number,
+        _db_path(), book_id, int(ch.get("volume_number") or 1), chapter_number,
+        title=str(ch.get("title") or ""),
         status="draft", draft_path=str(draft_path),
+        target_words=int(ch.get("target_words") or book["target_words_per_chapter"]),
         actual_words=count_chinese_chars(final),
+        outline_path=ch.get("outline_path"),
+        review_status=None,
+        ai_review_json=None,
     )
 
     return {

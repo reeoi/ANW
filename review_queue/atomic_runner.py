@@ -228,7 +228,7 @@ def run_full_atomic_task(
         if gen_status != "generated":
             bus.publish(
                 Severity.WARNING,
-                "⚠️ 生成失败",
+                "生成失败",
                 f"作品 #{sid} 连续 {_GENERATE_MAX_ATTEMPTS} 次生成失败",
                 source="atomic.generate",
                 story_id=sid or None,

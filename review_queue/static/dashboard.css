@@ -3393,6 +3393,46 @@ code { color: var(--amber); }
 /* =============================================================
    LOGS
    ============================================================= */
+.logs-panel { padding: 0; }
+
+.logs-section {
+  border-bottom: 1px solid var(--divider);
+}
+
+.logs-section:last-child { border-bottom: 0; }
+
+.logs-section > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 13px 18px;
+  cursor: pointer;
+  color: var(--text-hi);
+  font-family: var(--font-serif);
+  font-size: 15px;
+  font-weight: 700;
+  list-style: none;
+}
+
+.logs-section > summary::-webkit-details-marker { display: none; }
+
+.logs-section > summary::before {
+  content: "+";
+  width: 14px;
+  color: var(--amber);
+  font-family: var(--font-mono);
+  font-size: 14px;
+}
+
+.logs-section[open] > summary::before { content: "-"; }
+
+.logs-section > summary > span:first-child { margin-right: auto; }
+
+.logs-section-body {
+  padding: 0 18px 14px;
+}
+
 .logs-cost-summary {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -3507,6 +3547,25 @@ code { color: var(--amber); }
   color: var(--amber-hi);
   font-family: var(--font-mono);
 }
+
+.logs-cost-latencycell {
+  min-width: 112px;
+  white-space: nowrap;
+}
+
+.logs-latency-pill {
+  display: inline-block;
+  margin: 0 5px 5px 0;
+  padding: 3px 6px;
+  border-radius: 10px;
+  color: var(--text-hi);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.logs-latency-pill.total { background: rgba(48, 148, 87, 0.22); }
+
+.logs-latency-pill.first-sentence { background: rgba(180, 129, 25, 0.25); }
 
 .logs-cost-empty {
   text-align: center;

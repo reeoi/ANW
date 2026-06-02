@@ -197,6 +197,11 @@ def test_get_generation_masks_api_key(env_setup: dict[str, Path]) -> None:
     assert r["status"] == 200
     body = json.loads(r["body"])
     assert body["has_api_key"] is True
+    assert body["provider"] == "deepseek"
+    assert {p["id"] for p in body["providers"]} >= {"openai", "google", "anthropic", "zhipu", "qwen", "custom"}
+    assert all("model" not in preset and "flash_model" not in preset for preset in body["providers"])
+    assert body["protocol"] == "openai"
+    assert "flash_model" in body
     assert "model" in body
     assert "base_url" in body
     # api_key_masked 已移除，不应出现在响应中
@@ -226,7 +231,28 @@ def test_post_generation_writes_real_key(env_setup: dict[str, Path]) -> None:
     )
     assert r["status"] == 200
     env_text = env_setup["env"].read_text(encoding="utf-8")
+    assert "LLM_API_KEY=sk-fresh-9999" in env_text
     assert "DEEPSEEK_API_KEY=sk-fresh-9999" in env_text
+
+
+def test_post_generation_writes_provider_and_generic_llm_fields(env_setup: dict[str, Path]) -> None:
+    r = _request(
+        "POST",
+        "/api/settings/generation",
+        json_body={
+            "provider": "qwen",
+            "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "model": "qwen-plus",
+            "flash_model": "qwen-turbo",
+        },
+    )
+    assert r["status"] == 200
+    env_text = env_setup["env"].read_text(encoding="utf-8")
+    assert "LLM_PROVIDER=qwen" in env_text
+    assert "LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1" in env_text
+    assert "LLM_MODEL=qwen-plus" in env_text
+    assert "LLM_FLASH_MODEL=qwen-turbo" in env_text
+    assert "DEEPSEEK_FLASH_MODEL=qwen-turbo" in env_text
 
 
 def test_generation_test_handles_empty_key(env_setup: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
@@ -263,8 +289,76 @@ def test_generation_test_calls_httpx(env_setup: dict[str, Path], monkeypatch: py
     assert r["status"] == 200
     body = json.loads(r["body"])
     assert body["ok"] is True
+    assert captured["url"] == "https://example.test/chat/completions"
     assert captured["headers"]["Authorization"] == "Bearer sk-newtest-xxx"
     assert captured["json"]["model"] == "deepseek-v4-pro"
+
+
+def test_generation_test_uses_anthropic_messages_endpoint(env_setup: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, Any] = {}
+
+    class FakeResp:
+        status_code = 200
+        text = ""
+
+    def fake_post(url: str, **kwargs: Any) -> FakeResp:
+        captured["url"] = url
+        captured["headers"] = kwargs.get("headers")
+        captured["json"] = kwargs.get("json")
+        return FakeResp()
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    r = _request(
+        "POST",
+        "/api/settings/generation/test",
+        json_body={
+            "provider": "anthropic",
+            "api_key": "sk-ant-test",
+            "base_url": "https://api.anthropic.com/v1",
+            "model": "claude-3-5-sonnet-latest",
+        },
+    )
+    assert r["status"] == 200
+    assert json.loads(r["body"])["ok"] is True
+    assert captured["url"] == "https://api.anthropic.com/v1/messages"
+    assert captured["headers"]["x-api-key"] == "sk-ant-test"
+    assert captured["json"]["max_tokens"] == 1
+
+
+def test_generation_test_custom_provider_can_use_anthropic_protocol(
+    env_setup: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: dict[str, Any] = {}
+
+    class FakeResp:
+        status_code = 200
+        text = ""
+
+    def fake_post(url: str, **kwargs: Any) -> FakeResp:
+        captured["url"] = url
+        captured["headers"] = kwargs.get("headers")
+        return FakeResp()
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    r = _request(
+        "POST",
+        "/api/settings/generation/test",
+        json_body={
+            "provider": "custom",
+            "protocol": "anthropic",
+            "api_key": "relay-key",
+            "base_url": "https://relay.example/v1/messages",
+            "model": "relay-claude",
+        },
+    )
+    assert r["status"] == 200
+    assert json.loads(r["body"])["ok"] is True
+    assert captured["url"] == "https://relay.example/v1/messages"
+    assert captured["headers"]["x-api-key"] == "relay-key"
 
 
 # ============================================================================

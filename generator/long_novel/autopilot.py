@@ -212,6 +212,7 @@ def _writing_progress(
     current: int = 0,
     current_status: str = "",
     current_revisions: int = 0,
+    current_detail: dict[str, Any] | None = None,
     detail: str = "",
     failed_at: int | None = None,
 ) -> dict[str, Any]:
@@ -238,6 +239,7 @@ def _writing_progress(
             "current": current,
             "current_status": current_status,  # writing | reviewing | revising | passed | needs_human | error
             "current_revisions": current_revisions,
+            "current_detail": dict(current_detail or {}),
             "needs_human": [r.get("chapter") for r in results if r.get("status") == "needs_human"],
             "results": list(results),
         },
@@ -283,7 +285,13 @@ def run_chapter_loop(
             write_progress(snapshot)
             return snapshot
 
-        def report(status: str, detail: str = "", revisions: int = 0, _ch: int = ch_num) -> None:
+        def report(
+            status: str,
+            detail: str = "",
+            revisions: int = 0,
+            _ch: int = ch_num,
+            **extra: Any,
+        ) -> None:
             write_progress(
                 _writing_progress(
                     "running",
@@ -294,6 +302,7 @@ def run_chapter_loop(
                     current=_ch,
                     current_status=status,
                     current_revisions=revisions,
+                    current_detail=extra,
                     detail=detail or f"第{_ch}章 {status}",
                 )
             )
@@ -319,6 +328,13 @@ def run_chapter_loop(
 
         results.append(result)
         status = str(result.get("status") or "passed")
+        reason = str(result.get("reason") or "").strip()
+        if status == "passed":
+            detail = f"第{ch_num}章已通过"
+        elif reason:
+            detail = f"第{ch_num}章重写{int(result.get('revisions') or 0)}次仍未通过，需人工：{reason}"
+        else:
+            detail = f"第{ch_num}章需人工复核"
         write_progress(
             _writing_progress(
                 "running",
@@ -329,7 +345,8 @@ def run_chapter_loop(
                 current=ch_num,
                 current_status=status,
                 current_revisions=int(result.get("revisions") or 0),
-                detail=f"第{ch_num}章{'已通过' if status == 'passed' else '需人工复核'}",
+                current_detail={"reason": reason} if reason else None,
+                detail=detail,
             )
         )
 

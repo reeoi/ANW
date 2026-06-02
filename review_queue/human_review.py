@@ -29,14 +29,13 @@ from review_queue.db import (
     get_database_path,
     get_story,
     initialize_database,
-    list_pipeline_cost_logs,
     list_phase_transitions,
     list_reviewable_stories,
     story_from_row,
     update_story_metadata,
     update_story_status,
 )
-from review_queue.metrics import query_overview, record_pipeline_event
+from review_queue.metrics import list_api_usage_logs, query_overview, record_pipeline_event
 from review_queue.models import Story
 from review_queue.phase_progress import (
     PhaseAttempt,
@@ -738,7 +737,7 @@ def api_logs(max_lines: int = 120) -> dict[str, Any]:
 def api_log_costs(limit: int = 80) -> dict[str, Any]:
     config = _load_config()
     db_path = _database_path(config)
-    rows = list_pipeline_cost_logs(db_path, limit=max(10, min(limit, 200)))
+    rows = list_api_usage_logs(db_path, limit=max(10, min(limit, 200)))
     count = len(rows)
     total_cost = round(sum(float(row.get("cost_cny") or 0.0) for row in rows), 4)
     avg_cost = round((total_cost / count), 4) if count else 0.0

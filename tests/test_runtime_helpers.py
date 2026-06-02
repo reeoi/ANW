@@ -126,6 +126,25 @@ def test_recent_log_lines_tail(tmp_path: Path) -> None:
     assert lines == ["c", "d", "e"]
 
 
+def test_recent_log_lines_returns_timestamped_blocks_newest_first(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    log_file = Path(str(tmp_path / "anp.log"))
+    log_file.write_text(
+        "2026-06-01 10:00:00,000 INFO first\n"
+        "2026-06-01 10:00:01,000 ERROR second\n"
+        "traceback detail\n"
+        "2026-06-01 10:00:02,000 INFO third\n",
+        encoding="utf-8",
+    )
+    _, lines = runtime_helpers.recent_log_lines(config, max_lines=10)
+    assert lines == [
+        "2026-06-01 10:00:02,000 INFO third",
+        "2026-06-01 10:00:01,000 ERROR second",
+        "traceback detail",
+        "2026-06-01 10:00:00,000 INFO first",
+    ]
+
+
 # ============================================================ count_stories_by_status
 
 

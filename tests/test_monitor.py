@@ -11,11 +11,13 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from config_loader import LoadedConfig
+from generator.long_novel import db as ln_db
 from review_queue.db import initialize_database, insert_story
 from review_queue.human_review import app
 from review_queue.metrics import (
     ensure_metrics_schema,
     estimate_cost_cny,
+    list_api_usage_logs,
     query_overview,
     record_api_usage,
     record_pipeline_event,
@@ -38,9 +40,16 @@ def test_metrics_helpers_round_trip(tmp_path: Path) -> None:
         provider="deepseek",
         model="deepseek-chat",
         purpose="generate",
+        work_type="long_novel",
+        work_id=7,
+        work_title="测试长篇",
         prompt_tokens=1000,
         completion_tokens=500,
+        cached_tokens=250,
         cost_cny=estimate_cost_cny(1000, 500),
+        duration_seconds=12.4,
+        first_byte_seconds=3.2,
+        first_sentence_seconds=4.6,
     )
     record_pipeline_event(db_path, kind="generate", status="success", story_id=1, message="hello")
 
@@ -50,6 +59,62 @@ def test_metrics_helpers_round_trip(tmp_path: Path) -> None:
     assert overview["usage"]["d1"]["cost_cny"] > 0
     assert overview["events"]["d1"]["generate"]["success"] == 1
     assert any(event["kind"] == "generate" for event in overview["recent_events"])
+    rows = list_api_usage_logs(db_path)
+    assert rows[0]["phase"] == "generate"
+    assert rows[0]["cached_tokens"] == 250
+    assert rows[0]["duration_seconds"] == 12.4
+    assert rows[0]["first_byte_seconds"] == 3.2
+    assert rows[0]["first_sentence_seconds"] == 4.6
+    assert rows[0]["work_title"] == "测试长篇"
+    assert rows[0]["book_id"] == 7
+
+
+def test_api_usage_legacy_long_novel_row_infers_the_only_book(tmp_path: Path) -> None:
+    db_path = _prepare_db(tmp_path)
+    ln_db.initialize_long_novel_tables(db_path)
+    book_id = ln_db.create_book(db_path, "唯一长篇")
+    record_api_usage(
+        db_path,
+        provider="deepseek",
+        model="deepseek-v4-flash",
+        purpose="long_novel_factions",
+        prompt_tokens=100,
+        completion_tokens=200,
+    )
+
+    row = list_api_usage_logs(db_path)[0]
+
+    assert row["work_type"] == "long_novel"
+    assert row["book_id"] == book_id
+    assert row["book_title"] == "唯一长篇"
+    assert row["association_inferred"] is True
+
+
+def test_log_cost_endpoint_uses_general_api_usage(tmp_path: Path, monkeypatch) -> None:
+    db_path = _prepare_db(tmp_path)
+    record_api_usage(
+        db_path,
+        provider="deepseek",
+        model="deepseek-v4-flash",
+        purpose="long_novel_world",
+        work_type="long_novel",
+        work_id=3,
+        work_title="日志绑定测试",
+        prompt_tokens=1200,
+        completion_tokens=800,
+        cached_tokens=300,
+        cost_cny=0.0028,
+    )
+    monkeypatch.setenv("ANP_SQLITE_PATH", str(db_path))
+
+    response = _request("GET", "/api/logs/costs")
+
+    assert response["status"] == 200
+    body = json.loads(response["body"])
+    assert body["summary"]["count"] == 1
+    assert body["items"][0]["phase"] == "long_novel_world"
+    assert body["items"][0]["cached_tokens"] == 300
+    assert body["items"][0]["book_title"] == "日志绑定测试"
 
 
 def test_monitor_endpoint_returns_aggregates(tmp_path: Path, monkeypatch) -> None:

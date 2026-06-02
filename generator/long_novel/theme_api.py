@@ -140,7 +140,7 @@ def api_source_info() -> dict[str, Any]:
             {
                 "id": "fanqie",
                 "name": "FanqieRankTracker",
-                "icon": "📡",
+                "icon": "",
                 "desc": "每日拉取番茄小说女频新书榜（360+本/天，18分类）→ AI提取题材关键信息",
                 "frequency": "每日更新",
                 "format": "title + author + reads + intro → AI标准化为统一格式",

@@ -178,6 +178,11 @@ def _llm_traced(
 ) -> str:
     """Run LLM call and persist a trace JSON next to phase progress files."""
     started = datetime.now()
+    purpose = f"long_novel_{phase}"
+    if trace_suffix == "_stage1_roster":
+        purpose += "_roster"
+    elif trace_suffix.startswith("_fallback"):
+        purpose += "_fallback"
     try:
         completion = client.chat_completion(
             messages=[
@@ -186,6 +191,7 @@ def _llm_traced(
             ],
             thinking_mode=thinking,
             temperature=temperature,
+            purpose=purpose,
         )
         ended = datetime.now()
         _write_trace(
@@ -318,6 +324,7 @@ def _llm_item_call(
             thinking_mode=thinking,
             temperature=temperature,
             model=model_name,
+            purpose=f"long_novel_{phase}_detail",
         )
         ended = datetime.now()
         _write_trace(

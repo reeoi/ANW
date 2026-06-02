@@ -27,6 +27,7 @@ from config_loader import (
 from review_queue.env_writer import read_env, write_env_fields
 from review_queue import login_capture
 from review_queue.yaml_writer import load_yaml, save_yaml, update_yaml_field
+from generator.api_client import _join_endpoint, _normalize_protocol, provider_defaults
 
 logger = logging.getLogger(__name__)
 
@@ -129,16 +130,64 @@ def _intersect_dict(base: dict[str, Any], updates: dict[str, Any]) -> dict[str, 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 
+LLM_PROVIDERS = ("deepseek", "openai", "google", "anthropic", "zhipu", "qwen", "custom")
+
+
+def _normalize_provider(value: Any) -> str:
+    provider = str(value or "deepseek").strip().lower()
+    aliases = {
+        "gemini": "google",
+        "google-gemini": "google",
+        "claude": "anthropic",
+        "zhipuai": "zhipu",
+        "bigmodel": "zhipu",
+        "dashscope": "qwen",
+        "aliyun": "qwen",
+        "openai-compatible": "custom",
+    }
+    provider = aliases.get(provider, provider)
+    return provider if provider in LLM_PROVIDERS else "custom"
+
+
+def _provider_presets() -> list[dict[str, str]]:
+    return [
+        {
+            "id": provider,
+            "label": provider_defaults(provider)["label"],
+            "protocol": provider_defaults(provider)["protocol"],
+            "base_url": provider_defaults(provider)["base_url"],
+        }
+        for provider in LLM_PROVIDERS
+    ]
+
+
+def _generation_env_values(env: dict[str, str], cfg_deepseek: dict[str, Any]) -> dict[str, str]:
+    provider = _normalize_provider(env.get("LLM_PROVIDER") or cfg_deepseek.get("provider") or "deepseek")
+    defaults = provider_defaults(provider)
+    return {
+        "provider": provider,
+        "protocol": _normalize_protocol(env.get("LLM_PROTOCOL") or cfg_deepseek.get("protocol") or defaults["protocol"]),
+        "api_key": env.get("LLM_API_KEY") or env.get("DEEPSEEK_API_KEY") or str(cfg_deepseek.get("api_key") or ""),
+        "base_url": env.get("LLM_BASE_URL") or env.get("DEEPSEEK_BASE_URL") or str(cfg_deepseek.get("base_url") or defaults["base_url"]),
+        "model": env.get("LLM_MODEL") or env.get("DEEPSEEK_MODEL") or str(cfg_deepseek.get("model") or defaults["model"]),
+        "flash_model": env.get("LLM_FLASH_MODEL") or env.get("DEEPSEEK_FLASH_MODEL") or str(cfg_deepseek.get("flash_model") or defaults["flash_model"]),
+    }
+
+
 @router.get("/generation")
 def get_generation() -> dict[str, Any]:
     cfg = load_yaml(_config_path())
     env = read_env(_dotenv_path())
     d = cfg.get("deepseek") or {}
-    api_key = env.get("DEEPSEEK_API_KEY") or str(d.get("api_key") or "")
+    values = _generation_env_values(env, d)
     return {
-        "has_api_key": bool(api_key),
-        "base_url": env.get("DEEPSEEK_BASE_URL") or str(d.get("base_url") or "https://api.deepseek.com"),
-        "model": env.get("DEEPSEEK_MODEL") or str(d.get("model") or "deepseek-v4-pro"),
+        "has_api_key": bool(values["api_key"]),
+        "provider": values["provider"],
+        "protocol": values["protocol"],
+        "providers": _provider_presets(),
+        "base_url": values["base_url"],
+        "model": values["model"],
+        "flash_model": values["flash_model"],
     }
 
 
@@ -146,19 +195,29 @@ def get_generation() -> dict[str, Any]:
 async def set_generation(request: Request) -> dict[str, Any]:
     payload = await _json_payload(request)
     env_updates: dict[str, str] = {}
+    if "provider" in payload:
+        env_updates["LLM_PROVIDER"] = _normalize_provider(payload.get("provider"))
+    if "protocol" in payload:
+        env_updates["LLM_PROTOCOL"] = _normalize_protocol(str(payload.get("protocol") or "openai"))
     if "api_key" in payload and payload["api_key"] is not None:
         new_key = str(payload["api_key"]).strip()
         if new_key and not is_masked(new_key):
+            env_updates["LLM_API_KEY"] = new_key
             env_updates["DEEPSEEK_API_KEY"] = new_key
     if "base_url" in payload:
-        env_updates["DEEPSEEK_BASE_URL"] = str(payload["base_url"]).strip()
+        base_url = str(payload["base_url"]).strip()
+        env_updates["LLM_BASE_URL"] = base_url
+        env_updates["DEEPSEEK_BASE_URL"] = base_url
     if "model" in payload:
-        env_updates["DEEPSEEK_MODEL"] = str(payload["model"]).strip()
+        model = str(payload["model"]).strip()
+        env_updates["LLM_MODEL"] = model
+        env_updates["DEEPSEEK_MODEL"] = model
+    if "flash_model" in payload:
+        flash_model = str(payload["flash_model"]).strip()
+        env_updates["LLM_FLASH_MODEL"] = flash_model
+        env_updates["DEEPSEEK_FLASH_MODEL"] = flash_model
     if env_updates:
         write_env_fields(_dotenv_path(), env_updates.items())
-        # 立即注入当前进程，避免重启才能生效
-        for k, v in env_updates.items():
-            os.environ[k] = v
 
     return {"ok": True, "message": "生成配置已保存"}
 
@@ -170,47 +229,75 @@ async def test_generation(request: Request) -> dict[str, Any]:
     cfg = load_yaml(_config_path())
     deepseek = cfg.get("deepseek") or {}
 
+    provider = _normalize_provider(payload.get("provider") or env.get("LLM_PROVIDER") or deepseek.get("provider") or "deepseek")
+    defaults = provider_defaults(provider)
+    protocol = _normalize_protocol(str(payload.get("protocol") or env.get("LLM_PROTOCOL") or deepseek.get("protocol") or defaults["protocol"]))
+
     raw_key = str(payload.get("api_key") or "").strip()
     if not raw_key or is_masked(raw_key):
-        raw_key = env.get("DEEPSEEK_API_KEY") or str(deepseek.get("api_key") or "")
+        raw_key = env.get("LLM_API_KEY") or env.get("DEEPSEEK_API_KEY") or str(deepseek.get("api_key") or "")
     base_url = str(
         payload.get("base_url")
+        or env.get("LLM_BASE_URL")
         or env.get("DEEPSEEK_BASE_URL")
         or deepseek.get("base_url")
-        or "https://api.deepseek.com"
+        or defaults["base_url"]
     ).rstrip("/")
     model = str(
         payload.get("model")
+        or env.get("LLM_MODEL")
         or env.get("DEEPSEEK_MODEL")
         or deepseek.get("model")
-        or "deepseek-v4-pro"
+        or defaults["model"]
     )
+    if not base_url:
+        return {"ok": False, "message": "Base URL 为空，请填写接口地址"}
+    if not model:
+        return {"ok": False, "message": "模型名称为空，请填写模型名"}
     if not raw_key:
         return {"ok": False, "message": "API key 为空，请先填写"}
 
     try:
         import httpx
 
-        resp = httpx.post(
-            f"{base_url}/chat/completions",
-            headers={
-                "Authorization": f"Bearer {raw_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": model,
-                "messages": [{"role": "user", "content": "ping"}],
-                "max_tokens": 1,
-            },
-            timeout=15.0,
-        )
+        if protocol == "anthropic":
+            endpoint = _join_endpoint(base_url, "messages")
+            resp = httpx.post(
+                endpoint,
+                headers={
+                    "x-api-key": raw_key,
+                    "anthropic-version": "2023-06-01",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": model,
+                    "messages": [{"role": "user", "content": "ping"}],
+                    "max_tokens": 1,
+                },
+                timeout=15.0,
+            )
+        else:
+            endpoint = _join_endpoint(base_url, "chat/completions")
+            resp = httpx.post(
+                endpoint,
+                headers={
+                    "Authorization": f"Bearer {raw_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": model,
+                    "messages": [{"role": "user", "content": "ping"}],
+                    "max_tokens": 1,
+                },
+                timeout=15.0,
+            )
     except Exception as exc:  # pragma: no cover - network errors are environment-specific
-        return {"ok": False, "message": f"❌ {type(exc).__name__}: {exc}"}
+        return {"ok": False, "message": f"{type(exc).__name__}: {exc}"}
     if 200 <= resp.status_code < 300:
-        return {"ok": True, "message": "✅ 连接成功"}
+        return {"ok": True, "message": "连接成功"}
     return {
         "ok": False,
-        "message": f"❌ HTTP {resp.status_code}: {resp.text[:200]}",
+        "message": f"HTTP {resp.status_code}: {resp.text[:200]}",
     }
 
 

@@ -24,7 +24,9 @@ from generator.api_client import (
     DeepSeekClient,
     DeepSeekSettings,
     _parse_completion,
+    _parse_live_completion,
     _parse_usage,
+    provider_defaults,
 )
 
 
@@ -215,22 +217,30 @@ def test_live_completion_retries_incomplete_read() -> None:
         def __exit__(self, exc_type, exc, tb):
             return False
 
-        def read(self):
+        def read(self, _size=-1):
             raise IncompleteRead(b"x")
 
     class GoodResponse:
+        def __init__(self):
+            self.payload = json.dumps({
+                "model": "deepseek-v4-pro",
+                "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+            }).encode("utf-8")
+            self.offset = 0
+
         def __enter__(self):
             return self
 
         def __exit__(self, exc_type, exc, tb):
             return False
 
-        def read(self):
-            return json.dumps({
-                "model": "deepseek-v4-pro",
-                "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
-                "usage": {"prompt_tokens": 1, "completion_tokens": 1},
-            }).encode("utf-8")
+        def read(self, size=-1):
+            if size is None or size < 0:
+                size = len(self.payload) - self.offset
+            chunk = self.payload[self.offset:self.offset + size]
+            self.offset += len(chunk)
+            return chunk
 
     with patch("generator.api_client.urlopen", side_effect=[BrokenResponse(), GoodResponse()]) as fake_urlopen:
         result = client.chat_completion([{"role": "user", "content": "hello"}])
@@ -242,3 +252,111 @@ def test_live_completion_retries_incomplete_read() -> None:
 def test_chat_usage_cache_hit_ratio_clamped_to_one() -> None:
     usage = ChatUsage(input_tokens=1000, cached_tokens=2000, output_tokens=10)
     assert usage.cache_hit_ratio == 1.0
+
+
+def test_deepseek_live_request_uses_current_thinking_shape() -> None:
+    client = DeepSeekClient(_config(api_key="sk-real", mock=False))
+    url, headers, payload = client._build_live_request(
+        [{"role": "user", "content": "hello"}],
+        model=client.settings.model,
+        thinking_mode=True,
+        temperature=0.5,
+        response_format=None,
+    )
+
+    assert url == "https://api.deepseek.com/chat/completions"
+    assert headers["Authorization"] == "Bearer sk-real"
+    assert payload["thinking"] == {"type": "enabled"}
+    assert payload["stream"] is True
+    assert payload["stream_options"] == {"include_usage": True}
+    assert "thinking_mode" not in payload
+    assert "prompt_cache_enabled" not in payload
+
+
+def test_anthropic_protocol_builds_messages_request_and_parses_response() -> None:
+    client = DeepSeekClient(
+        _config(
+            provider="custom",
+            protocol="anthropic",
+            api_key="sk-ant",
+            base_url="https://relay.example/v1",
+            model="claude-sonnet-4-6",
+            mock=False,
+        )
+    )
+    url, headers, payload = client._build_live_request(
+        [
+            {"role": "system", "content": "system"},
+            {"role": "user", "content": "hello"},
+        ],
+        model=client.settings.model,
+        thinking_mode=False,
+        temperature=0.3,
+        response_format={"type": "json_object"},
+    )
+
+    assert url == "https://relay.example/v1/messages"
+    assert headers["x-api-key"] == "sk-ant"
+    assert payload["system"] == "system"
+    assert payload["messages"] == [{"role": "user", "content": "hello"}]
+    assert payload["max_tokens"] == 16384
+    assert payload["stream"] is True
+
+    completion = _parse_live_completion(
+        {
+            "model": "claude-sonnet-4-6",
+            "content": [{"type": "text", "text": "ok"}],
+            "usage": {"input_tokens": 12, "cache_read_input_tokens": 7, "output_tokens": 3},
+            "stop_reason": "end_turn",
+        },
+        model="claude-sonnet-4-6",
+        protocol="anthropic",
+    )
+    assert completion.text == "ok"
+    assert completion.usage.input_tokens == 12
+    assert completion.usage.cached_tokens == 7
+    assert completion.usage.output_tokens == 3
+
+
+def test_live_completion_records_first_complete_sentence_latency() -> None:
+    config = _config(api_key="sk-real", mock=False)
+    config.data["runtime"]["dry_run"] = False
+    client = DeepSeekClient(config)
+
+    class StreamResponse:
+        def __init__(self) -> None:
+            self.lines = iter([
+                b'data: {"model":"deepseek-v4-pro","choices":[{"delta":{"content":"\\u7b2c\\u4e00"}}]}\n',
+                b'data: {"choices":[{"delta":{"content":"\\u53e5\\u3002"}}]}\n',
+                b'data: {"choices":[{"delta":{"content":"\\u7b2c\\u4e8c\\u53e5"},"finish_reason":"stop"}]}\n',
+                b'data: {"choices":[],"usage":{"prompt_tokens":12,"completion_tokens":3}}\n',
+                b'data: [DONE]\n',
+            ])
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def readline(self):
+            return next(self.lines, b"")
+
+    with (
+        patch("generator.api_client.urlopen", return_value=StreamResponse()),
+        patch("generator.api_client.time.monotonic", side_effect=[0.0, 1.0, 3.5, 5.0]),
+        patch.object(client, "_record_usage") as record_usage,
+    ):
+        result = client.chat_completion([{"role": "user", "content": "hello"}])
+
+    assert result.text == "第一句。第二句"
+    assert result.usage.input_tokens == 12
+    assert result.usage.output_tokens == 3
+    assert record_usage.call_args.kwargs["first_sentence_seconds"] == 2.5
+    assert record_usage.call_args.kwargs["duration_seconds"] == 4.0
+
+
+def test_provider_presets_include_fast_model_and_protocol() -> None:
+    assert provider_defaults("qwen")["flash_model"] == "qwen3.6-flash"
+    assert provider_defaults("anthropic")["protocol"] == "anthropic"
+    assert provider_defaults("custom")["protocol"] == "openai"

@@ -15,7 +15,10 @@ deterministic; both are synchronous.
 from __future__ import annotations
 
 import json
+import os
+import asyncio
 import sys
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -28,11 +31,19 @@ if str(ROOT) not in sys.path:
 from fastapi import HTTPException
 
 from generator.long_novel import db as ln_db
+from generator.long_novel import api as ln_api
+from generator.long_novel import l2_chapter_write as l2_write
 from generator.long_novel.api import (
     _autopilot_chapters_to_write,
+    _autopilot_chapters_to_write_range,
+    _autopilot_job_mark,
     _autopilot_write_one_chapter,
     _finalize_book_setup,
+    _inferred_setup_phase_status,
+    _sync_paused_autopilot_snapshot,
     api_autopilot_status,
+    api_rewrite_chapter,
+    api_write_chapter_step_output,
 )
 from generator.long_novel.autopilot import write_autopilot_file
 
@@ -199,6 +210,37 @@ def test_autopilot_chapters_to_write_picks_next_unwritten(env: dict[str, Path], 
     assert _autopilot_chapters_to_write(env["db"], book_id, 99) == [2, 3, 4, 5]
 
 
+def test_autopilot_chapters_to_write_range_refuses_skipping_unwritten(env: dict[str, Path], tmp_path: Path) -> None:
+    book_id, book, work_dir = _make_book(env, tmp_path, target_chapters=15)
+    _finalize_book_setup(book_id, book, work_dir)
+
+    with pytest.raises(HTTPException) as exc:
+        _autopilot_chapters_to_write_range(env["db"], book_id, 11, 15)
+
+    assert exc.value.status_code == 400
+    assert "第1章开始连续写" in str(exc.value.detail)
+
+
+def test_autopilot_chapters_to_write_range_allows_contiguous_after_existing_drafts(env: dict[str, Path], tmp_path: Path) -> None:
+    book_id, book, work_dir = _make_book(env, tmp_path, target_chapters=15)
+    _finalize_book_setup(book_id, book, work_dir)
+
+    for chapter_number in range(1, 11):
+        ln_db.upsert_chapter(
+            env["db"],
+            book_id,
+            1,
+            chapter_number,
+            title=f"第{chapter_number}章",
+            status="draft",
+            draft_path=f"/x/第{chapter_number:03d}章.md",
+            actual_words=100,
+            outline_path=str(work_dir / "大纲" / f"细纲_第{chapter_number:03d}章.md"),
+        )
+
+    assert _autopilot_chapters_to_write_range(env["db"], book_id, 11, 15) == [11, 12, 13, 14, 15]
+
+
 # ── _autopilot_write_one_chapter ──────────────────────────────────────
 
 
@@ -222,32 +264,34 @@ def test_autopilot_write_one_chapter_passes_first_try(env: dict[str, Path], tmp_
     assert (work_dir / "追踪" / "全书进展.md").exists()
 
 
-def test_autopilot_write_one_chapter_needs_human_after_max_revisions(env: dict[str, Path], tmp_path: Path) -> None:
+def test_autopilot_write_one_chapter_keeps_low_score_as_reference_without_retry(env: dict[str, Path], tmp_path: Path) -> None:
     book_id, book, work_dir = _make_book(env, tmp_path, target_chapters=2)
     _finalize_book_setup(book_id, book, work_dir)
     client = _ReviewFakeClient(["CONCERNS"])  # never passes
 
-    reports: list[tuple] = []
+    reports: list[tuple[str, str, int]] = []
 
     def report(status: str, detail: str = "", revisions: int = 0) -> None:
-        reports.append((status, revisions))
+        reports.append((status, detail, revisions))
 
     result = _autopilot_write_one_chapter(client, env["db"], book_id, book, work_dir, 1, report, max_revisions=3)
 
-    assert result["status"] == "needs_human"
-    assert result["revisions"] == 3
-    # 1 initial review + 3 re-reviews after each rewrite
-    assert client.review_calls == 4
-    assert any(s == "revising" for s, _ in reports)
+    assert result["status"] == "passed"
+    assert result["revisions"] == 0
+    assert result["reason"]
+    assert result["review_reference_only"] is True
+    assert client.review_calls == 1
+    assert not any(s == "revising" for s, _, _ in reports)
 
     ch = ln_db.get_chapter(env["db"], book_id, 1)
-    assert ch["status"] == "needs_human"
-    # the best draft is still saved + tracking still updated so writing can continue
+    assert ch["status"] == "draft"
+    assert ch["review_status"] == "CONCERNS"
+    # The draft is saved + tracking updated so writing can continue immediately.
     assert ch["draft_path"] and Path(ch["draft_path"]).exists()
     assert (work_dir / "追踪" / "全书进展.md").exists()
 
 
-def test_autopilot_write_one_chapter_passes_after_one_revision(env: dict[str, Path], tmp_path: Path) -> None:
+def test_autopilot_write_one_chapter_ignores_legacy_max_revisions_argument(env: dict[str, Path], tmp_path: Path) -> None:
     book_id, book, work_dir = _make_book(env, tmp_path, target_chapters=2)
     _finalize_book_setup(book_id, book, work_dir)
     client = _ReviewFakeClient(["CONCERNS", "APPROVE"])  # fail once, then pass
@@ -255,8 +299,23 @@ def test_autopilot_write_one_chapter_passes_after_one_revision(env: dict[str, Pa
     result = _autopilot_write_one_chapter(client, env["db"], book_id, book, work_dir, 1, lambda *a, **k: None, max_revisions=3)
 
     assert result["status"] == "passed"
-    assert result["revisions"] == 1
+    assert result["revisions"] == 0
+    assert client.review_calls == 1
     assert ln_db.get_chapter(env["db"], book_id, 1)["status"] == "draft"
+
+
+def test_autopilot_step_output_falls_back_to_saved_final_draft(env: dict[str, Path], tmp_path: Path) -> None:
+    book_id, book, work_dir = _make_book(env, tmp_path, target_chapters=2)
+    _finalize_book_setup(book_id, book, work_dir)
+    client = _ReviewFakeClient(["APPROVE"])
+
+    _autopilot_write_one_chapter(client, env["db"], book_id, book, work_dir, 1, lambda *a, **k: None)
+
+    output = api_write_chapter_step_output(book_id, 1, "draft")
+    assert output["ok"] is True
+    assert output["fallback_from_final"] is True
+    assert output["content"]
+    assert output["word_count"] > 0
 
 
 # ── api_autopilot_status ──────────────────────────────────────────────
@@ -295,7 +354,197 @@ def test_autopilot_status_reports_writing_phase(env: dict[str, Path], tmp_path: 
     assert status["writing"]["current"] == 2
 
 
+def test_autopilot_status_does_not_cancel_active_long_stage(env: dict[str, Path], tmp_path: Path) -> None:
+    book_id, _book, work_dir = _make_book(env, tmp_path)
+    write_autopilot_file(work_dir, {"state": "running", "stage": "world", "detail": "正在生成：世界观"})
+    progress_file = work_dir / ".setup" / "_autopilot.json"
+    stale = time.time() - 600
+    os.utime(progress_file, (stale, stale))
+
+    _autopilot_job_mark(book_id, True)
+    try:
+        assert api_autopilot_status(book_id)["state"] == "running"
+    finally:
+        _autopilot_job_mark(book_id, False)
+
+    assert api_autopilot_status(book_id)["state"] == "cancelled"
+
+
 def test_autopilot_status_unknown_book_404(env: dict[str, Path]) -> None:
     with pytest.raises(HTTPException) as exc:
         api_autopilot_status(999999)
     assert exc.value.status_code == 404
+
+
+def test_sync_paused_autopilot_snapshot_advances_after_manual_phase(
+    env: dict[str, Path],
+    tmp_path: Path,
+) -> None:
+    book_id, _book, work_dir = _make_book(env, tmp_path)
+    setup_dir = work_dir / ".setup"
+    setup_dir.mkdir(parents=True, exist_ok=True)
+    (setup_dir / "_setup_factions.json").write_text(
+        json.dumps({"status": "done", "detail": "手动生成完成"}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    _autopilot_job_mark(book_id, False)
+
+    synced = _sync_paused_autopilot_snapshot(
+        book_id,
+        work_dir,
+        {
+            "state": "cancelled",
+            "stage": "factions",
+            "label": "势力",
+            "completed": ["premise", "world", "characters"],
+        },
+    )
+
+    assert synced["completed"] == ["premise", "world", "characters", "factions"]
+    assert synced["stage"] == "relations"
+    assert synced["label"] == "关系"
+    assert synced["detail"] == "已同步手动生成结果，可继续全自动"
+
+
+def test_sync_paused_autopilot_snapshot_finishes_when_all_phases_exist(
+    env: dict[str, Path],
+    tmp_path: Path,
+) -> None:
+    book_id, _book, work_dir = _make_book(env, tmp_path)
+    setup_dir = work_dir / ".setup"
+    setup_dir.mkdir(parents=True, exist_ok=True)
+    phases = [
+        "premise",
+        "world",
+        "characters",
+        "factions",
+        "relations",
+        "outline",
+        "volume_outline",
+        "chapter_outlines",
+        "finalize",
+    ]
+    for phase in phases:
+        (setup_dir / f"_setup_{phase}.json").write_text(
+            json.dumps({"status": "done", "detail": "done"}),
+            encoding="utf-8",
+        )
+    _autopilot_job_mark(book_id, False)
+
+    synced = _sync_paused_autopilot_snapshot(
+        book_id,
+        work_dir,
+        {
+            "state": "cancelled",
+            "stage": "finalize",
+            "label": "入库",
+            "completed": phases[:-1],
+        },
+    )
+
+    assert synced["state"] == "done"
+    assert synced["stage"] == ""
+    assert synced["label"] == ""
+    assert synced["stage_status"] == "done"
+    assert synced["detail"] == "全自动生成完成"
+    assert synced["completed"] == phases
+
+    stale_done = _sync_paused_autopilot_snapshot(
+        book_id,
+        work_dir,
+        {
+            "state": "cancelled",
+            "stage": "",
+            "label": "",
+            "completed": phases,
+        },
+    )
+    assert stale_done["state"] == "done"
+
+
+def test_inferred_setup_phase_status_uses_autopilot_completed_snapshot(tmp_path: Path) -> None:
+    write_autopilot_file(
+        tmp_path,
+        {
+            "state": "running",
+            "stage": "chapter_outlines",
+            "detail": "正在生成章节细纲",
+            "completed": ["outline", "volume_outline"],
+            "updated_at": "15:00:00",
+        },
+    )
+
+    assert _inferred_setup_phase_status(tmp_path, "outline") == {
+        "status": "done",
+        "detail": "全自动生成已完成",
+        "updated_at": "15:00:00",
+    }
+    assert _inferred_setup_phase_status(tmp_path, "volume_outline")["status"] == "done"
+    assert _inferred_setup_phase_status(tmp_path, "chapter_outlines")["status"] == "running"
+
+
+def test_rewrite_chapter_uses_existing_source_and_preserves_latest_progress(
+    env: dict[str, Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    book_id, book, work_dir = _make_book(env, tmp_path, target_chapters=2)
+    _finalize_book_setup(book_id, book, work_dir)
+    first = ln_db.get_chapter(env["db"], book_id, 1)
+    second = ln_db.get_chapter(env["db"], book_id, 2)
+    assert first and second
+
+    first_path = l2_write.chapter_final_path(work_dir, 1, first["title"])
+    second_path = l2_write.chapter_final_path(work_dir, 2, second["title"])
+    first_path.write_text("# 第1章\n\n第一章原稿", encoding="utf-8")
+    second_path.write_text("# 第2章\n\n第二章原稿", encoding="utf-8")
+    for chapter, path in ((first, first_path), (second, second_path)):
+        ln_db.upsert_chapter(
+            env["db"],
+            book_id,
+            int(chapter["volume_number"]),
+            int(chapter["chapter_number"]),
+            title=str(chapter["title"]),
+            status="draft",
+            target_words=int(chapter["target_words"]),
+            actual_words=100,
+            outline_path=chapter["outline_path"],
+            draft_path=str(path),
+            review_status="APPROVE",
+            ai_review_json="{}",
+        )
+
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(ln_api, "_deepseek_client", lambda _book: object())
+    monkeypatch.setattr(
+        l2_write,
+        "rewrite_chapter_from_source",
+        lambda _client, source, chapter_number, _title, _outline: (
+            captured.update(source=source, chapter_number=chapter_number) or "# 第6章\n\n改稿"
+        ),
+    )
+    monkeypatch.setattr(l2_write, "run_polish", lambda _client, text: text)
+    monkeypatch.setattr(l2_write, "run_deslop", lambda _client, text: text)
+    monkeypatch.setattr(
+        l2_write,
+        "run_continuity_check",
+        lambda *_args, **_kwargs: {"issue_count": 0, "issues": []},
+    )
+    monkeypatch.setattr(
+        l2_write,
+        "update_tracking_files",
+        lambda *_args, **kwargs: captured.update(advance_current=kwargs["advance_current"]),
+    )
+
+    result = asyncio.run(api_rewrite_chapter(book_id, 1))
+    updated = ln_db.get_chapter(env["db"], book_id, 1)
+    assert updated
+
+    assert result["ok"] is True
+    assert captured["source"] == "# 第1章\n\n第一章原稿"
+    assert captured["chapter_number"] == 1
+    assert captured["advance_current"] is False
+    assert first_path.read_text(encoding="utf-8") == "# 第1章\n\n改稿\n"
+    assert first_path.with_suffix(".md.bak").read_text(encoding="utf-8") == "# 第1章\n\n第一章原稿"
+    assert updated["title"] == first["title"]
+    assert updated["outline_path"] == first["outline_path"]

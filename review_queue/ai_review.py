@@ -19,10 +19,9 @@ import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
 
 from config_loader import LoadedConfig, load_from_environment
+from generator.api_client import DeepSeekClient, provider_defaults
 from review_queue.db import (
     get_story,
     list_reviewable_stories,
@@ -60,6 +59,8 @@ class AIReviewSettings:
     approval_threshold: int = 90
     max_rewrite_attempts: int = 3
     rewrite_strategy: str = "phase_4_5_only"
+    provider: str = "deepseek"
+    protocol: str = "openai"
     model: str = "deepseek-v4-pro"
     temperature: float = 0.3
     timeout_seconds: int = 60
@@ -128,6 +129,8 @@ def load_ai_review_settings(config: LoadedConfig | None = None) -> AIReviewSetti
         config = load_from_environment()
     audit = config.data.get("audit", {}) if isinstance(config.data.get("audit", {}), dict) else {}
     deepseek = config.data.get("deepseek", {}) if isinstance(config.data.get("deepseek", {}), dict) else {}
+    provider = str(deepseek.get("provider") or "deepseek")
+    defaults = provider_defaults(provider)
 
     weights = _normalize_weights(audit.get("dimensions"))
     api_key = str(deepseek.get("api_key") or os.getenv("DEEPSEEK_API_KEY") or "")
@@ -149,14 +152,16 @@ def load_ai_review_settings(config: LoadedConfig | None = None) -> AIReviewSetti
             or audit.get("rewrite_strategy")
             or "phase_4_5_only"
         ),
-        model=os.getenv("ANP_AI_REVIEW_MODEL") or str(audit.get("model") or deepseek.get("model") or "deepseek-v4-pro"),
+        provider=provider,
+        protocol=str(deepseek.get("protocol") or defaults["protocol"]),
+        model=os.getenv("ANP_AI_REVIEW_MODEL") or str(audit.get("model") or deepseek.get("model") or defaults["model"]),
         temperature=_env_float("ANP_AI_REVIEW_TEMPERATURE", float(audit.get("temperature") or 0.3)),
         timeout_seconds=_env_int(
             "ANP_AI_REVIEW_TIMEOUT_SECONDS",
             int(audit.get("timeout_seconds") or deepseek.get("timeout_seconds") or 120),
         ),
         api_key=api_key,
-        base_url=str(deepseek.get("base_url") or "https://api.deepseek.com").rstrip("/"),
+        base_url=str(deepseek.get("base_url") or defaults["base_url"]).rstrip("/"),
         mock=mock,
         dimension_weights=weights,
         metrics_db_path=db_path,
@@ -177,7 +182,7 @@ def review_story(story, config: LoadedConfig | None = None, settings: AIReviewSe
         return ReviewResult(
             total_score=result.total_score,
             dimension_scores=result.dimension_scores,
-            issues=result.issues + [f"DeepSeek 审核调用失败，已回退 mock：{exc}"],
+            issues=result.issues + [f"LLM 审核调用失败，已回退 mock：{exc}"],
             suggestions=result.suggestions,
             decision=result.decision,
         )
@@ -410,7 +415,7 @@ def _maybe_swap_model_for_degrade(
 
         cfg = config or load_from_environment()
         deepseek = cfg.data.get("deepseek", {}) or {}
-        flash_model = str(deepseek.get("flash_model") or "deepseek-v4-flash")
+        flash_model = str(deepseek.get("flash_model") or provider_defaults(settings.provider)["flash_model"])
         tracker = CostTracker(cfg)
         chosen = tracker.select_model_for_phase(
             "ai_review",
@@ -425,78 +430,39 @@ def _maybe_swap_model_for_degrade(
 
 
 def _call_deepseek(prompt: str, settings: AIReviewSettings) -> str:
-    url = f"{settings.base_url}/chat/completions"
-    payload: dict[str, Any] = {
-        "model": settings.model,
-        "messages": [
-            {"role": "system", "content": "你是严谨的中文小说编辑和内容安全审核员。"},
-            {"role": "user", "content": prompt},
-        ],
-        "temperature": settings.temperature,
-    }
-    request = Request(
-        url,
-        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-        headers={"Authorization": f"Bearer {settings.api_key}", "Content-Type": "application/json"},
-        method="POST",
-    )
     try:
-        with urlopen(request, timeout=settings.timeout_seconds) as response:
-            response_data = json.loads(response.read().decode("utf-8"))
-        _record_review_usage(settings, response_data)
-        return str(response_data["choices"][0]["message"]["content"])
-    except (KeyError, IndexError, ValueError, HTTPError, URLError, TimeoutError) as exc:
-        _record_review_failure(settings, str(exc))
-        raise RuntimeError(f"DeepSeek AI review request failed: {exc}") from exc
-
-
-def _record_review_usage(settings: "AIReviewSettings", response_data: dict[str, Any]) -> None:
-    try:
-        from review_queue.metrics import estimate_cost_cny, record_api_usage
-
-        db_path = getattr(settings, "metrics_db_path", None)
-        if not db_path:
-            return
-        usage = response_data.get("usage") or {}
-        prompt_tokens = int(usage.get("prompt_tokens") or 0)
-        completion_tokens = int(usage.get("completion_tokens") or 0)
-        total = int(usage.get("total_tokens") or (prompt_tokens + completion_tokens))
-        record_api_usage(
-            db_path,
-            provider="deepseek",
-            model=settings.model,
-            purpose="ai_review",
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            total_tokens=total,
-            cost_cny=estimate_cost_cny(prompt_tokens, completion_tokens),
-            success=True,
+        client = DeepSeekClient(
+            LoadedConfig(
+                data={
+                    "runtime": {"dry_run": False},
+                    "deepseek": {
+                        "provider": settings.provider,
+                        "protocol": settings.protocol,
+                        "api_key": settings.api_key,
+                        "base_url": settings.base_url,
+                        "model": settings.model,
+                        "timeout_seconds": settings.timeout_seconds,
+                        "max_retries": 1,
+                        "mock": False,
+                    },
+                    "database": {"sqlite_path": settings.metrics_db_path or "data/anp.sqlite3"},
+                },
+                path=Path("ai-review-runtime"),
+            )
         )
-    except Exception:  # pragma: no cover - never break review
-        pass
-
-
-def _record_review_failure(settings: "AIReviewSettings", error: str) -> None:
-    try:
-        from review_queue.metrics import record_api_usage
-
-        db_path = getattr(settings, "metrics_db_path", None)
-        if not db_path:
-            return
-        record_api_usage(
-            db_path,
-            provider="deepseek",
-            model=settings.model,
+        completion = client.chat_completion(
+            [
+                {"role": "system", "content": "你是严谨的中文小说编辑和内容安全审核员。"},
+                {"role": "user", "content": prompt},
+            ],
+            thinking_mode=False,
+            temperature=settings.temperature,
+            response_format={"type": "json_object"},
             purpose="ai_review",
-            prompt_tokens=0,
-            completion_tokens=0,
-            total_tokens=0,
-            cost_cny=0.0,
-            success=False,
-            error=error[:500],
         )
-    except Exception:  # pragma: no cover
-        pass
+        return completion.text
+    except Exception as exc:
+        raise RuntimeError(f"LLM AI review request failed: {exc}") from exc
 
 
 def _extract_json(raw: str) -> dict[str, Any]:

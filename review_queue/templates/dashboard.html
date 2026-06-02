@@ -12,35 +12,15 @@
   <div class="chrome-right">
     <div class="chrome-ticker" id="chrome-ticker">
       <span>HOST<em>127.0.0.1:18000</em></span>
-      <span>仅本机<em class="up">●</em></span>
+      <span>仅本机<em class="up">在线</em></span>
     </div>
-    <button id="display-settings-toggle" class="chrome-control-btn" type="button" aria-expanded="false" aria-controls="display-settings-panel">显示设置</button>
+    <button id="display-settings-toggle" class="chrome-control-btn" type="button" title="切换深色/浅色模式" aria-label="切换深色/浅色模式">深色</button>
     <span class="chrome-pill" id="chrome-health"><span class="dot"></span>就绪</span>
     <span class="chrome-clock" id="chrome-clock">--:--:--</span>
   </div>
 </div>
 
-<div id="display-settings-panel" class="display-settings-panel" hidden>
-  <label>主题
-    <select id="theme-select">
-      <option value="light">纸质浅色</option>
-      <option value="dark">深色终端</option>
-    </select>
-  </label>
-  <label>字体
-    <select id="font-size-select">
-      <option value="normal">默认</option>
-      <option value="large">大</option>
-      <option value="xlarge">特大</option>
-    </select>
-  </label>
-  <label>密度
-    <select id="density-select">
-      <option value="default">默认</option>
-      <option value="dense">紧凑</option>
-    </select>
-  </label>
-</div>
+<div id="display-settings-panel" class="display-settings-panel" hidden></div>
 
 <div class="layout">
   <aside class="sidebar">
@@ -334,7 +314,7 @@
       <div class="artifact-modal-inner">
         <div class="artifact-modal-head">
           <span id="artifact-modal-title">产物预览</span>
-          <button class="ghost" id="artifact-modal-close" type="button">✕ 关闭</button>
+          <button class="ghost" id="artifact-modal-close" type="button">关闭</button>
         </div>
         <pre id="artifact-modal-body" class="artifact-modal-body">加载中…</pre>
       </div>
@@ -344,7 +324,7 @@
       <div class="modal">
         <div class="modal-head" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1.5rem">
           <h3 id="inbox-detail-title" style="margin:0">作品详情</h3>
-          <button class="ghost" id="inbox-detail-close" type="button">✕</button>
+          <button class="ghost" id="inbox-detail-close" type="button">关闭</button>
         </div>
         <div class="modal-body">
           <div class="modal-meta" id="inbox-detail-meta" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:1rem;margin-bottom:1.5rem;padding:1rem;background:var(--panel-soft);border-radius:var(--radius-sm)"></div>
@@ -363,7 +343,7 @@
             <p class="ln-library-subtitle">管理长篇项目、章节进度与当前连载状态。</p>
           </div>
           <div class="actions">
-            <button class="btn-primary" id="ln-btn-new-book">➕ 新建书籍</button>
+            <button class="btn-primary" id="ln-btn-new-book">新建书籍</button>
             <button class="ghost tiny" id="ln-btn-refresh-books">刷新</button>
           </div>
         </div>
@@ -413,6 +393,33 @@
           <span id="ln-global-progress-text" style="flex:1">准备中…</span>
           <button class="btn-danger tiny" id="ln-btn-cancel" style="font-size:0.7rem;padding:2px 8px">暂停</button>
         </div>
+        <!-- 全自动进度监控面板：跨标签保留，方便查看大纲时仍能看到进度 -->
+        <div id="ln-autopilot-monitor" class="panel" style="display:none;margin-bottom:1rem;padding:1rem">
+          <div style="display:flex;align-items:center;justify-content:space-between">
+            <h4 id="ln-autopilot-title" style="margin:0">全自动生成</h4>
+            <button class="ghost tiny" id="ln-btn-autopilot-cancel">暂停</button>
+          </div>
+          <div id="ln-autopilot-writing-controls" style="margin:0.75rem 0;padding:0.7rem 0.75rem;border:1px solid var(--border);background:var(--panel-soft);border-radius:6px">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:0.75rem;flex-wrap:wrap">
+              <div>
+                <strong style="font-size:0.9rem">全自动写正文</strong>
+                <span id="ln-autopilot-range-hint" style="margin-left:0.5rem;color:var(--muted);font-size:0.78rem">从最早未写章节开始连续生成</span>
+              </div>
+              <div style="display:flex;align-items:center;flex-wrap:wrap;gap:0.4rem;font-size:0.82rem">
+                <label for="ln-autopilot-start-chapter">第</label>
+                <input type="number" id="ln-autopilot-start-chapter" min="1" max="500" value="1" style="width:64px">
+                <span>章到第</span>
+                <input type="number" id="ln-autopilot-end-chapter" min="1" max="500" value="1" style="width:64px">
+                <span>章</span>
+                <button class="btn-primary tiny" id="ln-btn-autopilot-write-range">全自动写正文</button>
+              </div>
+            </div>
+          </div>
+          <div id="ln-autopilot-stages" style="margin:0.75rem 0;display:flex;flex-wrap:wrap;gap:0.4rem"></div>
+          <div id="ln-autopilot-writing" style="display:none;margin:0.5rem 0"></div>
+          <div id="ln-autopilot-detail" style="font-size:0.8rem;color:var(--muted);white-space:pre-wrap;max-height:300px;overflow:auto"></div>
+          <div id="ln-autopilot-confirm" style="display:none;margin-top:0.75rem"></div>
+        </div>
 
         <!-- ── 设定面板 ── -->
         <div id="ln-setup-panel">
@@ -420,28 +427,10 @@
           <div id="ln-setup-choice" class="panel" style="display:none;margin-bottom:1rem;padding:1rem">
             <div style="font-weight:600;margin-bottom:0.4rem">《<span id="ln-choice-title"></span>》已创建，接下来怎么生成开书设定？</div>
             <div style="display:flex;gap:0.75rem;margin:0.75rem 0">
-              <button class="btn-primary" id="ln-btn-autopilot">🤖 AI 全自动</button>
-              <button class="ghost" id="ln-btn-manual-setup">✋ 自己手动点</button>
+              <button class="btn-primary" id="ln-btn-autopilot">AI 全自动</button>
+              <button class="ghost" id="ln-btn-manual-setup">自己手动点</button>
             </div>
-            <div style="display:flex;align-items:center;flex-wrap:wrap;gap:0.4rem;margin:0.25rem 0 0.6rem;font-size:0.82rem">
-              <label>全自动连续写正文：</label>
-              <input type="number" id="ln-autopilot-chapters" min="0" max="500" value="0" style="width:68px">
-              <span style="color:var(--muted)">章（0 = 只做开书设定）</span>
-              <label style="margin-left:0.75rem">失败重写上限：</label>
-              <input type="number" id="ln-autopilot-max-rev" min="0" max="5" value="3" style="width:54px">
-              <span style="color:var(--muted)">次</span>
-            </div>
-            <div style="font-size:0.78rem;color:var(--muted)">全自动：题材定位 → 世界观 → 角色 → 势力 → 关系 → 大纲 → 卷纲 → 章节细纲 → 入库；若上面「写多少章」大于 0，会接着自动写正文（每章 初稿→审核→失败重写≤上限→仍不过转人工，但照常更新追踪/伏笔/进度）。全程实时显示进度，可暂停。手动：每一步自己点「运行」。</div>
-          </div>
-          <!-- 全自动进度监控面板 -->
-          <div id="ln-autopilot-monitor" class="panel" style="display:none;margin-bottom:1rem;padding:1rem">
-            <div style="display:flex;align-items:center;justify-content:space-between">
-              <h4 style="margin:0">🤖 全自动生成中…</h4>
-              <button class="ghost tiny" id="ln-btn-autopilot-cancel">⏸ 暂停</button>
-            </div>
-            <div id="ln-autopilot-stages" style="margin:0.75rem 0;display:flex;flex-wrap:wrap;gap:0.4rem"></div>
-            <div id="ln-autopilot-writing" style="display:none;margin:0.5rem 0"></div>
-            <div id="ln-autopilot-detail" style="font-size:0.8rem;color:var(--muted);white-space:pre-wrap;max-height:300px;overflow:auto"></div>
+            <div style="font-size:0.78rem;color:var(--muted)">全自动：题材定位 → 世界观 → 角色 → 势力 → 关系 → 大纲 → 卷纲 → 章节细纲 → 入库；正文范围在上方「全自动生成」里选择。开书前会先把前置内容写完，到正文这步停一下，确认后再按范围连续写正文。每章生成后立即保存并进入下一章；审核分数仅供参考，不会触发自动重写。全程实时显示进度，可暂停。手动：每一步自己点「运行」。</div>
           </div>
           <div id="ln-setup-strip" class="phase-strip" style="display:flex;margin-bottom:1rem"></div>
           <div id="ln-setup-preview" class="panel" style="display:none;margin-bottom:1rem">
@@ -457,7 +446,7 @@
         <div id="ln-outline-panel" style="display:none">
           <div class="ln-outline-topbar">
             <div id="ln-outline-phase-strip" class="phase-strip" style="display:flex;margin-bottom:0"></div>
-            <button class="btn-primary tiny" id="ln-btn-extend-chapters">➕ 追加章节</button>
+            <button class="btn-primary tiny" id="ln-btn-extend-chapters">追加章节</button>
           </div>
           <div class="panel ln-outline-preview-panel">
             <div class="ln-setup-preview-head">
@@ -477,7 +466,7 @@
           <div class="panel">
             <div class="ln-tracking-head">
               <h4 style="margin:0">对标作品分析</h4>
-              <button class="ghost tiny" id="ln-benchmark-refresh">↻ 刷新文件列表</button>
+              <button class="ghost tiny" id="ln-benchmark-refresh">刷新文件列表</button>
             </div>
             <div id="ln-benchmark-content" class="empty">加载中…</div>
           </div>
@@ -490,7 +479,7 @@
               <h4>长期追踪记忆</h4>
               <p>写完章节后自动更新；展开小卡片查看长期记忆。</p>
             </div>
-            <button class="ghost tiny" id="ln-tracking-refresh">↻ 刷新</button>
+            <button class="ghost tiny" id="ln-tracking-refresh">刷新</button>
           </div>
           <div id="ln-tracking-cards" class="ln-tracking-grid">
             <div class="empty">加载中…</div>
@@ -594,50 +583,66 @@
           <button class="primary" id="btn-refresh-logs">刷新日志</button>
         </div>
       </div>
-      <div class="panel">
-        <h3>API 调用消耗 <span class="meta" id="logs-cost-meta">正在加载</span></h3>
-        <div id="logs-cost-summary" class="logs-cost-summary">
-          <div class="logs-cost-stat">
-            <span class="logs-cost-label">累计花费</span>
-            <strong>—</strong>
-            <em>最近调用窗口</em>
+      <div class="panel logs-panel">
+        <details class="logs-section" open>
+          <summary>
+            <span>API 调用消耗</span>
+            <span class="meta" id="logs-cost-meta">正在加载</span>
+          </summary>
+          <div class="logs-section-body">
+            <div id="logs-cost-summary" class="logs-cost-summary">
+              <div class="logs-cost-stat">
+                <span class="logs-cost-label">累计花费</span>
+                <strong>—</strong>
+                <em>最近调用窗口</em>
+              </div>
+              <div class="logs-cost-stat">
+                <span class="logs-cost-label">调用次数</span>
+                <strong>—</strong>
+                <em>单次 API 记录</em>
+              </div>
+              <div class="logs-cost-stat">
+                <span class="logs-cost-label">平均单次</span>
+                <strong>—</strong>
+                <em>按当前窗口计算</em>
+              </div>
+              <div class="logs-cost-stat">
+                <span class="logs-cost-label">最高单次</span>
+                <strong>—</strong>
+                <em>最近记录峰值</em>
+              </div>
+            </div>
+            <div class="logs-cost-table-wrap">
+              <table class="logs-cost-table">
+                <thead>
+                  <tr>
+                    <th>时间</th>
+                    <th>阶段</th>
+                    <th>模型</th>
+                    <th>调用消耗</th>
+                    <th>用时 / 首句</th>
+                    <th>花费</th>
+                  </tr>
+                </thead>
+                <tbody id="logs-cost-body">
+                  <tr>
+                    <td colspan="6" class="logs-cost-empty">正在加载 API 调用消耗...</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
           </div>
-          <div class="logs-cost-stat">
-            <span class="logs-cost-label">调用次数</span>
-            <strong>—</strong>
-            <em>单次 API 记录</em>
+        </details>
+        <details class="logs-section" open>
+          <summary>
+            <span>系统日志</span>
+            <span class="meta">最新记录在上方</span>
+          </summary>
+          <div class="logs-section-body">
+            <p class="logs-file-line">日志路径：<code id="logs-file">未加载</code></p>
+            <pre id="logs-output" class="log">正在获取系统实时日志...</pre>
           </div>
-          <div class="logs-cost-stat">
-            <span class="logs-cost-label">平均单次</span>
-            <strong>—</strong>
-            <em>按当前窗口计算</em>
-          </div>
-          <div class="logs-cost-stat">
-            <span class="logs-cost-label">最高单次</span>
-            <strong>—</strong>
-            <em>最近记录峰值</em>
-          </div>
-        </div>
-        <div class="logs-cost-table-wrap">
-          <table class="logs-cost-table">
-            <thead>
-              <tr>
-                <th>时间</th>
-                <th>阶段</th>
-                <th>模型</th>
-                <th>调用消耗</th>
-                <th>花费</th>
-              </tr>
-            </thead>
-            <tbody id="logs-cost-body">
-              <tr>
-                <td colspan="5" class="logs-cost-empty">正在加载 API 调用消耗...</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-        <p class="logs-file-line">日志路径：<code id="logs-file">未加载</code></p>
-        <pre id="logs-output" class="log">正在获取系统实时日志...</pre>
+        </details>
       </div>
     </section>
 
@@ -651,10 +656,17 @@
         <summary>AI 生成模型配置</summary>
         <div class="group-body">
           <div class="settings-row">
-            <label for="gen-key">DeepSeek API Key</label>
+            <label for="gen-provider">模型供应商</label>
+            <div class="control">
+              <select id="gen-provider" aria-label="模型供应商"></select>
+              <div class="meta">官方供应商只会填入 Base URL；模型名称请手动填写。第三方中转站请选择“自定义”。</div>
+            </div>
+          </div>
+          <div class="settings-row">
+            <label for="gen-key">API Key</label>
             <div class="control">
               <div class="secret-input">
-                <input type="password" id="gen-key" autocomplete="off" spellcheck="false" aria-label="DeepSeek API Key">
+                <input type="password" id="gen-key" autocomplete="off" spellcheck="false" aria-label="API Key">
                 <button class="eye" type="button" data-eye="gen-key" title="显示 API Key" aria-label="显示 API Key" aria-pressed="false">显示</button>
               </div>
               <div class="control-inline">
@@ -665,12 +677,29 @@
             </div>
           </div>
           <div class="settings-row">
-            <label for="gen-model">模型名称</label>
-            <div class="control"><input type="text" id="gen-model" placeholder="deepseek-chat"></div>
+            <label for="gen-base">API 代理地址 (Base URL)</label>
+            <div class="control"><input type="text" id="gen-base"></div>
           </div>
           <div class="settings-row">
-            <label for="gen-base">API 代理地址 (Base URL)</label>
-            <div class="control"><input type="text" id="gen-base" placeholder="https://api.deepseek.com"></div>
+            <label for="gen-protocol">接口协议</label>
+            <div class="control">
+              <select id="gen-protocol" aria-label="接口协议">
+                <option value="openai">OpenAI 兼容 Chat Completions</option>
+                <option value="anthropic">Anthropic Messages</option>
+              </select>
+              <div class="meta">使用第三方中转站时，按中转站文档选择协议。</div>
+            </div>
+          </div>
+          <div class="settings-row">
+            <label for="gen-model">模型名称</label>
+            <div class="control"><input type="text" id="gen-model"></div>
+          </div>
+          <div class="settings-row">
+            <label for="gen-flash-model">快速 / 降级模型</label>
+            <div class="control">
+              <input type="text" id="gen-flash-model">
+              <div class="meta">并行详写和预算降级会使用该模型；可与主模型相同。</div>
+            </div>
           </div>
           <div class="group-actions">
             <button class="ghost" data-reset="generation">↩ 还原修改</button>
@@ -704,7 +733,7 @@
       <div class="actions">
         <button class="btn-primary tiny" id="prompt-modal-save">保存提示词</button>
         <button class="ghost tiny" id="prompt-modal-revert">恢复上一版</button>
-        <button class="ghost" id="prompt-modal-close">✕ 关闭</button>
+        <button class="ghost" id="prompt-modal-close">关闭</button>
       </div>
     </div>
     <div class="panel">

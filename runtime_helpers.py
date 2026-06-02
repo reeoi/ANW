@@ -128,7 +128,7 @@ def _log_line_datetime(line: str) -> datetime | None:
 
 
 def recent_log_lines(config: LoadedConfig, max_lines: int = 80) -> tuple[Path, list[str]]:
-    """Return the recent tail of the configured log and prune timestamped blocks older than 7 days."""
+    """Return recent log blocks newest first and prune timestamped blocks older than 7 days."""
 
     log_file = Path(str(_mapping(config.data.get("logging")).get("file") or "logs/anp.log"))
     if not log_file.exists():
@@ -159,8 +159,18 @@ def recent_log_lines(config: LoadedConfig, max_lines: int = 80) -> tuple[Path, l
             encoding="utf-8",
         )
 
-    flattened = [line for block in kept for line in block]
-    return log_file, flattened[-max(1, max_lines) :]
+    remaining = max(1, max_lines)
+    newest_first: list[str] = []
+    for block in reversed(kept):
+        if remaining <= 0:
+            break
+        if len(block) <= remaining:
+            newest_first.extend(block)
+            remaining -= len(block)
+        else:
+            newest_first.extend(block[-remaining:])
+            remaining = 0
+    return log_file, newest_first
 
 
 def count_stories_by_status(config: LoadedConfig) -> dict[str, int]:

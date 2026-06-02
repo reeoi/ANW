@@ -10,7 +10,15 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from generator.long_novel.l2_chapter_write import assemble_context, ensure_tracking_files, run_draft
+from generator.long_novel.l2_chapter_write import (
+    assemble_context,
+    ensure_chapter_heading,
+    ensure_tracking_files,
+    refresh_tracking_head,
+    rewrite_chapter_from_source,
+    run_draft,
+    update_tracking_files,
+)
 
 
 class FakeClient:
@@ -53,3 +61,41 @@ def test_draft_prompt_includes_character_world_and_outline_context(tmp_path: Pat
     assert "全书主线：前男友降临" in client.prompt
     assert "全书长期进展记忆" in client.prompt
     assert "续写约束" in client.prompt
+
+
+def test_ensure_chapter_heading_adds_missing_heading_and_replaces_wrong_number() -> None:
+    assert ensure_chapter_heading("正文第一句", 5) == "# 第5章\n\n正文第一句\n"
+    assert ensure_chapter_heading("# 第6章\n\n错误续写", 1) == "# 第1章\n\n错误续写\n"
+
+
+def test_rewrite_chapter_uses_selected_source_without_later_tracking(tmp_path: Path) -> None:
+    client = FakeClient()
+
+    rewritten = rewrite_chapter_from_source(
+        client,
+        "第一章原稿",
+        1,
+        "第1章",
+        "第一章细纲",
+    )
+
+    assert rewritten == "# 第1章\n\n正文\n"
+    assert "第一章原稿" in client.prompt
+    assert "不得续写后续章节" in client.prompt
+
+
+def test_rewrite_tracking_update_does_not_move_latest_progress_backwards(tmp_path: Path) -> None:
+    refresh_tracking_head(tmp_path, 5, "# 第5章\n\n第五章正文", summary_short="第五章摘要")
+
+    update_tracking_files(
+        tmp_path,
+        1,
+        "# 第1章\n\n第一章重写正文",
+        client=None,
+        advance_current=False,
+    )
+
+    context = (tmp_path / "追踪" / "上下文.md").read_text(encoding="utf-8")
+    progress = (tmp_path / "追踪" / "全书进展.md").read_text(encoding="utf-8")
+    assert "当前进度：第5章已完成" in context
+    assert "## 第1章" in progress

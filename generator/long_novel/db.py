@@ -264,6 +264,22 @@ def upsert_chapter(
     conn.close()
 
 
+def normalize_saved_chapter_statuses(db_path: str | Path, book_id: int) -> int:
+    """Treat legacy review-gate results with saved text as ordinary drafts."""
+    conn = sqlite3.connect(str(db_path))
+    cursor = conn.execute(
+        """UPDATE ln_chapters
+           SET status='draft', updated_at=CURRENT_TIMESTAMP
+           WHERE book_id=? AND status='needs_human'
+             AND COALESCE(draft_path, '') <> ''""",
+        (book_id,),
+    )
+    conn.commit()
+    updated = int(cursor.rowcount or 0)
+    conn.close()
+    return updated
+
+
 def get_next_chapter(
     db_path: str | Path, book_id: int
 ) -> dict[str, Any] | None:

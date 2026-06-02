@@ -23,6 +23,14 @@
   function updateThemeUI(theme) {
     const themeSelect = document.getElementById('theme-select');
     if (themeSelect) themeSelect.value = theme === 'dark' ? 'dark' : 'light';
+    const themeToggle = document.getElementById('display-settings-toggle');
+    if (themeToggle) {
+      const isDark = theme === 'dark';
+      themeToggle.textContent = isDark ? '浅色' : '深色';
+      themeToggle.title = isDark ? '切换浅色模式' : '切换深色模式';
+      themeToggle.setAttribute('aria-label', themeToggle.title);
+      themeToggle.setAttribute('aria-pressed', isDark ? 'true' : 'false');
+    }
   }
 
   function applyFontSize(size) {
@@ -45,31 +53,15 @@
 
   function initDisplaySettings() {
     var btn = document.getElementById('display-settings-toggle');
-    var panel = document.getElementById('display-settings-panel');
-    var themeSelect = document.getElementById('theme-select');
-    var fontSelect = document.getElementById('font-size-select');
-    var densitySelect = document.getElementById('density-select');
-
-    applyFontSize(localStorage.getItem('anp-font-size') || 'normal');
-    applyDensity(localStorage.getItem('anp-density') || 'default');
-
-    if (themeSelect) {
-      themeSelect.addEventListener('change', function() { applyTheme(themeSelect.value); });
-    }
-    if (fontSelect) {
-      fontSelect.addEventListener('change', function() { applyFontSize(fontSelect.value); });
-    }
-    if (densitySelect) {
-      densitySelect.addEventListener('change', function() { applyDensity(densitySelect.value); });
-    }
-    if (!btn || !panel) return;
+    applyFontSize('xlarge');
+    applyDensity('default');
+    if (!btn) return;
+    updateThemeUI(document.documentElement.getAttribute('data-theme') || localStorage.getItem('anp-theme') || 'light');
     btn.addEventListener('click', function(ev) {
       ev.stopPropagation();
-      var willOpen = panel.hasAttribute('hidden');
-      panel.toggleAttribute('hidden', !willOpen);
-      btn.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+      var current = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+      applyTheme(current === 'dark' ? 'light' : 'dark');
     });
-    panel.addEventListener('click', function(ev) { ev.stopPropagation(); });
   }
 
   function initSidebarCollapse() {
@@ -245,8 +237,32 @@
       'phase 5 5': '阶段 5.5 · 朱雀检测',
       'phase 6': '阶段 6 · 审核',
       'phase 7': '阶段 7 · 发布',
+      'chat': '通用调用',
+      'long novel premise': '长篇 · 题材定位',
+      'long novel world': '长篇 · 世界观',
+      'long novel world detail': '长篇 · 世界观 · 分主题详写',
+      'long novel characters': '长篇 · 角色设计',
+      'long novel characters roster': '长篇 · 角色设计 · 清单',
+      'long novel characters detail': '长篇 · 角色设计 · 角色档案',
+      'long novel factions': '长篇 · 势力',
+      'long novel factions roster': '长篇 · 势力 · 清单',
+      'long novel factions detail': '长篇 · 势力 · 势力档案',
+      'long novel relations': '长篇 · 关系',
+      'long novel outline': '长篇 · 全书大纲',
+      'long novel volume outline': '长篇 · 卷纲',
+      'long novel chapter outlines': '长篇 · 章节细纲',
     };
     return map[normalized] || normalized.replace(/^phase /, '阶段 ');
+  }
+
+  function fmtLatency(seconds) {
+    if (seconds == null || isNaN(seconds)) return '—';
+    var value = Number(seconds);
+    return (value < 10 ? value.toFixed(1) : Math.round(value)) + 's';
+  }
+
+  function latencyPill(label, seconds, tone) {
+    return '<span class="logs-latency-pill ' + tone + '">' + escapeHtml(label + ' ' + fmtLatency(seconds)) + '</span>';
   }
 
   function renderLogCosts(data) {
@@ -266,7 +282,7 @@
     }
     if (!body) return;
     if (!items.length) {
-      body.innerHTML = '<tr><td colspan="5" class="logs-cost-empty">暂无 API 调用消耗记录</td></tr>';
+      body.innerHTML = '<tr><td colspan="6" class="logs-cost-empty">暂无 API 调用消耗记录</td></tr>';
       return;
     }
     body.innerHTML = items.map(function(row) {
@@ -275,15 +291,22 @@
         + ' · 输出 ' + fmtNum(row.output_tokens || 0);
       const time = formatLocalTime(row.occurred_at);
       const phase = friendlyPhaseLabel(row.phase);
-      const storyLine = row.story_title
-        ? (row.story_title + (row.story_id != null ? ' · #' + row.story_id : ''))
-        : (row.story_id != null ? ('作品已删除 · #' + row.story_id) : '未绑定作品');
+      const workType = row.work_type === 'long_novel' ? '长篇'
+        : row.work_type === 'short_story' ? '短篇'
+        : '作品';
+      const workLine = row.work_title
+        ? (row.work_title + (row.work_id != null ? ' · ' + workType + ' #' + row.work_id : '')
+          + (row.association_inferred ? ' · 历史推断' : ''))
+        : (row.story_title
+          ? (row.story_title + (row.story_id != null ? ' · 短篇 #' + row.story_id : ''))
+          : '未绑定作品');
       return ''
         + '<tr>'
         +   '<td class="logs-cost-timecell"><strong>' + escapeHtml(time) + '</strong><span>' + escapeHtml(relTime(row.occurred_at)) + '</span></td>'
-        +   '<td class="logs-cost-phasecell"><span class="badge amber">' + escapeHtml(phase) + '</span><em>' + escapeHtml(storyLine) + '</em></td>'
+        +   '<td class="logs-cost-phasecell"><span class="badge amber">' + escapeHtml(phase) + '</span><em>' + escapeHtml(workLine) + '</em></td>'
         +   '<td class="logs-cost-modelcell"><strong>' + escapeHtml(row.model || '—') + '</strong></td>'
         +   '<td class="logs-cost-usagecell"><strong>' + escapeHtml(usageLine) + '</strong><span>按单次调用写入计费记录</span></td>'
+        +   '<td class="logs-cost-latencycell">' + latencyPill('用时', row.duration_seconds, 'total') + latencyPill('首句', row.first_sentence_seconds, 'first-sentence') + '</td>'
         +   '<td class="logs-cost-pricecell"><strong>' + escapeHtml(fmtCurrency(row.cost_cny || 0)) + '</strong></td>'
         + '</tr>';
     }).join('');
@@ -322,7 +345,7 @@
           ].join('');
         }
         if (costBody) {
-          costBody.innerHTML = '<tr><td colspan="5" class="logs-cost-empty">API 调用消耗加载失败</td></tr>';
+          costBody.innerHTML = '<tr><td colspan="6" class="logs-cost-empty">API 调用消耗加载失败</td></tr>';
         }
       }
     } catch (err) {
@@ -432,14 +455,26 @@
     try {
       const data = await api('/api/settings/generation');
       const key = $('gen-key');
+      const provider = $('gen-provider');
+      const protocol = $('gen-protocol');
       const model = $('gen-model');
+      const flashModel = $('gen-flash-model');
       const base = $('gen-base');
       const status = $('gen-key-status');
       if (key) key.value = '';
       setGenKeyVisible(false);
+      if (provider) {
+        provider.innerHTML = (data.providers || []).map(function(p) {
+          return '<option value="' + escapeHtml(p.id) + '">' + escapeHtml(p.label) + '</option>';
+        }).join('');
+        provider.dataset.presets = JSON.stringify(data.providers || []);
+        provider.value = data.provider || 'deepseek';
+      }
+      if (protocol) protocol.value = data.protocol || 'openai';
       if (model) model.value = data.model || '';
+      if (flashModel) flashModel.value = data.flash_model || '';
       if (base) base.value = data.base_url || '';
-      if (status) status.textContent = data.has_api_key ? '✓ 已配置' : '';
+      if (status) status.textContent = data.has_api_key ? '已配置' : '';
       if (msg) msg.textContent = '';
       if (meta) meta.textContent = '设置面板已加载。';
     } catch (err) {
@@ -453,7 +488,10 @@
     const msg = $('gen-test-msg');
     try {
       const payload = {
+        provider: (($('gen-provider') || {}).value || 'deepseek').trim(),
+        protocol: (($('gen-protocol') || {}).value || 'openai').trim(),
         model: (($('gen-model') || {}).value || '').trim(),
+        flash_model: (($('gen-flash-model') || {}).value || '').trim(),
         base_url: (($('gen-base') || {}).value || '').trim(),
       };
       const keyValue = (($('gen-key') || {}).value || '').trim();
@@ -461,7 +499,7 @@
       const data = await api('/api/settings/generation', { method: 'POST', body: payload });
       if ($('gen-key')) $('gen-key').value = '';
       const status = $('gen-key-status');
-      if (status && (keyValue || status.textContent)) status.textContent = '✓ 已配置';
+      if (status && (keyValue || status.textContent)) status.textContent = '已配置';
       if (msg) msg.textContent = data.message || '已保存';
       toast(data.message || '生成配置已保存', 'success');
     } catch (err) {
@@ -477,6 +515,8 @@
     const msg = $('gen-test-msg');
     try {
       const payload = {
+        provider: (($('gen-provider') || {}).value || 'deepseek').trim(),
+        protocol: (($('gen-protocol') || {}).value || 'openai').trim(),
         model: (($('gen-model') || {}).value || '').trim(),
         base_url: (($('gen-base') || {}).value || '').trim(),
       };
@@ -494,6 +534,23 @@
   }
 
   function bindSettings() {
+    const provider = $('gen-provider');
+    if (provider && provider.dataset.bound !== '1') {
+      provider.dataset.bound = '1';
+      provider.addEventListener('change', () => {
+        let presets = [];
+        try { presets = JSON.parse(provider.dataset.presets || '[]'); } catch (_e) {}
+        const preset = presets.find((p) => p.id === provider.value) || {};
+        const model = $('gen-model');
+        const flashModel = $('gen-flash-model');
+        const base = $('gen-base');
+        const protocol = $('gen-protocol');
+        if (protocol && preset.protocol) protocol.value = preset.protocol;
+        if (base) base.value = preset.base_url || '';
+        if (model) model.value = '';
+        if (flashModel) flashModel.value = '';
+      });
+    }
     $$('[data-eye]').forEach((btn) => {
       btn.addEventListener('click', () => {
         const input = $(btn.dataset.eye || '');
@@ -576,8 +633,8 @@
   function formatLocalTime(iso) {
     if (!iso) return '—';
     try {
-      const d = new Date(iso);
-      if (isNaN(d.getTime())) return iso;
+      const d = parseTs(iso);
+      if (!d) return iso;
       const pad = (n) => String(n).padStart(2, '0');
       return pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
     } catch (e) { return iso; }
@@ -1054,7 +1111,7 @@
     const errs = (mon && mon.recent_errors) || [];
     if (errs.length >= 3) {
       items.push({
-        tone: 'warn', icon: '🪲',
+        tone: 'warn', icon: '',
         title: '近期错误 ' + errs.length + ' 条',
         body: '可前往 "监控数据中心" 查看详情。',
       });
@@ -2413,6 +2470,7 @@
     $('ln-new-book-confirm').addEventListener('click', createNewBook);
     $('ln-btn-ai-suggest').addEventListener('click', aiSuggestBooks);
     $('ln-btn-refresh-books').addEventListener('click', loadBookList);
+    _lnBindAutopilotWritingControls();
     $('ln-btn-back-library').addEventListener('click', function() {
 
       hideStepControls();
@@ -2440,10 +2498,11 @@
         // Load panel content
         var panel = _lnPanels[sub];
         if (panel && panel.load) panel.load();
+        _lnRestoreAutopilotMonitor();
       });
     });
-    // ln-btn-write-next/rewrite/prev/next are bound inside ensureWritingPanelLayout()
-    // because the buttons are created dynamically.
+    // Writing workbench buttons are bound inside ensureWritingPanelLayout()
+    // because they are created dynamically.
     var extendBtn = $('ln-btn-extend-chapters');
     if (extendBtn) extendBtn.addEventListener('click', _lnExtendChapters);
     var trackingRefreshBtn = $('ln-tracking-refresh');
@@ -2558,6 +2617,7 @@
     });
     loadWritingWorkbench();
     loadSetupPanel();
+    _lnRestoreAutopilotMonitor();
     _startGlobalProgressPolling();
   }
 
@@ -2745,21 +2805,87 @@
   var _lnAutopilotChapterCount = 0;
 
   function _lnAutopilotStageDefs() {
-    // 9 stages: 5 setup + 3 outline + finalize（入库）
-    return _lnAllSetupPhases().concat([{ id: 'finalize', label: '入库' }]);
+    // 9 setup stages + the optional writing confirmation/execution stage.
+    return _lnAllSetupPhases().concat([{ id: 'finalize', label: '入库' }, { id: 'writing', label: '正文' }]);
+  }
+
+  function _lnAutopilotPendingKey(bookId) {
+    return 'anp-ln-autopilot-pending-chapters:' + bookId;
+  }
+
+  function _lnAutopilotPendingRangeKey(bookId) {
+    return 'anp-ln-autopilot-pending-range:' + bookId;
+  }
+
+  function _lnSetAutopilotPendingChapters(count) {
+    if (!_lnActiveBookId) return;
+    count = Math.max(0, Number(count || 0));
+    try {
+      if (count > 0) localStorage.setItem(_lnAutopilotPendingKey(_lnActiveBookId), String(count));
+      else {
+        localStorage.removeItem(_lnAutopilotPendingKey(_lnActiveBookId));
+        localStorage.removeItem(_lnAutopilotPendingRangeKey(_lnActiveBookId));
+      }
+    } catch (_) {}
+  }
+
+  function _lnSetAutopilotPendingRange(start, end) {
+    if (!_lnActiveBookId) return;
+    start = parseInt(start, 10);
+    end = parseInt(end, 10);
+    if (!Number.isFinite(start) || !Number.isFinite(end) || start < 1 || end < start) {
+      _lnSetAutopilotPendingChapters(0);
+      return;
+    }
+    try {
+      localStorage.setItem(_lnAutopilotPendingKey(_lnActiveBookId), String(end - start + 1));
+      localStorage.setItem(_lnAutopilotPendingRangeKey(_lnActiveBookId), JSON.stringify({ start: start, end: end }));
+    } catch (_) {}
+  }
+
+  function _lnGetAutopilotPendingRange() {
+    if (!_lnActiveBookId) return null;
+    try {
+      var raw = localStorage.getItem(_lnAutopilotPendingRangeKey(_lnActiveBookId));
+      if (!raw) return null;
+      var parsed = JSON.parse(raw);
+      var start = parseInt(parsed.start, 10);
+      var end = parseInt(parsed.end, 10);
+      if (Number.isFinite(start) && Number.isFinite(end) && start > 0 && end >= start) {
+        return { start: start, end: end, count: end - start + 1 };
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  function _lnGetAutopilotPendingChapters() {
+    if (!_lnActiveBookId) return 0;
+    try {
+      var range = _lnGetAutopilotPendingRange();
+      if (range) return range.count;
+      var raw = localStorage.getItem(_lnAutopilotPendingKey(_lnActiveBookId));
+      var n = parseInt(raw || '0', 10);
+      return Number.isFinite(n) && n > 0 ? n : 0;
+    } catch (_) {
+      return 0;
+    }
   }
 
   function _lnShowSetupChoice(title) {
     var titleEl = $('ln-choice-title');
     if (titleEl) titleEl.textContent = title || '';
-    ['ln-setup-strip', 'ln-setup-preview', 'ln-autopilot-monitor'].forEach(function(id) {
+    ['ln-setup-strip', 'ln-setup-preview'].forEach(function(id) {
       var el = $(id); if (el) el.style.display = 'none';
     });
+    var monitor = $('ln-autopilot-monitor');
+    if (monitor) monitor.style.display = '';
+    _lnRenderAutopilotMonitor({ state: 'idle', detail: '先选择正文范围；全自动会完成前置内容，并在正文前等待确认。' });
+    _lnRefreshAutopilotRangeDefaults({ force: true });
     var choice = $('ln-setup-choice');
     if (choice) choice.style.display = '';
     var autoBtn = $('ln-btn-autopilot');
     var manualBtn = $('ln-btn-manual-setup');
-    if (autoBtn) autoBtn.onclick = _lnStartAutopilot;
+    if (autoBtn) autoBtn.onclick = _lnStartAutopilotFromSetupChoice;
     if (manualBtn) manualBtn.onclick = _lnChooseManualSetup;
   }
 
@@ -2770,28 +2896,262 @@
     toast('已切换到手动模式：在下方每一步点开后「运行」', 'info');
   }
 
-  async function _lnStartAutopilot() {
+  function _lnAutopilotMaxRevisions() {
+    return 0;
+  }
+
+  function _lnChapterHasAutopilotDraft(ch) {
+    if (!ch) return false;
+    var status = String(ch.status || '').toLowerCase();
+    return !!ch.draft_path
+      || Number(ch.actual_words || 0) > 0
+      || ['draft', 'reviewed', 'published', 'completed', 'final', 'finalized', 'done', 'needs_human'].indexOf(status) >= 0;
+  }
+
+  function _lnFirstUnwrittenChapterNumber(chapters) {
+    var sorted = (chapters || []).slice().sort(function(a, b) {
+      return Number(a.chapter_number || 0) - Number(b.chapter_number || 0);
+    });
+    for (var i = 0; i < sorted.length; i++) {
+      if (!_lnChapterHasAutopilotDraft(sorted[i])) return Number(sorted[i].chapter_number || 0);
+    }
+    return 0;
+  }
+
+  function _lnRangeLabel(range) {
+    if (!range) return '';
+    if (range.start && range.end) {
+      return range.start === range.end ? ('第' + range.start + '章') : ('第' + range.start + '-' + range.end + '章');
+    }
+    return (range.count || 0) + ' 章';
+  }
+
+  function _lnNormalizeAutopilotRangeInputs() {
+    var startEl = $('ln-autopilot-start-chapter');
+    var endEl = $('ln-autopilot-end-chapter');
+    if (!startEl || !endEl) return;
+    var start = parseInt(startEl.value, 10);
+    var end = parseInt(endEl.value, 10);
+    if (!Number.isFinite(start) || start < 1) start = 1;
+    if (!Number.isFinite(end) || end < start) end = start;
+    startEl.value = String(start);
+    endEl.value = String(end);
+  }
+
+  function _lnSetAutopilotRangeHint(message, kind) {
+    var hint = $('ln-autopilot-range-hint');
+    if (!hint) return;
+    hint.textContent = message || '从最早未写章节开始连续生成';
+    hint.style.color = kind === 'error' ? 'var(--danger)' : (kind === 'ok' ? 'var(--success)' : 'var(--muted)');
+  }
+
+  async function _lnRefreshAutopilotRangeDefaults(options) {
+    options = options || {};
+    if (!_lnActiveBookId) return;
+    var startEl = $('ln-autopilot-start-chapter');
+    var endEl = $('ln-autopilot-end-chapter');
+    var btn = $('ln-btn-autopilot-write-range');
+    if (!startEl || !endEl) return;
+    try {
+      var data = await api('/api/long-novel/books/' + _lnActiveBookId);
+      var book = data.book || {};
+      var chapters = Array.isArray(book.chapters) ? book.chapters : [];
+      var maxChapter = Math.max(
+        Number(book.target_chapters || 0),
+        chapters.reduce(function(max, ch) { return Math.max(max, Number(ch.chapter_number || 0)); }, 0),
+        1
+      );
+      var earliest = chapters.length ? _lnFirstUnwrittenChapterNumber(chapters) : 1;
+      startEl.min = '1';
+      endEl.min = '1';
+      startEl.max = String(maxChapter);
+      endEl.max = String(maxChapter);
+      if (!earliest) {
+        _lnSetAutopilotRangeHint('所有章节已有正文；如需继续，请先在大纲里追加章节。', 'ok');
+        if (btn) btn.disabled = true;
+        return;
+      }
+      if (btn) btn.disabled = false;
+      if (options.force || !startEl.value || !endEl.value) {
+        startEl.value = String(earliest);
+        endEl.value = String(earliest);
+      }
+      _lnNormalizeAutopilotRangeInputs();
+      var chosenStart = parseInt(startEl.value, 10);
+      if (chosenStart !== earliest) {
+        _lnSetAutopilotRangeHint('需要从第' + earliest + '章开始连续写，不能跳到第' + chosenStart + '章。', 'error');
+      } else {
+        _lnSetAutopilotRangeHint('将从第' + earliest + '章开始连续写，方便追踪伏笔和上下文。', 'ok');
+      }
+    } catch (_err) {
+      _lnSetAutopilotRangeHint('章节范围稍后会在启动前再次校验。', 'warn');
+    }
+  }
+
+  async function _lnReadAutopilotWritingRange() {
+    if (!_lnActiveBookId) throw new Error('请先选择一本书');
+    _lnNormalizeAutopilotRangeInputs();
+    var start = parseInt(($('ln-autopilot-start-chapter') || {}).value, 10);
+    var end = parseInt(($('ln-autopilot-end-chapter') || {}).value, 10);
+    if (!Number.isFinite(start) || start < 1) throw new Error('正文起始章必须大于 0');
+    if (!Number.isFinite(end) || end < start) throw new Error('正文结束章不能小于起始章');
+
+    var data = await api('/api/long-novel/books/' + _lnActiveBookId);
+    var book = data.book || {};
+    var chapters = Array.isArray(book.chapters) ? book.chapters : [];
+    var target = Number(book.target_chapters || chapters.length || end || 1);
+    if (!chapters.length) {
+      if (start !== 1) throw new Error('需要从第1章开始连续写，不能跳到第' + start + '章，否则追踪/伏笔会断。');
+      if (end > target) throw new Error('这本书当前计划只有 ' + target + ' 章，请先调整目标章节数或生成章节细纲。');
+      return { start: start, end: end, count: end - start + 1 };
+    }
+
+    var byNumber = {};
+    chapters.forEach(function(ch) { byNumber[Number(ch.chapter_number || 0)] = ch; });
+    var earliest = _lnFirstUnwrittenChapterNumber(chapters);
+    if (!earliest) throw new Error('所有章节已有正文；如需继续，请先在大纲里追加章节。');
+    if (start !== earliest) {
+      throw new Error('需要从第' + earliest + '章开始连续写，不能跳到第' + start + '章，否则追踪/伏笔会断。');
+    }
+    for (var n = start; n <= end; n++) {
+      if (!byNumber[n]) throw new Error('章节队列缺少第' + n + '章，请先生成章节细纲并入库。');
+      if (_lnChapterHasAutopilotDraft(byNumber[n])) {
+        throw new Error('第' + n + '章已有正文，请从最早未写章节连续生成。');
+      }
+    }
+    return { start: start, end: end, count: end - start + 1 };
+  }
+
+  function _lnBindAutopilotWritingControls() {
+    var btn = $('ln-btn-autopilot-write-range');
+    var startEl = $('ln-autopilot-start-chapter');
+    var endEl = $('ln-autopilot-end-chapter');
+    if (btn && btn.dataset.bound !== '1') {
+      btn.dataset.bound = '1';
+      btn.addEventListener('click', _lnStartAutopilotWritingRange);
+    }
+    [startEl, endEl].forEach(function(el) {
+      if (!el || el.dataset.bound === '1') return;
+      el.dataset.bound = '1';
+      el.addEventListener('input', function() {
+        _lnNormalizeAutopilotRangeInputs();
+        _lnRefreshAutopilotRangeDefaults({ force: false });
+      });
+    });
+  }
+
+  async function _lnStartAutopilotWritingRange() {
+    try {
+      var range = await _lnReadAutopilotWritingRange();
+      var bookData = await api('/api/long-novel/books/' + _lnActiveBookId);
+      var book = bookData.book || {};
+      var needsSetup = String(book.status || '') === 'setup' || !Array.isArray(book.chapters) || !book.chapters.length;
+      await _lnStartAutopilot({
+        chapterCount: range.count,
+        chapterStart: range.start,
+        chapterEnd: range.end,
+        maxRevisions: _lnAutopilotMaxRevisions(),
+        pauseBeforeWriting: needsSetup,
+        detail: needsSetup
+          ? '启动中：先完成开书设定，随后停在正文确认。'
+          : '启动中：正在全自动写正文 ' + _lnRangeLabel(range) + '…',
+        successToast: needsSetup
+          ? '已启动全自动：完成前置内容后会停在正文确认'
+          : '已启动全自动写正文 ' + _lnRangeLabel(range),
+      });
+    } catch (err) {
+      _lnSetAutopilotRangeHint(err.message, 'error');
+      toast(err.message, 'error');
+    }
+  }
+
+  async function _lnStartAutopilotFromSetupChoice() {
+    try {
+      var range = await _lnReadAutopilotWritingRange();
+      await _lnStartAutopilot({
+        chapterCount: range.count,
+        chapterStart: range.start,
+        chapterEnd: range.end,
+        maxRevisions: _lnAutopilotMaxRevisions(),
+        pauseBeforeWriting: true,
+        detail: '启动中：先完成开书设定，随后停在正文确认。',
+        successToast: '已启动全自动：完成前置内容后会停在正文确认',
+      });
+    } catch (err) {
+      _lnSetAutopilotRangeHint(err.message, 'error');
+      toast(err.message, 'error');
+    }
+  }
+
+  async function _lnStartAutopilot(options) {
+    options = (options && !options.type) ? options : {};
     if (!_lnActiveBookId) { toast('请先选择一本书', 'error'); return; }
-    var chapterCount = parseInt(($('ln-autopilot-chapters') || {}).value, 10);
+    var chapterStart = options.chapterStart != null ? parseInt(options.chapterStart, 10) : null;
+    var chapterEnd = options.chapterEnd != null ? parseInt(options.chapterEnd, 10) : null;
+    var hasRange = Number.isFinite(chapterStart) && Number.isFinite(chapterEnd) && chapterStart > 0 && chapterEnd >= chapterStart;
+    var chapterCount = options.chapterCount != null
+      ? Number(options.chapterCount)
+      : (hasRange ? (chapterEnd - chapterStart + 1) : 0);
     if (isNaN(chapterCount) || chapterCount < 0) chapterCount = 0;
-    var maxRev = parseInt(($('ln-autopilot-max-rev') || {}).value, 10);
-    if (isNaN(maxRev) || maxRev < 0) maxRev = 3;
     _lnAutopilotChapterCount = chapterCount;
+    var pauseBeforeWriting = options.pauseBeforeWriting !== false && chapterCount > 0;
+    var requestChapterCount = pauseBeforeWriting ? 0 : chapterCount;
+    if (pauseBeforeWriting) {
+      if (hasRange) _lnSetAutopilotPendingRange(chapterStart, chapterEnd);
+      else _lnSetAutopilotPendingChapters(chapterCount);
+    } else if (requestChapterCount > 0) {
+      _lnSetAutopilotPendingChapters(0);
+    }
     var choice = $('ln-setup-choice'); if (choice) choice.style.display = 'none';
     var monitor = $('ln-autopilot-monitor'); if (monitor) monitor.style.display = '';
     var cancelBtn = $('ln-btn-autopilot-cancel');
     if (cancelBtn) cancelBtn.onclick = _lnCancelAutopilot;
-    _lnRenderAutopilotMonitor({ state: 'running', detail: '启动中…' });
+    _lnRenderAutopilotMonitor({ state: 'running', detail: options.detail || '启动中…' });
     try {
+      var body = { chapter_count: requestChapterCount };
+      if (!pauseBeforeWriting && hasRange && requestChapterCount > 0) {
+        body.chapter_start = chapterStart;
+        body.chapter_end = chapterEnd;
+      }
       await api('/api/long-novel/books/' + _lnActiveBookId + '/autopilot/start', {
         method: 'POST',
-        body: { chapter_count: chapterCount, max_revisions: maxRev },
+        body: body,
       });
+      if (options.successToast) toast(options.successToast, 'info');
       _lnStartAutopilotPolling();
     } catch (err) {
       toast('启动全自动失败：' + err.message, 'error');
-      _lnShowSetupChoice(($('ln-choice-title') || {}).textContent || '');
+      _lnRenderAutopilotMonitor({ state: 'error', detail: err.message || '启动失败' });
     }
+  }
+
+  async function _lnConfirmAutopilotWriting() {
+    try {
+      var range = await _lnReadAutopilotWritingRange();
+      await _lnStartAutopilot({
+        chapterCount: range.count,
+        chapterStart: range.start,
+        chapterEnd: range.end,
+        maxRevisions: _lnAutopilotMaxRevisions(),
+        pauseBeforeWriting: false,
+        detail: '已确认前置内容，正在启动正文自动写作 ' + _lnRangeLabel(range) + '…',
+        successToast: '已确认，开始全自动写正文 ' + _lnRangeLabel(range),
+      });
+    } catch (err) {
+      _lnSetAutopilotRangeHint(err.message, 'error');
+      toast(err.message, 'error');
+    }
+  }
+
+  function _lnSkipAutopilotWriting() {
+    _lnSetAutopilotPendingChapters(0);
+    _lnRenderAutopilotMonitor({
+      state: 'done',
+      completed: _lnAutopilotStageDefs().filter(function(s) { return s.id !== 'writing'; }).map(function(s) { return s.id; }),
+      detail: '已保留开书设定，正文稍后可在「全自动生成」里继续。',
+      updated_at: '',
+    });
+    toast('已停在正文前，稍后可在「全自动生成」里继续写。', 'info');
   }
 
   async function _lnCancelAutopilot() {
@@ -2813,24 +3173,41 @@
     if (_lnAutopilotTimer) { clearInterval(_lnAutopilotTimer); _lnAutopilotTimer = null; }
   }
 
+  var _lnAutopilotWorkbenchRefreshAt = 0;
+  function _lnRefreshWritingWorkbenchDuringAutopilot(data) {
+    if (!data || data.state !== 'running' || data.phase !== 'writing') return;
+    if (!document.getElementById('ln-chapter-list')) return;
+    var now = Date.now();
+    if (now - _lnAutopilotWorkbenchRefreshAt < 2500) return;
+    _lnAutopilotWorkbenchRefreshAt = now;
+    try {
+      var refreshed = loadWritingWorkbench();
+      if (refreshed && typeof refreshed.catch === 'function') refreshed.catch(function() {});
+    } catch (_e) {}
+  }
+
   async function _lnPollAutopilot() {
     if (!_lnActiveBookId) { _lnStopAutopilotPolling(); return; }
     try {
       var data = await api('/api/long-novel/books/' + _lnActiveBookId + '/autopilot/status');
       _lnRenderAutopilotMonitor(data);
+      _lnRefreshWritingWorkbenchDuringAutopilot(data);
       if (['done', 'error', 'cancelled', 'idle'].indexOf(data.state) >= 0) {
         _lnStopAutopilotPolling();
         if (data.state === 'done') {
           var w = data.writing;
           if (w && w.total) {
-            var human = (w.needs_human || []).length;
+            _lnSetAutopilotPendingChapters(0);
             var msg = '全自动完成！正文已写 ' + w.total + ' 章';
-            msg += human ? ('，其中 ' + human + ' 章未过审已转人工复核') : '，全部通过审核';
-            toast(msg, human ? 'warning' : 'success');
+            msg += '，审核分数仅供参考';
+            toast(msg, 'success');
+          } else if (_lnGetAutopilotPendingChapters() > 0) {
+            toast('前置内容已生成完成，请确认后再开始全自动写正文。', 'success');
           } else {
             toast('开书设定全部完成！可以到「正文」开始写作了', 'success');
           }
           if (typeof loadBookOverview === 'function') { try { loadBookOverview(); } catch (e) {} }
+          if (typeof loadWritingWorkbench === 'function') { try { loadWritingWorkbench(); } catch (e) {} }
         } else if (data.state === 'error') {
           toast('全自动中断：' + (data.detail || '未知错误') + '（可重新开始，已完成步骤会自动跳过）', 'error');
         } else if (data.state === 'cancelled') {
@@ -2840,40 +3217,137 @@
     } catch (err) { /* 瞬时轮询错误，继续重试 */ }
   }
 
+  async function _lnRestoreAutopilotMonitor() {
+    if (!_lnActiveBookId) return;
+    try {
+      var data = await api('/api/long-novel/books/' + _lnActiveBookId + '/autopilot/status');
+      if (!data || data.state === 'idle') {
+        var setupPanel = $('ln-setup-panel');
+        if (setupPanel && setupPanel.style.display !== 'none') {
+          var idleMonitor = $('ln-autopilot-monitor'); if (idleMonitor) idleMonitor.style.display = '';
+          _lnRenderAutopilotMonitor({ state: 'idle', detail: '选择正文范围后，可以直接全自动写正文；若前置内容未完成，会先生成并在正文前等待确认。' });
+          _lnRefreshAutopilotRangeDefaults({ force: false });
+        }
+        return;
+      }
+      var choice = $('ln-setup-choice'); if (choice) choice.style.display = 'none';
+      var monitor = $('ln-autopilot-monitor'); if (monitor) monitor.style.display = '';
+      _lnRenderAutopilotMonitor(data);
+      if (data.state === 'running') _lnStartAutopilotPolling();
+    } catch (_err) {
+      /* The manual setup panel remains usable if the progress snapshot cannot be read. */
+    }
+  }
+
   function _lnRenderAutopilotMonitor(data) {
     data = data || {};
     var stagesEl = $('ln-autopilot-stages');
     var detailEl = $('ln-autopilot-detail');
+    var confirmEl = $('ln-autopilot-confirm');
+    var titleEl = $('ln-autopilot-title');
+    var cancelBtn = $('ln-btn-autopilot-cancel');
     var defs = _lnAutopilotStageDefs();
     var completed = data.completed || [];
-    var current = data.stage || '';
+    var pendingRange = _lnGetAutopilotPendingRange();
+    var pendingChapters = pendingRange ? pendingRange.count : _lnGetAutopilotPendingChapters();
+    var pendingLabel = pendingRange ? _lnRangeLabel(pendingRange) : (pendingChapters + ' 章');
+    var awaitingWritingConfirm = data.state === 'done' && !(data.writing && data.writing.total) && pendingChapters > 0;
+    var current = awaitingWritingConfirm ? 'writing' : (data.stage || '');
     var failedAt = data.failed_at || '';
+    if (titleEl) {
+      titleEl.textContent = awaitingWritingConfirm ? '等待确认正文写作'
+        : data.state === 'done' ? '全自动生成完成'
+        : data.state === 'error' ? '全自动生成失败'
+        : data.state === 'cancelled' ? '全自动生成已暂停'
+        : data.state === 'idle' ? '全自动生成'
+        : '全自动生成中';
+    }
+    if (cancelBtn) {
+      cancelBtn.style.display = (data.state === 'done' || data.state === 'idle') ? 'none' : '';
+      if (awaitingWritingConfirm) {
+        cancelBtn.style.display = '';
+        cancelBtn.textContent = '确认写正文';
+        cancelBtn.className = 'btn-primary tiny';
+        cancelBtn.onclick = _lnConfirmAutopilotWriting;
+      } else if (data.state === 'running') {
+        cancelBtn.textContent = '暂停';
+        cancelBtn.className = 'ghost tiny';
+        cancelBtn.onclick = _lnCancelAutopilot;
+      } else {
+        cancelBtn.textContent = '继续全自动';
+        cancelBtn.className = 'btn-primary tiny';
+        cancelBtn.onclick = _lnStartAutopilot;
+      }
+    }
+    var rangeBtn = $('ln-btn-autopilot-write-range');
+    var startEl = $('ln-autopilot-start-chapter');
+    var endEl = $('ln-autopilot-end-chapter');
+    var rangeBusy = data.state === 'running';
+    if (rangeBtn) rangeBtn.disabled = rangeBusy;
+    if (startEl) startEl.disabled = rangeBusy;
+    if (endEl) endEl.disabled = rangeBusy;
+    if (data.state !== 'running') _lnRefreshAutopilotRangeDefaults({ force: false });
     if (stagesEl) {
       stagesEl.innerHTML = defs.map(function(s) {
-        var icon = '○', color = 'var(--muted)';
-        if (completed.indexOf(s.id) >= 0) { icon = '✓'; color = 'var(--success)'; }
-        if (s.id === failedAt) { icon = '✕'; color = 'var(--danger)'; }
-        else if (s.id === current && data.state === 'running') { icon = '●'; color = 'var(--primary)'; }
-        return '<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:0.75rem;color:' + color + ';border:1px solid ' + color + '">' + icon + ' ' + escapeHtml(s.label) + '</span>';
+        var state = '待处理', color = 'var(--muted)';
+        if (completed.indexOf(s.id) >= 0) { state = '完成'; color = 'var(--success)'; }
+        if (s.id === 'writing' && data.writing && data.writing.total && data.state === 'done') { state = '完成'; color = 'var(--success)'; }
+        if (s.id === 'writing' && data.phase === 'writing' && data.state === 'running') { state = '进行中'; color = 'var(--primary)'; }
+        if (s.id === 'writing' && awaitingWritingConfirm) { state = '待确认'; color = 'var(--warning)'; }
+        if (s.id === failedAt) { state = '失败'; color = 'var(--danger)'; }
+        else if (s.id === current && data.state === 'running') { state = '进行中'; color = 'var(--primary)'; }
+        else if (s.id === current && data.state === 'cancelled') { state = '已暂停'; color = 'var(--warning)'; }
+        return '<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:0.75rem;color:' + color + ';border:1px solid ' + color + '">' + escapeHtml(s.label) + ' · ' + state + '</span>';
       }).join('');
     }
-    _lnRenderAutopilotWriting(data.writing, data.state);
+    _lnRenderAutopilotWriting(data.writing, data.state, data.detail);
     if (detailEl) {
-      var head = data.state === 'done' ? '✓ 全部完成'
-        : data.state === 'error' ? '✕ 失败'
-        : data.state === 'cancelled' ? '⏸ 已暂停'
+      var head = data.state === 'done' ? '全部完成'
+        : data.state === 'error' ? '失败'
+        : data.state === 'cancelled' ? '已暂停'
+        : data.state === 'idle' ? '待开始'
         : (data.label ? ('正在：' + data.label) : '准备中…');
       var detail = data.detail ? ('\n' + String(data.detail).substring(0, 2000)) : '';
+      if (awaitingWritingConfirm) {
+        head = '正文待确认';
+        detail = '\n前置设定、大纲、卷纲、章节细纲已完成。请先检查上方「设定 / 大纲」内容，确认后再自动写正文 ' + pendingLabel + '。';
+      }
       detailEl.textContent = '[' + (data.updated_at || '') + '] ' + head + detail;
+    }
+    if (confirmEl) {
+      if (awaitingWritingConfirm) {
+        confirmEl.style.display = '';
+        confirmEl.innerHTML = ''
+          + '<div style="display:flex;align-items:center;justify-content:space-between;gap:0.75rem;flex-wrap:wrap;padding:0.65rem 0.75rem;border:1px solid var(--warning-border);background:var(--warning-soft)">'
+          + '  <div style="font-size:0.82rem;color:var(--text)">前置内容已完成。检查无误后，可继续全自动写正文 ' + escapeHtml(pendingLabel) + '。</div>'
+          + '  <div style="display:flex;gap:0.4rem;flex-wrap:wrap">'
+          + '    <button class="ghost tiny" data-ln-confirm-outline>查看大纲</button>'
+          + '    <button class="ghost tiny" data-ln-confirm-later>稍后手动写</button>'
+          + '    <button class="btn-primary tiny" data-ln-confirm-writing>确认并写正文</button>'
+          + '  </div>'
+          + '</div>';
+        var outlineBtn = confirmEl.querySelector('[data-ln-confirm-outline]');
+        var laterBtn = confirmEl.querySelector('[data-ln-confirm-later]');
+        var writeBtn = confirmEl.querySelector('[data-ln-confirm-writing]');
+        if (outlineBtn) outlineBtn.onclick = function() {
+          var tab = document.querySelector('[data-ln-sub="outline"]');
+          if (tab) tab.click();
+        };
+        if (laterBtn) laterBtn.onclick = _lnSkipAutopilotWriting;
+        if (writeBtn) writeBtn.onclick = _lnConfirmAutopilotWriting;
+      } else {
+        confirmEl.style.display = 'none';
+        confirmEl.innerHTML = '';
+      }
     }
   }
 
   var _LN_WRITE_STATUS_LABEL = {
     writing: '写作中', drafting: '初稿/扩写/润色/去AI', reviewing: '审核中',
-    revising: '重写中', passed: '已通过', needs_human: '需人工', error: '出错',
+    revising: '保存中', passed: '已成稿', needs_human: '已成稿', error: '出错',
   };
 
-  function _lnRenderAutopilotWriting(writing, state) {
+  function _lnRenderAutopilotWriting(writing, state, detail) {
     var el = $('ln-autopilot-writing');
     if (!el) return;
     if (!writing || !writing.total) { el.style.display = 'none'; el.innerHTML = ''; return; }
@@ -2883,31 +3357,36 @@
     var pct = total ? Math.round((done / total) * 100) : 0;
     var cur = writing.current || 0;
     var curStatus = _LN_WRITE_STATUS_LABEL[writing.current_status] || writing.current_status || '';
-    var revs = writing.current_revisions || 0;
-    var humanCount = (writing.needs_human || []).length;
+    var currentDetail = writing.current_detail || {};
 
     var header = '正文进度：' + done + ' / ' + total + ' 章（' + pct + '%）';
     if (state === 'running' && cur) {
-      header += ' · 第' + cur + '章 ' + escapeHtml(curStatus) + (revs ? ('（重写' + revs + '次）') : '');
+      header += ' · 第' + cur + '章 ' + escapeHtml(curStatus);
     }
-    if (humanCount) header += ' · ' + humanCount + ' 章需人工';
 
     var bar = '<div style="height:6px;border-radius:4px;background:var(--border,#333);overflow:hidden;margin:0.4rem 0">'
       + '<div style="height:100%;width:' + pct + '%;background:var(--primary)"></div></div>';
 
     var chips = (writing.results || []).map(function(r) {
-      var ok = r.status === 'passed';
-      var color = ok ? 'var(--success)' : 'var(--warning)';
-      var icon = ok ? '✓' : '⚠';
+      var color = 'var(--success)';
       var label = '第' + r.chapter + '章';
       if (r.score) label += ' ' + r.score + '分';
-      if (r.revisions) label += '·重写' + r.revisions;
-      var title = ok ? '已通过审核' : '未过审，已转人工复核';
-      return '<span title="' + title + '" style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:0.72rem;color:' + color + ';border:1px solid ' + color + '">' + icon + ' ' + escapeHtml(label) + '</span>';
+      var title = '已保存成稿；审核分数仅供参考';
+      return '<span title="' + escapeHtml(title) + '" style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:0.72rem;color:' + color + ';border:1px solid ' + color + '">' + escapeHtml(label) + ' · 已成稿</span>';
     }).join('');
 
-    el.innerHTML = '<div style="font-size:0.82rem;font-weight:600;margin-bottom:0.2rem">📖 ' + escapeHtml(header) + '</div>'
+    var liveLine = '';
+    if (state === 'running') {
+      var reason = currentDetail.reason || '';
+      var text = reason ? ('审核参考：' + reason) : (detail || '');
+      if (text) {
+        liveLine = '<div style="font-size:0.78rem;color:var(--muted);line-height:1.6;margin-top:0.15rem">' + escapeHtml(text) + '</div>';
+      }
+    }
+
+    el.innerHTML = '<div style="font-size:0.82rem;font-weight:600;margin-bottom:0.2rem">' + escapeHtml(header) + '</div>'
       + bar
+      + liveLine
       + (chips ? '<div style="display:flex;flex-wrap:wrap;gap:0.35rem;margin-top:0.35rem">' + chips + '</div>' : '');
   }
 
@@ -3010,7 +3489,7 @@
       var chapters = chData.chapters || [];
       var list = $('ln-chapter-list');
       if (chapters.length === 0) {
-        list.innerHTML = '<div class="inbox-meta">暂无章节，请先点击"写下一章"开始</div>';
+        list.innerHTML = '<div class="inbox-meta">暂无章节，请先在「全自动生成」里完成前置内容并写正文</div>';
       } else {
         list.innerHTML = '<div style="font-weight:600;margin-bottom:0.3rem">章节列表</div>'
           + chapters.map(function(c) {
@@ -3134,24 +3613,25 @@
           toast('章节队列已就绪，可以开始写正文', 'success');
           loadBookList();
         } else {
-        if (!await showConfirmAsync('这本书尚未完成开书流程。是否先运行设定？\n\n设定页会生成：\n题材定位\n世界观\n角色设计\n\n随后请到「大纲」tab 继续生成：大纲、卷纲、章节细纲。')) return;
-        var release = withBusy($('ln-btn-write-next'), '启动中…');
-        release();
-        _lnRunSetupPhases();
+        await _lnStartAutopilot({
+          chapterCount: 1,
+          maxRevisions: _lnAutopilotMaxRevisions(),
+          detail: '启动中：将自动完成开书设定，并在正文前等待确认…',
+          successToast: '已启动全自动：完成设定后会停在正文确认',
+        });
         return;
         }
       }
-      // Use step-by-step mode
-
       var nextData = await api('/api/long-novel/books/' + _lnActiveBookId + '/next-chapter');
 
-      if (!nextData.chapter) { toast('所有章节已完成。需要继续写时，到「大纲」tab 点「➕ 追加章节」。', 'info'); return; }
-
-      var chNum = nextData.chapter.chapter_number;
-
-      showStepControls(chNum, nextData.chapter.title || '');
-
-      loadChapterView(chNum);
+      if (!nextData.chapter) { toast('所有章节已完成。需要继续写时，到「大纲」tab 点「追加章节」。', 'info'); return; }
+      await _lnStartAutopilot({
+        chapterCount: 1,
+        maxRevisions: _lnAutopilotMaxRevisions(),
+        pauseBeforeWriting: false,
+        detail: '启动中：正在全自动写正文…',
+        successToast: '已启动全自动写正文',
+      });
 
     } catch (err) { toast('错误：' + err.message, 'error'); }
 
@@ -3219,9 +3699,9 @@
 
 
 
-    // Hide the one-shot button since we're in step mode
-
-    $('ln-btn-write-next').style.display = 'none';
+    // The full-auto正文 button now lives in the 全自动生成 panel.
+    var oneShotBtn = $('ln-btn-write-next');
+    if (oneShotBtn) oneShotBtn.style.display = 'none';
 
 
 
@@ -3239,7 +3719,8 @@
 
     $('ln-step-controls').style.display = 'none';
 
-    $('ln-btn-write-next').style.display = '';
+    var oneShotBtn = $('ln-btn-write-next');
+    if (oneShotBtn) oneShotBtn.style.display = '';
 
   }
 
@@ -3602,9 +4083,8 @@
     panel.dataset.layoutReady = '1';
     panel.innerHTML = ''
       + '<div class="ln-writing-topbar">'
-      + '  <div><h4>正文工作台</h4><p>章节数量跟随章节细纲；点开任意章节卡片，6 步流水线在卡片下方展开。</p></div>'
+      + '  <div><h4>正文工作台</h4><p>章节数量跟随章节细纲；点开任意章节卡片可手动分步。全自动正文范围在「全自动生成」里选择。</p></div>'
       + '  <div class="ln-writing-actions">'
-      + '    <button class="btn-primary tiny" id="ln-btn-write-next">▶ 写下一章</button>'
       + '    <button class="btn-warning tiny" id="ln-btn-rewrite">重写当前章</button>'
       + '    <button class="ghost tiny" id="ln-btn-prev-chapter">◀ 上一章</button>'
       + '    <button class="ghost tiny" id="ln-btn-next-chapter">下一章 ▶</button>'
@@ -3613,11 +4093,9 @@
       + '<div id="ln-chapter-list" class="ln-chapter-card-grid"></div>';
 
     // Bind action buttons (they didn't exist at bindLongNovel time)
-    var bWriteNext = document.getElementById('ln-btn-write-next');
     var bRewrite   = document.getElementById('ln-btn-rewrite');
     var bPrev      = document.getElementById('ln-btn-prev-chapter');
     var bNext      = document.getElementById('ln-btn-next-chapter');
-    if (bWriteNext) bWriteNext.addEventListener('click', writeNextChapter);
     if (bRewrite)   bRewrite.addEventListener('click', function() {
       if (typeof rewriteCurrentChapter === 'function') rewriteCurrentChapter();
     });
@@ -4854,7 +5332,7 @@
       // 重置一下 solo-view，防止 navigateChapter 切换章节后样式残留
       list.classList.remove('solo-view');
       if (!chapters.length) {
-        list.innerHTML = '<div class="empty">还没有待写章节。请先在「大纲」tab 生成章节细纲，或点击「写下一章」整理章节队列。</div>';
+        list.innerHTML = '<div class="empty">还没有待写章节。请先在「大纲」tab 生成章节细纲，或回到「全自动生成」整理章节队列。</div>';
         return;
       }
 
@@ -5088,18 +5566,20 @@
       detail = sResp.detail || '';
     } catch (_e) {}
     if (contentEl) contentEl.classList.remove('empty');
-    if (st === 'done') {
+    var files = [];
+    try {
+      var fr = await api('/api/long-novel/books/' + _lnActiveBookId + '/setup-files?phase=' + phaseId);
+      files = fr.files || [];
+    } catch (_e2) {}
+    if (files.length) {
       if (titleEl) titleEl.textContent = '' + label;
       if (contentEl) contentEl.textContent = '加载中…';
-      try {
-        var fr = await api('/api/long-novel/books/' + _lnActiveBookId + '/setup-files?phase=' + phaseId);
-        _lnRenderOutlineChipFiles(phaseId, label, fr.files || [], st);
-      } catch (_e2) { if (contentEl) contentEl.textContent = '加载失败'; }
+      _lnRenderOutlineChipFiles(phaseId, label, files, st);
     } else if (st === 'error') {
       if (titleEl) titleEl.textContent = '✕ ' + label + ' — 生成失败';
       if (contentEl) contentEl.innerHTML = '<div style="padding:0.5rem;border-left:3px solid var(--danger);margin-bottom:0.75rem">错误：' + escapeHtml(detail) + '</div>';
       _lnSetOutlinePreviewAction('<button class="btn-warning tiny" data-ln-preview-retry="' + phaseId + '">重新生成「' + escapeHtml(label) + '」</button>');
-    } else if (st === 'running') {
+    } else if (st === 'running' || st === 'starting') {
       if (titleEl) titleEl.textContent = '' + label + ' — 正在生成中…';
       if (contentEl) contentEl.textContent = detail || 'AI正在生成，请耐心等待…';
     } else {
@@ -5441,6 +5921,7 @@
     } else {
       if (useOutlineSurface) loadOutlinePanel(); else loadSetupPanel();
     }
+    await _lnRestoreAutopilotMonitor();
     _lnRetryInProgress = false;
   }
 
@@ -5488,6 +5969,7 @@
         if (contentEl) contentEl.textContent += '\n\n还有未完成的阶段，请继续等待或手动触发。';
       }
     }
+    await _lnRestoreAutopilotMonitor();
     _lnRetryInProgress = false;
   }
 
@@ -5595,7 +6077,7 @@
 
       if (active) {
         bar.style.display = 'flex';
-        var labels = {premise:'题材定位', world:'世界观', characters:'角色设计', outline:'大纲', volume_outline:'卷纲', chapter_outlines:'章节细纲', extend_chapters:'➕ 追加章节'};
+        var labels = {premise:'题材定位', world:'世界观', characters:'角色设计', outline:'大纲', volume_outline:'卷纲', chapter_outlines:'章节细纲', extend_chapters:'追加章节'};
         var st = phaseStatuses[active] || {};
         if (icon) icon.textContent = '';
         text.textContent = '正在生成：' + (labels[active] || active) + ' — ' + (st.detail || '处理中...');

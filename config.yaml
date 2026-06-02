@@ -3,12 +3,15 @@
 # Spec: docs/c_pipeline_plan.md §5.1
 
 deepseek:
-  api_key: ""                                    # env: DEEPSEEK_API_KEY (preferred)
-  base_url: "https://api.deepseek.com"           # env: DEEPSEEK_BASE_URL
-  model: "deepseek-v4-pro"                       # M2: pro all the way (env: DEEPSEEK_MODEL)
-  flash_model: "deepseek-v4-flash"               # B2: budget-driven downgrade target
+  provider: "deepseek"                           # deepseek | openai | google | anthropic | zhipu | qwen | custom; env: LLM_PROVIDER
+  protocol: "openai"                             # openai | anthropic; useful for custom relays; env: LLM_PROTOCOL
+  api_key: ""                                    # env: LLM_API_KEY (preferred) or DEEPSEEK_API_KEY
+  base_url: "https://api.deepseek.com"           # env: LLM_BASE_URL or DEEPSEEK_BASE_URL
+  model: "deepseek-v4-pro"                       # M2: pro all the way (env: LLM_MODEL or DEEPSEEK_MODEL)
+  flash_model: "deepseek-v4-flash"               # B2: budget-driven downgrade target; env: LLM_FLASH_MODEL
   thinking_mode: true                            # pro reasoning mode toggle
   prompt_cache_enabled: true                     # 1M-context prompt cache
+  max_output_tokens: 16384                       # required by Anthropic Messages; env: LLM_MAX_OUTPUT_TOKENS
   timeout_seconds: 120                           # long setup/rewrite calls can exceed 60s
   max_retries: 3
   mock: false                                    # env: ANP_MOCK_DEEPSEEK
@@ -109,4 +112,3 @@ database:
   sqlite_path: "data/anp.sqlite3"                # env: ANP_SQLITE_PATH
   backup_dir: "data/backups"
   daily_backup: true
-

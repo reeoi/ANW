@@ -12,15 +12,15 @@ import copy
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 import yaml
 
 try:
-    from dotenv import load_dotenv
+    from dotenv import dotenv_values
 except ImportError:  # pragma: no cover - optional dependency
-    def load_dotenv(*_args: Any, **_kwargs: Any) -> bool:
-        return False
+    def dotenv_values(*_args: Any, **_kwargs: Any) -> dict[str, str]:
+        return {}
 
 
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent / "config.yaml"
@@ -112,8 +112,7 @@ def load_config(path: str | Path | None = None) -> LoadedConfig:
         )
 
     dotenv_path = Path(os.getenv("ANP_DOTENV") or DEFAULT_DOTENV_PATH)
-    if dotenv_path.exists():
-        load_dotenv(dotenv_path, override=True)
+    dotenv_env = _read_dotenv(dotenv_path)
 
     try:
         raw = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
@@ -124,8 +123,14 @@ def load_config(path: str | Path | None = None) -> LoadedConfig:
         raise ConfigError(f"Configuration root must be a mapping: {config_path}")
 
     data = copy.deepcopy(raw)
-    _apply_environment_overrides(data, SENSITIVE_ENV_OVERRIDES)
-    _apply_environment_overrides(data, GENERAL_ENV_OVERRIDES)
+    _apply_environment_overrides(data, SENSITIVE_ENV_OVERRIDES, os.environ)
+    _apply_llm_alias_overrides(data, os.environ)
+    _apply_environment_overrides(data, GENERAL_ENV_OVERRIDES, os.environ)
+    # Preserve the previous override=True behavior without mutating os.environ.
+    # This prevents values from an old .env file leaking into later reloads.
+    _apply_environment_overrides(data, SENSITIVE_ENV_OVERRIDES, dotenv_env)
+    _apply_llm_alias_overrides(data, dotenv_env)
+    _apply_environment_overrides(data, GENERAL_ENV_OVERRIDES, dotenv_env)
 
     warnings = _ensure_safe_runtime(data)
     return LoadedConfig(data=data, path=config_path, warnings=warnings)
@@ -142,10 +147,13 @@ def is_wf_next() -> bool:
 
 
 def _apply_environment_overrides(
-    data: dict[str, Any], overrides: dict[tuple[str, ...], str]
+    data: dict[str, Any],
+    overrides: dict[tuple[str, ...], str],
+    source: Mapping[str, str] | None = None,
 ) -> None:
+    values = os.environ if source is None else source
     for keys, env_name in overrides.items():
-        value = os.getenv(env_name)
+        value = values.get(env_name)
         if value is None:
             continue
         value = _strip_env_quotes(value)
@@ -153,6 +161,33 @@ def _apply_environment_overrides(
             continue
         existing_value = _get_nested(data, keys)
         _set_nested(data, keys, _coerce_env_value(value, existing_value))
+
+
+def _apply_llm_alias_overrides(
+    data: dict[str, Any],
+    source: Mapping[str, str] | None = None,
+) -> None:
+    """Apply provider-neutral LLM_* env vars after legacy DeepSeek env vars."""
+    aliases = {
+        ("deepseek", "provider"): "LLM_PROVIDER",
+        ("deepseek", "protocol"): "LLM_PROTOCOL",
+        ("deepseek", "api_key"): "LLM_API_KEY",
+        ("deepseek", "base_url"): "LLM_BASE_URL",
+        ("deepseek", "model"): "LLM_MODEL",
+        ("deepseek", "flash_model"): "LLM_FLASH_MODEL",
+        ("deepseek", "max_output_tokens"): "LLM_MAX_OUTPUT_TOKENS",
+    }
+    _apply_environment_overrides(data, aliases, source)
+
+
+def _read_dotenv(path: Path) -> dict[str, str]:
+    if not path.exists():
+        return {}
+    return {
+        str(key): str(value)
+        for key, value in dotenv_values(path).items()
+        if key and value is not None
+    }
 
 
 def _strip_env_quotes(value: str) -> str:
@@ -178,8 +213,8 @@ def _ensure_safe_runtime(data: dict[str, Any]) -> list[str]:
         deepseek["mock"] = True
         runtime["dry_run"] = True
         warnings.append(
-            "DeepSeek API key is missing; running in mock/dry-run mode. "
-            "Set deepseek.api_key in config.yaml or DEEPSEEK_API_KEY to enable live calls."
+            "LLM API key is missing; running in mock/dry-run mode. "
+            "Set deepseek.api_key in config.yaml, LLM_API_KEY, or DEEPSEEK_API_KEY to enable live calls."
         )
 
     mode = str(runtime.get("mode") or "semi-auto")

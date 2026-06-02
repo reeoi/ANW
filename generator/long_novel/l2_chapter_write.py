@@ -352,6 +352,20 @@ def count_chinese_chars(text: str) -> int:
     return len(re.sub(r'[\s\n\r　]', '', text))
 
 
+_CHAPTER_HEADING_RE = re.compile(r"^\s*#{1,6}\s*第\s*\d+\s*章[^\n]*(?:\r?\n)+")
+
+
+def ensure_chapter_heading(text: str, chapter_number: int) -> str:
+    """Ensure saved prose starts with the requested markdown chapter heading."""
+    body = str(text or "").lstrip("\ufeff \t\r\n")
+    heading = f"# 第{int(chapter_number)}章"
+    if _CHAPTER_HEADING_RE.match(body):
+        body = _CHAPTER_HEADING_RE.sub(heading + "\n\n", body, count=1)
+    else:
+        body = heading + "\n\n" + body
+    return body.rstrip() + "\n"
+
+
 # ── Context Assembly ──────────────────────────────────────────────────
 
 
@@ -621,6 +635,47 @@ def run_draft(
     return draft.strip()
 
 
+_REWRITE_SYSTEM_FALLBACK = (
+    "你是中文网文改稿编辑。你的任务是重写用户指定的已有章节，不是续写新章节。"
+    "必须保持该章在全书中的原有位置、剧情范围和章节编号。"
+    "只输出重写后的完整正文，不要解释，不要写下一章。"
+)
+
+_REWRITE_USER_FALLBACK = """请重写第{chapter_number}章。
+章节标题：{chapter_title}
+本章细纲：
+{outline}
+
+原正文：
+{source}
+
+要求：
+1. 只重写第{chapter_number}章，不得续写后续章节。
+2. 保持原正文的剧情位置、人物状态和主要事件。
+3. 输出完整正文，开头必须写“# 第{chapter_number}章”。
+4. 不要解释修改过程，不要附加下一章内容。"""
+
+
+def rewrite_chapter_from_source(
+    client: DeepSeekClient,
+    source_text: str,
+    chapter_number: int,
+    chapter_title: str = "",
+    outline: str = "",
+) -> str:
+    """Rewrite one existing chapter without loading later-book tracking state."""
+    system = _load_prompt_template("l2_rewrite_system.txt", _REWRITE_SYSTEM_FALLBACK)
+    user_template = _load_prompt_template("l2_rewrite_user.txt", _REWRITE_USER_FALLBACK)
+    user = _render_prompt_template(user_template, {
+        "chapter_number": chapter_number,
+        "chapter_title": chapter_title or f"第{chapter_number}章",
+        "outline": (outline or "（暂无细纲）")[:3000],
+        "source": source_text,
+    })
+    rewritten = _llm(client, system, user, thinking=True)
+    return ensure_chapter_heading(rewritten, chapter_number)
+
+
 # ── Phase: Expand ─────────────────────────────────────────────────────
 
 
@@ -706,11 +761,48 @@ def run_continuity_check(
 # ── State Update ──────────────────────────────────────────────────────
 
 
+def refresh_tracking_head(
+    work_dir: Path,
+    chapter_number: int,
+    draft: str,
+    *,
+    summary_short: str = "",
+) -> None:
+    """Refresh only the latest-progress summary used by subsequent chapters."""
+    tracking_dir = work_dir / "追踪"
+    ensure_tracking_files(work_dir)
+
+    from datetime import datetime
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    words = count_chinese_chars(draft)
+    summary = str(summary_short or draft[:220].replace("\n", " ")).strip()
+
+    _save_file(
+        tracking_dir / "上下文.md",
+        f"## 写作上下文\n\n"
+        f"- 当前进度：第{chapter_number}章已完成\n"
+        f"- 字数：{words}字\n"
+        f"- 本章摘要：{summary}\n"
+        f"- 上次更新时间：{now}\n"
+        f"- 下一章：第{chapter_number + 1}章\n",
+    )
+    _upsert_section(
+        tracking_dir / "全书进展.md",
+        "## 全书进展",
+        f"- 当前进度：第{chapter_number}章已完成\n"
+        f"- 最近更新：{now}\n"
+        f"- 最新章节摘要：{summary}\n"
+        f"- 下一章：第{chapter_number + 1}章\n",
+    )
+
+
 def update_tracking_files(
     work_dir: Path,
     chapter_number: int,
     draft: str,
     client: DeepSeekClient | None = None,
+    *,
+    advance_current: bool = True,
 ) -> None:
     """Update foreshadowing, timeline, character state, and context after writing."""
     tracking_dir = work_dir / "追踪"
@@ -728,18 +820,6 @@ def update_tracking_files(
     continuation_constraints = [str(x) for x in memory.get("continuation_constraints") or [] if str(x).strip()]
     key_entities = [str(x) for x in memory.get("key_entities") or [] if str(x).strip()]
 
-    # Update context
-    context_path = tracking_dir / "上下文.md"
-    _save_file(
-        context_path,
-        f"## 写作上下文\n\n"
-        f"- 当前进度：第{chapter_number}章已完成\n"
-        f"- 字数：{words}字\n"
-        f"- 本章摘要：{summary_short}\n"
-        f"- 上次更新时间：{now}\n"
-        f"- 下一章：第{chapter_number + 1}章\n",
-    )
-
     section_heading = f"## 第{chapter_number}章"
     section_body = (
         f"- 更新时间：{now}\n"
@@ -748,14 +828,8 @@ def update_tracking_files(
         + (f"- 关键实体：{'、'.join(key_entities)}\n" if key_entities else "")
     )
 
-    _upsert_section(
-        tracking_dir / "全书进展.md",
-        "## 全书进展",
-        f"- 当前进度：第{chapter_number}章已完成\n"
-        f"- 最近更新：{now}\n"
-        f"- 最新章节摘要：{summary_short}\n"
-        f"- 下一章：第{chapter_number + 1}章\n",
-    )
+    if advance_current:
+        refresh_tracking_head(work_dir, chapter_number, draft, summary_short=summary_short)
     _upsert_section(tracking_dir / "全书进展.md", section_heading, section_body)
     _upsert_section(
         tracking_dir / "时间线.md",
@@ -839,7 +913,7 @@ def revise_chapter_once(
         "source": source_text,
     })
     revised = _llm(client, system, user, thinking=True).strip()
-    revised = run_deslop(client, revised)
+    revised = ensure_chapter_heading(run_deslop(client, revised), chapter_number)
     new_review = run_story_review(client, revised, work_dir, chapter_number, outline)
     return revised, new_review
 
@@ -874,7 +948,7 @@ def run_full_chapter(
     polished_words = count_chinese_chars(polished)
 
     # 4. De-AI
-    final = run_deslop(client, polished)
+    final = ensure_chapter_heading(run_deslop(client, polished), chapter_number)
     final_words = count_chinese_chars(final)
 
     # 5. Continuity check
@@ -903,8 +977,10 @@ def run_full_chapter(
 __all__ = [
     "assemble_context",
     "count_chinese_chars",
+    "ensure_chapter_heading",
     "run_full_chapter",
     "run_draft",
+    "rewrite_chapter_from_source",
     "run_expand",
     "run_polish",
     "run_deslop",
@@ -915,6 +991,7 @@ __all__ = [
     "run_continuity_check",
     "revise_chapter_once",
     "update_tracking_files",
+    "refresh_tracking_head",
     "ensure_tracking_files",
     "chapter_dir",
     "chapter_final_path",

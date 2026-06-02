@@ -1,11 +1,16 @@
-"""DeepSeek v4-pro / v4-flash chat client with prompt-cache + thinking-mode support.
+"""Chat-completions client with DeepSeek defaults and multi-provider support.
 
 Configuration is sourced from ``LoadedConfig.data['deepseek']``:
 
+- ``provider``            default ``deepseek``; supports openai/google/anthropic/zhipu/qwen/custom
+- ``protocol``            default ``openai``; custom relays may use ``anthropic``
+- ``api_key``             provider API key
+- ``base_url``            provider API base URL
 - ``model``               default ``deepseek-v4-pro``
 - ``flash_model``         default ``deepseek-v4-flash`` (used by cost-driven downgrade)
 - ``thinking_mode``       default ``True`` (pro reasoning mode on / off)
 - ``prompt_cache_enabled``default ``True`` (1M context prompt cache)
+- ``max_output_tokens``   default ``16384`` (required by Anthropic Messages)
 - ``timeout_seconds``     default ``120`` (Phase 4 polish calls run long)
 - ``max_retries``         default ``3``
 - ``mock``                default ``False`` (forced True when api_key is empty
@@ -20,6 +25,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from http.client import IncompleteRead, RemoteDisconnected
@@ -51,14 +57,17 @@ _RETRYABLE_ERRORS = (
 
 @dataclass(frozen=True)
 class DeepSeekSettings:
-    """Resolved DeepSeek runtime settings."""
+    """Resolved LLM runtime settings."""
 
     api_key: str
+    provider: str = "deepseek"
+    protocol: str = "openai"
     base_url: str = "https://api.deepseek.com"
     model: str = "deepseek-v4-pro"
     flash_model: str = "deepseek-v4-flash"
     thinking_mode: bool = True
     prompt_cache_enabled: bool = True
+    max_output_tokens: int = 16384
     timeout_seconds: int = 120
     max_retries: int = 3
     mock: bool = False
@@ -99,7 +108,7 @@ class ChatCompletion:
 
 
 class DeepSeekClient:
-    """Small facade around DeepSeek chat completions tuned for c_pipeline.
+    """Small facade around chat completions tuned for c_pipeline.
 
     The client never reads credentials from disk directly: callers must build a
     ``LoadedConfig`` (which itself loads from config.yaml + environment via
@@ -111,6 +120,7 @@ class DeepSeekClient:
     def __init__(self, config: LoadedConfig) -> None:
         self.config = config
         self.settings = self._resolve_settings(config)
+        self._usage_context: dict[str, Any] = {}
 
     # ------------------------------------------------------------------ public
 
@@ -118,6 +128,21 @@ class DeepSeekClient:
         """Return whether calls should be mocked instead of sent to DeepSeek."""
 
         return self.config.is_dry_run or self.settings.mock or not self.settings.api_key
+
+    def set_usage_context(
+        self,
+        *,
+        work_type: str,
+        work_id: int,
+        work_title: str,
+    ) -> "DeepSeekClient":
+        """Attach a stable work snapshot to later token-usage records."""
+        self._usage_context = {
+            "work_type": str(work_type),
+            "work_id": int(work_id),
+            "work_title": str(work_title),
+        }
+        return self
 
     def chat_completion(
         self,
@@ -168,13 +193,21 @@ class DeepSeekClient:
     def _resolve_settings(config: LoadedConfig) -> DeepSeekSettings:
         deepseek = config.data.get("deepseek", {})
         api_key = str(deepseek.get("api_key") or "")
+        provider = _normalize_provider(str(deepseek.get("provider") or "deepseek"))
+        defaults = provider_defaults(provider)
+        protocol = _normalize_protocol(str(deepseek.get("protocol") or defaults["protocol"]))
+        model = str(deepseek.get("model") or defaults["model"])
+        flash_model = str(deepseek.get("flash_model") or (defaults.get("flash_model") or model))
         return DeepSeekSettings(
             api_key=api_key,
-            base_url=str(deepseek.get("base_url") or "https://api.deepseek.com").rstrip("/"),
-            model=str(deepseek.get("model") or "deepseek-v4-pro"),
-            flash_model=str(deepseek.get("flash_model") or "deepseek-v4-flash"),
+            provider=provider,
+            protocol=protocol,
+            base_url=str(deepseek.get("base_url") or defaults["base_url"]).rstrip("/"),
+            model=model,
+            flash_model=flash_model,
             thinking_mode=bool(deepseek.get("thinking_mode", True)),
             prompt_cache_enabled=bool(deepseek.get("prompt_cache_enabled", True)),
+            max_output_tokens=int(deepseek.get("max_output_tokens") or 16384),
             timeout_seconds=int(deepseek.get("timeout_seconds") or 120),
             max_retries=int(deepseek.get("max_retries") or 3),
             mock=bool(deepseek.get("mock") or not api_key),
@@ -190,26 +223,20 @@ class DeepSeekClient:
         response_format: Mapping[str, Any] | None,
         purpose: str,
     ) -> ChatCompletion:
-        url = f"{self.settings.base_url}/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {self.settings.api_key}",
-            "Content-Type": "application/json",
-        }
-        payload: dict[str, Any] = {
-            "model": model,
-            "messages": [dict(m) for m in messages],
-            "temperature": temperature,
-            "thinking_mode": thinking_mode,
-        }
-        if self.settings.prompt_cache_enabled:
-            payload["prompt_cache_enabled"] = True
-        if response_format is not None:
-            payload["response_format"] = dict(response_format)
+        url, headers, payload = self._build_live_request(
+            messages,
+            model=model,
+            thinking_mode=thinking_mode,
+            temperature=temperature,
+            response_format=response_format,
+        )
 
         last_error: Exception | None = None
+        overall_started = time.monotonic()
         attempts = max(self.settings.max_retries, 1)
         for attempt in range(attempts):
             try:
+                attempt_started = time.monotonic()
                 request = Request(
                     url,
                     data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
@@ -217,14 +244,26 @@ class DeepSeekClient:
                     method="POST",
                 )
                 with urlopen(request, timeout=self.settings.timeout_seconds) as response:
-                    response_data = json.loads(response.read().decode("utf-8"))
-                completion = _parse_completion(response_data, model)
-                self._record_usage(model, purpose, completion.usage, success=True)
+                    completion, first_sentence_seconds = _read_streaming_completion(
+                        response,
+                        model=model,
+                        protocol=self.settings.protocol,
+                        started_at=attempt_started,
+                    )
+                duration_seconds = time.monotonic() - attempt_started
+                self._record_usage(
+                    model,
+                    purpose,
+                    completion.usage,
+                    success=True,
+                    duration_seconds=duration_seconds,
+                    first_sentence_seconds=first_sentence_seconds,
+                )
                 return completion
             except _RETRYABLE_ERRORS as exc:
                 last_error = exc
                 logger.warning(
-                    "DeepSeek chat_completion attempt %d/%d failed for %s: %s",
+                    "LLM chat_completion attempt %d/%d failed for %s: %s",
                     attempt + 1,
                     attempts,
                     purpose,
@@ -233,8 +272,76 @@ class DeepSeekClient:
                 if attempt < attempts - 1:
                     time.sleep(min(2.0, 0.25 * (2 ** attempt)))
 
-        self._record_usage_failure(model, purpose, str(last_error))
-        raise DeepSeekClientError(f"DeepSeek chat_completion failed: {last_error}")
+        self._record_usage_failure(
+            model,
+            purpose,
+            str(last_error),
+            duration_seconds=time.monotonic() - overall_started,
+        )
+        raise DeepSeekClientError(f"LLM chat_completion failed: {last_error}")
+
+    def _build_live_request(
+        self,
+        messages: Sequence[Mapping[str, Any]],
+        *,
+        model: str,
+        thinking_mode: bool,
+        temperature: float,
+        response_format: Mapping[str, Any] | None,
+    ) -> tuple[str, dict[str, str], dict[str, Any]]:
+        provider = self.settings.provider
+        if self.settings.protocol == "anthropic":
+            system_parts: list[str] = []
+            anth_messages: list[dict[str, str]] = []
+            for message in messages:
+                role = str(message.get("role") or "user")
+                content = str(message.get("content") or "")
+                if role == "system":
+                    system_parts.append(content)
+                elif role in {"assistant", "user"}:
+                    anth_messages.append({"role": role, "content": content})
+                else:
+                    anth_messages.append({"role": "user", "content": content})
+            if not anth_messages:
+                anth_messages.append({"role": "user", "content": ""})
+            payload: dict[str, Any] = {
+                "model": model,
+                "messages": anth_messages,
+                "max_tokens": self.settings.max_output_tokens,
+                "temperature": temperature,
+                "stream": True,
+            }
+            if system_parts:
+                payload["system"] = "\n\n".join(system_parts)
+            return (
+                _join_endpoint(self.settings.base_url, "messages"),
+                {
+                    "x-api-key": self.settings.api_key,
+                    "anthropic-version": "2023-06-01",
+                    "Content-Type": "application/json",
+                },
+                payload,
+            )
+
+        payload = {
+            "model": model,
+            "messages": [dict(m) for m in messages],
+            "temperature": temperature,
+            "stream": True,
+            "stream_options": {"include_usage": True},
+        }
+        if provider == "deepseek" and thinking_mode:
+            payload["thinking"] = {"type": "enabled"}
+        if response_format is not None:
+            payload["response_format"] = dict(response_format)
+        return (
+            _join_endpoint(self.settings.base_url, "chat/completions"),
+            {
+                "Authorization": f"Bearer {self.settings.api_key}",
+                "Content-Type": "application/json",
+            },
+            payload,
+        )
 
     def _mock_completion(
         self,
@@ -266,7 +373,16 @@ class DeepSeekClient:
         )
         return ChatCompletion(text=text, reasoning=reasoning, model=model, usage=usage, finish_reason="stop", cached=False)
 
-    def _record_usage(self, model: str, purpose: str, usage: ChatUsage, *, success: bool) -> None:
+    def _record_usage(
+        self,
+        model: str,
+        purpose: str,
+        usage: ChatUsage,
+        *,
+        success: bool,
+        duration_seconds: float | None = None,
+        first_sentence_seconds: float | None = None,
+    ) -> None:
         try:
             from review_queue.db import get_database_path
             from review_queue.metrics import estimate_cost_cny, record_api_usage
@@ -274,37 +390,289 @@ class DeepSeekClient:
             cost = estimate_cost_cny(usage.input_tokens, usage.output_tokens)
             record_api_usage(
                 get_database_path(self.config),
-                provider="deepseek",
+                provider=self.settings.provider,
                 model=model,
                 purpose=purpose,
+                **self._usage_context,
                 prompt_tokens=usage.input_tokens,
                 completion_tokens=usage.output_tokens,
+                cached_tokens=usage.cached_tokens,
                 total_tokens=usage.input_tokens + usage.output_tokens,
                 cost_cny=cost,
+                duration_seconds=duration_seconds,
+                first_sentence_seconds=first_sentence_seconds,
                 success=success,
             )
         except Exception as exc:  # pragma: no cover - never break the pipeline
             logger.debug("token usage recording skipped: %s", exc)
 
-    def _record_usage_failure(self, model: str, purpose: str, error: str) -> None:
+    def _record_usage_failure(
+        self,
+        model: str,
+        purpose: str,
+        error: str,
+        *,
+        duration_seconds: float | None = None,
+    ) -> None:
         try:
             from review_queue.db import get_database_path
             from review_queue.metrics import record_api_usage
 
             record_api_usage(
                 get_database_path(self.config),
-                provider="deepseek",
+                provider=self.settings.provider,
                 model=model,
                 purpose=purpose,
+                **self._usage_context,
                 prompt_tokens=0,
                 completion_tokens=0,
                 total_tokens=0,
                 cost_cny=0.0,
+                duration_seconds=duration_seconds,
                 success=False,
                 error=error[:500],
             )
         except Exception as exc:  # pragma: no cover
             logger.debug("usage failure recording skipped: %s", exc)
+
+
+_SENTENCE_END_RE = re.compile(r"[。！？!?；;\n]|(?:\.(?:\s|$))")
+
+
+def _read_streaming_completion(
+    response: Any,
+    *,
+    model: str,
+    protocol: str,
+    started_at: float,
+) -> tuple[ChatCompletion, float | None]:
+    """Read SSE when available and measure when the first sentence is usable."""
+    raw_body = bytearray()
+    text_parts: list[str] = []
+    reasoning_parts: list[str] = []
+    usage: dict[str, Any] = {}
+    response_model = model
+    finish_reason: str | None = None
+    first_sentence_seconds: float | None = None
+    saw_sse = False
+
+    for raw_line in _iter_response_lines(response):
+        raw_body.extend(raw_line)
+        line = raw_line.decode("utf-8").strip()
+        if not line.startswith("data:"):
+            continue
+        saw_sse = True
+        raw_data = line[5:].strip()
+        if not raw_data or raw_data == "[DONE]":
+            continue
+        event = json.loads(raw_data)
+        if protocol == "anthropic":
+            event_type = str(event.get("type") or "")
+            if event_type == "message_start":
+                message = event.get("message") or {}
+                response_model = str(message.get("model") or response_model)
+                usage.update(message.get("usage") or {})
+            elif event_type == "content_block_delta":
+                delta = event.get("delta") or {}
+                if delta.get("type") == "text_delta":
+                    first_sentence_seconds = _append_text_and_measure(
+                        text_parts, str(delta.get("text") or ""), started_at, first_sentence_seconds,
+                    )
+            elif event_type == "message_delta":
+                delta = event.get("delta") or {}
+                finish_reason = str(delta.get("stop_reason") or "") or finish_reason
+                usage.update(event.get("usage") or {})
+            continue
+
+        response_model = str(event.get("model") or response_model)
+        if event.get("usage"):
+            usage.update(event["usage"])
+        choices = event.get("choices") or []
+        if not choices:
+            continue
+        first = choices[0] or {}
+        delta = first.get("delta") or {}
+        first_sentence_seconds = _append_text_and_measure(
+            text_parts, str(delta.get("content") or ""), started_at, first_sentence_seconds,
+        )
+        reasoning = delta.get("reasoning_content") or delta.get("reasoning")
+        if reasoning:
+            reasoning_parts.append(str(reasoning))
+        if first.get("finish_reason") is not None:
+            finish_reason = str(first["finish_reason"])
+
+    if not saw_sse:
+        completion = _parse_live_completion(json.loads(bytes(raw_body).decode("utf-8")), model, protocol)
+        latency = (time.monotonic() - started_at) if completion.text else None
+        return completion, latency
+
+    text = "".join(text_parts).strip()
+    if text and first_sentence_seconds is None:
+        first_sentence_seconds = time.monotonic() - started_at
+    if protocol == "anthropic":
+        parsed_usage = ChatUsage(
+            input_tokens=int(usage.get("input_tokens") or 0),
+            cached_tokens=int(usage.get("cache_read_input_tokens") or 0),
+            output_tokens=int(usage.get("output_tokens") or 0),
+            raw=dict(usage),
+        )
+    else:
+        parsed_usage = _parse_usage(usage)
+    return (
+        ChatCompletion(
+            text=text,
+            reasoning="".join(reasoning_parts).strip() or None,
+            model=response_model,
+            usage=parsed_usage,
+            finish_reason=finish_reason,
+            cached=parsed_usage.cached_tokens > 0,
+        ),
+        first_sentence_seconds,
+    )
+
+
+def _iter_response_lines(response: Any) -> Iterable[bytes]:
+    readline = getattr(response, "readline", None)
+    if not callable(readline):
+        yield response.read()
+        return
+    while True:
+        line = readline()
+        if not line:
+            return
+        yield line
+
+
+def _append_text_and_measure(
+    text_parts: list[str],
+    piece: str,
+    started_at: float,
+    current: float | None,
+) -> float | None:
+    if piece:
+        text_parts.append(piece)
+    if current is None and text_parts and _SENTENCE_END_RE.search("".join(text_parts)):
+        return time.monotonic() - started_at
+    return current
+
+
+def provider_defaults(provider: str) -> dict[str, str]:
+    provider = _normalize_provider(provider)
+    defaults = {
+        "deepseek": {
+            "label": "DeepSeek",
+            "protocol": "openai",
+            "base_url": "https://api.deepseek.com",
+            "model": "deepseek-v4-pro",
+            "flash_model": "deepseek-v4-flash",
+        },
+        "openai": {
+            "label": "OpenAI",
+            "protocol": "openai",
+            "base_url": "https://api.openai.com/v1",
+            "model": "gpt-4.1",
+            "flash_model": "gpt-4.1-mini",
+        },
+        "google": {
+            "label": "Google Gemini",
+            "protocol": "openai",
+            "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+            "model": "gemini-2.5-flash",
+            "flash_model": "gemini-2.5-flash-lite",
+        },
+        "anthropic": {
+            "label": "Anthropic Claude",
+            "protocol": "anthropic",
+            "base_url": "https://api.anthropic.com/v1",
+            "model": "claude-sonnet-4-6",
+            "flash_model": "claude-haiku-4-5",
+        },
+        "zhipu": {
+            "label": "智谱 GLM",
+            "protocol": "openai",
+            "base_url": "https://open.bigmodel.cn/api/paas/v4",
+            "model": "glm-5.1",
+            "flash_model": "glm-4.7-flashx",
+        },
+        "qwen": {
+            "label": "通义千问 Qwen",
+            "protocol": "openai",
+            "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "model": "qwen3.6-plus",
+            "flash_model": "qwen3.6-flash",
+        },
+        "custom": {
+            "label": "自定义 / 第三方中转",
+            "protocol": "openai",
+            "base_url": "",
+            "model": "",
+            "flash_model": "",
+        },
+    }
+    return defaults.get(provider, defaults["custom"])
+
+
+def _normalize_provider(provider: str) -> str:
+    value = (provider or "deepseek").strip().lower()
+    aliases = {
+        "gemini": "google",
+        "google-gemini": "google",
+        "claude": "anthropic",
+        "zhipuai": "zhipu",
+        "bigmodel": "zhipu",
+        "dashscope": "qwen",
+        "aliyun": "qwen",
+        "openai-compatible": "custom",
+    }
+    return aliases.get(value, value if value in {"deepseek", "openai", "google", "anthropic", "zhipu", "qwen", "custom"} else "custom")
+
+
+def _normalize_protocol(protocol: str) -> str:
+    value = (protocol or "openai").strip().lower()
+    aliases = {
+        "chat-completions": "openai",
+        "openai-compatible": "openai",
+        "messages": "anthropic",
+        "claude": "anthropic",
+    }
+    value = aliases.get(value, value)
+    return value if value in {"openai", "anthropic"} else "openai"
+
+
+def _join_endpoint(base_url: str, suffix: str) -> str:
+    base = str(base_url or "").rstrip("/")
+    suffix = suffix.strip("/")
+    if base.endswith("/" + suffix):
+        return base
+    return f"{base}/{suffix}"
+
+
+def _parse_live_completion(response_data: Mapping[str, Any], model: str, protocol: str) -> ChatCompletion:
+    if protocol == "anthropic":
+        content = response_data.get("content") or []
+        parts: list[str] = []
+        if isinstance(content, list):
+            for item in content:
+                if isinstance(item, Mapping):
+                    text = item.get("text")
+                    if text:
+                        parts.append(str(text))
+        usage = response_data.get("usage") or {}
+        parsed_usage = ChatUsage(
+            input_tokens=int(usage.get("input_tokens") or 0),
+            cached_tokens=int(usage.get("cache_read_input_tokens") or 0),
+            output_tokens=int(usage.get("output_tokens") or 0),
+            raw=dict(usage),
+        )
+        return ChatCompletion(
+            text="\n".join(parts).strip(),
+            reasoning=None,
+            model=str(response_data.get("model") or model),
+            usage=parsed_usage,
+            finish_reason=str(response_data.get("stop_reason") or "") or None,
+            cached=False,
+        )
+    return _parse_completion(response_data, model)
 
 
 def _parse_completion(response_data: Mapping[str, Any], model: str) -> ChatCompletion:
@@ -369,4 +737,5 @@ __all__ = [
     "DeepSeekClient",
     "DeepSeekClientError",
     "DeepSeekSettings",
+    "provider_defaults",
 ]

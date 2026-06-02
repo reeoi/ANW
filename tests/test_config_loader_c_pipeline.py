@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -161,10 +162,30 @@ def test_missing_api_key_forces_dry_run_and_warning(
     # Isolate from the project .env which carries a real DEEPSEEK_API_KEY.
     monkeypatch.setenv("ANP_DOTENV", str(tmp_path / "missing.env"))
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
     config = load_config(cfg)
     assert config.is_dry_run is True
     assert config.data["deepseek"]["mock"] is True
-    assert any("DeepSeek API key" in w for w in config.warnings)
+    assert any("LLM API key" in w for w in config.warnings)
+
+
+def test_dotenv_values_do_not_leak_into_process_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text("deepseek:\n  api_key: \"\"\n", encoding="utf-8")
+    env_file = tmp_path / ".env"
+    env_file.write_text("LLM_API_KEY=dotenv-only-key\nLLM_PROVIDER=qwen\n", encoding="utf-8")
+    monkeypatch.setenv("ANP_DOTENV", str(env_file))
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    monkeypatch.delenv("LLM_PROVIDER", raising=False)
+
+    loaded = load_config(cfg)
+
+    assert loaded.data["deepseek"]["api_key"] == "dotenv-only-key"
+    assert loaded.data["deepseek"]["provider"] == "qwen"
+    assert "LLM_API_KEY" not in os.environ
+    assert "LLM_PROVIDER" not in os.environ
 
 
 def test_missing_config_path_raises_clear_error(tmp_path: Path) -> None:

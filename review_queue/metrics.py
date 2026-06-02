@@ -26,10 +26,17 @@ CREATE TABLE IF NOT EXISTS api_usage (
     provider TEXT NOT NULL,
     model TEXT,
     purpose TEXT,
+    work_type TEXT,
+    work_id INTEGER,
+    work_title TEXT,
     prompt_tokens INTEGER NOT NULL DEFAULT 0,
+    cached_tokens INTEGER NOT NULL DEFAULT 0,
     completion_tokens INTEGER NOT NULL DEFAULT 0,
     total_tokens INTEGER NOT NULL DEFAULT 0,
     cost_cny REAL NOT NULL DEFAULT 0.0,
+    duration_seconds REAL,
+    first_byte_seconds REAL,
+    first_sentence_seconds REAL,
     success INTEGER NOT NULL DEFAULT 1,
     error TEXT
 );
@@ -65,6 +72,22 @@ def ensure_metrics_schema(db_path: str | Path) -> None:
     try:
         with sqlite3.connect(Path(db_path)) as connection:
             connection.executescript(METRICS_SCHEMA)
+            columns = {
+                str(row[1])
+                for row in connection.execute("PRAGMA table_info(api_usage)").fetchall()
+            }
+            additions = {
+                "cached_tokens": "INTEGER NOT NULL DEFAULT 0",
+                "work_type": "TEXT",
+                "work_id": "INTEGER",
+                "work_title": "TEXT",
+                "duration_seconds": "REAL",
+                "first_byte_seconds": "REAL",
+                "first_sentence_seconds": "REAL",
+            }
+            for name, declaration in additions.items():
+                if name not in columns:
+                    connection.execute(f"ALTER TABLE api_usage ADD COLUMN {name} {declaration}")
     except sqlite3.Error as exc:  # pragma: no cover - defensive
         logger.warning("ensure_metrics_schema failed: %s", exc)
 
@@ -75,10 +98,17 @@ def record_api_usage(
     provider: str,
     model: str | None,
     purpose: str,
+    work_type: str | None = None,
+    work_id: int | None = None,
+    work_title: str | None = None,
     prompt_tokens: int,
     completion_tokens: int,
+    cached_tokens: int = 0,
     total_tokens: int | None = None,
     cost_cny: float = 0.0,
+    duration_seconds: float | None = None,
+    first_byte_seconds: float | None = None,
+    first_sentence_seconds: float | None = None,
     success: bool = True,
     error: str | None = None,
 ) -> None:
@@ -90,25 +120,126 @@ def record_api_usage(
             connection.execute(
                 """
                 INSERT INTO api_usage(
-                    provider, model, purpose,
-                    prompt_tokens, completion_tokens, total_tokens,
-                    cost_cny, success, error
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    provider, model, purpose, work_type, work_id, work_title,
+                    prompt_tokens, cached_tokens, completion_tokens, total_tokens,
+                    cost_cny, duration_seconds, first_byte_seconds,
+                    first_sentence_seconds, success, error
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     provider,
                     model,
                     purpose,
+                    work_type,
+                    work_id,
+                    work_title,
                     int(prompt_tokens),
+                    int(cached_tokens),
                     int(completion_tokens),
                     total,
                     float(cost_cny),
+                    float(duration_seconds) if duration_seconds is not None else None,
+                    float(first_byte_seconds) if first_byte_seconds is not None else None,
+                    float(first_sentence_seconds) if first_sentence_seconds is not None else None,
                     1 if success else 0,
                     error,
                 ),
             )
     except sqlite3.Error as exc:  # pragma: no cover - defensive
         logger.warning("record_api_usage failed: %s", exc)
+
+
+def list_api_usage_logs(db_path: str | Path, limit: int = 80) -> list[dict[str, Any]]:
+    """Return recent DeepSeek usage rows ordered newest first."""
+    ensure_metrics_schema(db_path)
+    capped = max(1, min(int(limit or 80), 500))
+    with sqlite3.connect(Path(db_path)) as connection:
+        connection.row_factory = sqlite3.Row
+        rows = connection.execute(
+            """
+            SELECT
+                id,
+                occurred_at,
+                provider,
+                model,
+                purpose,
+                work_type,
+                work_id,
+                work_title,
+                prompt_tokens,
+                cached_tokens,
+                completion_tokens,
+                total_tokens,
+                cost_cny,
+                duration_seconds,
+                first_byte_seconds,
+                first_sentence_seconds,
+                success,
+                error
+            FROM api_usage
+            ORDER BY occurred_at DESC, id DESC
+            LIMIT ?
+            """,
+            (capped,),
+        ).fetchall()
+        sole_long_novel = _sole_long_novel_book(connection)
+
+    items: list[dict[str, Any]] = []
+    for row in rows:
+        work_type = str(row["work_type"] or "")
+        work_id = int(row["work_id"]) if row["work_id"] is not None else None
+        work_title = str(row["work_title"] or "")
+        association_inferred = False
+        if (
+            not work_title
+            and str(row["purpose"] or "").startswith("long_novel_")
+            and sole_long_novel is not None
+        ):
+            work_type = "long_novel"
+            work_id = sole_long_novel["id"]
+            work_title = sole_long_novel["title"]
+            association_inferred = True
+
+        items.append({
+            "id": int(row["id"]),
+            "occurred_at": str(row["occurred_at"] or ""),
+            "provider": str(row["provider"] or ""),
+            "model": str(row["model"] or ""),
+            "purpose": str(row["purpose"] or ""),
+            "phase": str(row["purpose"] or ""),
+            "work_type": work_type,
+            "work_id": work_id,
+            "work_title": work_title,
+            "book_id": work_id if work_type == "long_novel" else None,
+            "book_title": work_title if work_type == "long_novel" else "",
+            "story_id": work_id if work_type == "short_story" else None,
+            "story_title": work_title if work_type == "short_story" else "",
+            "association_inferred": association_inferred,
+            "prompt_tokens": int(row["prompt_tokens"] or 0),
+            "input_tokens": int(row["prompt_tokens"] or 0),
+            "cached_tokens": int(row["cached_tokens"] or 0),
+            "completion_tokens": int(row["completion_tokens"] or 0),
+            "output_tokens": int(row["completion_tokens"] or 0),
+            "total_tokens": int(row["total_tokens"] or 0),
+            "cost_cny": float(row["cost_cny"] or 0.0),
+            "duration_seconds": float(row["duration_seconds"]) if row["duration_seconds"] is not None else None,
+            "first_byte_seconds": float(row["first_byte_seconds"]) if row["first_byte_seconds"] is not None else None,
+            "first_sentence_seconds": float(row["first_sentence_seconds"]) if row["first_sentence_seconds"] is not None else None,
+            "success": bool(row["success"]),
+            "error": str(row["error"] or ""),
+        })
+    return items
+
+
+def _sole_long_novel_book(connection: sqlite3.Connection) -> dict[str, Any] | None:
+    """Return the only current long-novel book for legacy usage attribution."""
+    try:
+        rows = connection.execute("SELECT id, title FROM ln_books ORDER BY id LIMIT 2").fetchall()
+    except sqlite3.OperationalError:
+        return None
+    if len(rows) != 1:
+        return None
+    return {"id": int(rows[0]["id"]), "title": str(rows[0]["title"] or "")}
 
 
 def record_pipeline_event(
@@ -275,6 +406,7 @@ __all__ = [
     "DEFAULT_PROMPT_PRICE_CNY_PER_1K",
     "ensure_metrics_schema",
     "estimate_cost_cny",
+    "list_api_usage_logs",
     "query_overview",
     "record_api_usage",
     "record_pipeline_event",
