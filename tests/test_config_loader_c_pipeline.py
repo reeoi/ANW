@@ -36,18 +36,12 @@ def test_default_config_yaml_parses_with_c_pipeline_fields() -> None:
     assert audit["rewrite_strategy"] == "phase_4_5_only"
     assert audit["max_rewrite_attempts"] == 3
 
-    publisher = config.data["publisher"]
-    assert publisher["daily_count_distribution"] == "uniform"
-    assert publisher["daily_count_min"] == 0
-    assert publisher["daily_count_max"] == 5
-    assert publisher["operating_hours"] == ["09:00", "22:00"]
-    assert publisher["slot_min_gap_minutes"] == 30
+    assert "publisher" not in config.data
 
     scheduler = config.data["scheduler"]
     assert scheduler["weekly_scan_cron"] == "0 3 * * 1"
     assert scheduler["plan_today_cron"] == "0 3 * * *"
     assert scheduler["generate_cron"] == ""
-    assert scheduler["publish_cron"] == ""
 
     scan = config.data["scan"]
     assert scan["pool_size"] == 100
@@ -146,17 +140,6 @@ def test_env_override_for_on_budget_exceeded(tmp_path: Path, monkeypatch: pytest
     monkeypatch.setenv("ANW_ON_BUDGET_EXCEEDED", "stop")
     config = load_config(cfg)
     assert config.data["cost_limits"]["on_budget_exceeded"] == "stop"
-
-
-def test_env_override_for_publisher_slot_gap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    cfg = tmp_path / "config.yaml"
-    cfg.write_text(
-        "deepseek:\n  api_key: \"sk-test\"\npublisher:\n  slot_min_gap_minutes: 30\n",
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("ANW_SLOT_MIN_GAP_MINUTES", "45")
-    config = load_config(cfg)
-    assert config.data["publisher"]["slot_min_gap_minutes"] == 45
 
 
 def test_missing_api_key_forces_dry_run_and_warning(

@@ -42,7 +42,7 @@ def test_progress_phase_0_baseline_treats_as_running() -> None:
 def test_progress_phase_2_done_reports_one_third_progress() -> None:
     info = compute_phase_progress("phase_2_done")
     assert info.state == "running"
-    assert info.percent == round(3 / 9 * 100, 1)
+    assert info.percent == round(3 / 8 * 100, 1)
     assert [s.status for s in info.steps[:3]] == ["done", "done", "done"]
     assert info.steps[3].status == "in_progress"
     assert info.steps[3].phase == "phase_3"
@@ -57,16 +57,16 @@ def test_progress_phase_5_done_advances_to_review() -> None:
     assert info.steps[6].phase == "phase_6"
 
 
-def test_progress_phase_8_done_is_complete() -> None:
-    """全流程完成（生成 + 审核 + 发布）才算 100%。"""
-    info = compute_phase_progress("phase_8_done")
+def test_progress_phase_7_done_is_complete() -> None:
+    """全流程完成（生成 + 审核）才算 100%。"""
+    info = compute_phase_progress("phase_7_done")
     assert info.state == "done"
     assert info.percent == 100.0
     for step in info.steps:
         assert step.status == "done"
 
 
-def test_progress_phase_6_done_advances_to_publish() -> None:
+def test_progress_phase_6_done_advances_to_review() -> None:
     """分章完成 → phase_6_done，进入 phase_7 AI 审核。"""
     info = compute_phase_progress("phase_6_done")
     assert info.state == "running"
@@ -81,7 +81,6 @@ def test_progress_phase_7_needs_human() -> None:
     assert info.state == "needs_human"
     assert info.steps[5].status == "done"      # phase_5
     assert info.steps[7].status in ("in_progress", "needs_human")
-    assert info.steps[8].status == "pending"
 
 
 def test_progress_phase_7_rejected_marks_failed() -> None:
@@ -89,22 +88,6 @@ def test_progress_phase_7_rejected_marks_failed() -> None:
     info = compute_phase_progress("phase_7_rejected")
     assert info.state == "failed"
     assert info.failed_at == "phase_7"
-
-
-def test_progress_phase_8_failed_can_retry() -> None:
-    """发布失败 → phase_8 失败，但 phase_0~7 已完成。"""
-    info = compute_phase_progress("phase_8_failed")
-    assert info.state == "failed"
-    assert info.failed_at == "phase_8"
-    assert info.steps[7].status == "done"
-    assert info.steps[8].status in ("failed", "in_progress")
-
-
-def test_progress_phase_8_paused_marks_paused() -> None:
-    """发布暂停（风控/登录态）。"""
-    info = compute_phase_progress("phase_8_paused")
-    assert info.state == "paused"
-    assert info.failed_at == "phase_8"
 
 
 def test_progress_phase_3_running_marks_phase_3_in_progress() -> None:
@@ -151,14 +134,13 @@ def test_progress_none_input_treated_as_phase_0() -> None:
     assert info.state == "running"
 
 
-def test_progress_phases_constant_is_nine_entries() -> None:
-    """生成 7 阶段 + 审核 + 发布 = 9。"""
-    assert len(PHASES) == 9
+def test_progress_phases_constant_is_eight_entries() -> None:
+    """生成 7 阶段 + 审核 = 8。"""
+    assert len(PHASES) == 8
     assert PHASES[0] == "phase_0"
     assert PHASES[5] == "phase_5"
     assert PHASES[6] == "phase_6"
-    assert PHASES[7] == "phase_7"
-    assert PHASES[-1] == "phase_8"
+    assert PHASES[-1] == "phase_7"
 
 
 # ============================================================ list_work_dir_files

@@ -78,10 +78,9 @@ def dry_run(
 
 
 def _check_precondition(condition: str) -> bool:
-    """Check if a precondition is met. Currently only chrome_cdp_connected."""
+    """Check whether a local workflow precondition is met."""
     if condition == "chrome_cdp_connected":
-        from publisher.chrome_launcher import is_cdp_ready
-        return is_cdp_ready()
+        return False
     return True  # unknown conditions pass
 
 

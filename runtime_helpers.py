@@ -96,24 +96,6 @@ def get_monthly_api_limit(config: LoadedConfig) -> float | int | None:
     return cost_limits.get("monthly_budget_cny")
 
 
-def get_publish_delay_range(config: LoadedConfig) -> tuple[int, int]:
-    """Return configured publish delay range in minutes.
-
-    Invalid or missing values fall back to the conservative 5-15 minute window.
-    If min/max are reversed, return them sorted.
-    """
-
-    fansq = _mapping(_mapping(config.data.get("publisher")).get("fansq"))
-    try:
-        min_minutes = int(fansq.get("min_publish_interval_minutes") or 0)
-        max_minutes = int(fansq.get("max_publish_interval_minutes") or 0)
-    except (TypeError, ValueError):
-        return (5, 15)
-    if min_minutes <= 0 or max_minutes <= 0:
-        return (5, 15)
-    return (min(min_minutes, max_minutes), max(min_minutes, max_minutes))
-
-
 _LOG_TS_RE = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}),\d{3}\b")
 
 
@@ -188,6 +170,5 @@ __all__ = [
     "configure_logging",
     "count_stories_by_status",
     "get_monthly_api_limit",
-    "get_publish_delay_range",
     "recent_log_lines",
 ]

@@ -40,7 +40,6 @@ scheduler:
   weekly_scan_cron: "0 3 * * 1"                  # weekly seed evolution Mon 03:00
   plan_today_cron: "0 3 * * *"
   generate_cron: ""
-  publish_cron: ""
   review_cron: "30 9 * * *"
   backup_cron: "0 4 * * *"
 
@@ -70,20 +69,6 @@ c_pipeline:
     phase_4: "auto"
     phase_5: "auto"
     phase_6: "auto"
-
-publisher:
-  daily_count_distribution: "uniform"
-  daily_count_min: 0
-  daily_count_max: 5
-  operating_hours: ["09:00", "22:00"]
-  slot_min_gap_minutes: 30
-  fansq:
-    enabled: true
-    login_state_path: "data/browser/fansq_state.json"
-    draft_url: "https://fanqienovel.com/"
-    min_publish_interval_minutes: 5
-    max_publish_interval_minutes: 15
-    pause_on_risk_control: true
 
 cost_limits:
   monthly_budget_cny: 100.0                      # B2: monthly budget

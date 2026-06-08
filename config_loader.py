@@ -76,7 +76,6 @@ GENERAL_ENV_OVERRIDES: dict[tuple[str, ...], str] = {
     ("cost_limits", "monthly_budget_cny"): "ANW_MONTHLY_BUDGET_CNY",
     ("cost_limits", "daily_token_limit"): "ANW_DAILY_TOKEN_LIMIT",
     ("cost_limits", "on_budget_exceeded"): "ANW_ON_BUDGET_EXCEEDED",
-    ("publisher", "slot_min_gap_minutes"): "ANW_SLOT_MIN_GAP_MINUTES",
     ("scheduler", "enabled"): "ANW_SCHEDULER_ENABLED",
     ("scheduler", "weekly_scan_cron"): "ANW_WEEKLY_SCAN_CRON",
     ("scheduler", "plan_today_cron"): "ANW_PLAN_TODAY_CRON",

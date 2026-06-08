@@ -1,7 +1,7 @@
 """Tests for runtime_helpers (extracted from scheduler.py during scheduler removal).
 
 Covers configure_logging, backup_sqlite_database, recent_log_lines,
-count_stories_by_status, get_publish_delay_range, get_monthly_api_limit.
+count_stories_by_status, and get_monthly_api_limit.
 """
 
 from __future__ import annotations
@@ -28,12 +28,6 @@ def _config(tmp_path: Path) -> LoadedConfig:
             "database": {
                 "sqlite_path": str(tmp_path / "anw.sqlite3"),
                 "backup_dir": str(tmp_path / "backups"),
-            },
-            "publisher": {
-                "fansq": {
-                    "min_publish_interval_minutes": 7,
-                    "max_publish_interval_minutes": 11,
-                },
             },
             "cost_limits": {"monthly_budget_cny": 500},
             "logging": {"level": "INFO", "file": str(tmp_path / "anw.log")},
@@ -70,28 +64,6 @@ def test_backup_sqlite_database_copies_file(tmp_path: Path) -> None:
     assert out is not None
     assert out.exists()
     assert out.parent.name == "backups"
-
-
-# ============================================================ get_publish_delay_range
-
-
-def test_get_publish_delay_range_uses_config(tmp_path: Path) -> None:
-    config = _config(tmp_path)
-    assert runtime_helpers.get_publish_delay_range(config) == (7, 11)
-
-
-def test_get_publish_delay_range_defaults_when_invalid(tmp_path: Path) -> None:
-    config = _config(tmp_path)
-    config.data["publisher"]["fansq"]["min_publish_interval_minutes"] = 0
-    config.data["publisher"]["fansq"]["max_publish_interval_minutes"] = 0
-    assert runtime_helpers.get_publish_delay_range(config) == (5, 15)
-
-
-def test_get_publish_delay_range_swaps_if_min_greater_than_max(tmp_path: Path) -> None:
-    config = _config(tmp_path)
-    config.data["publisher"]["fansq"]["min_publish_interval_minutes"] = 30
-    config.data["publisher"]["fansq"]["max_publish_interval_minutes"] = 10
-    assert runtime_helpers.get_publish_delay_range(config) == (10, 30)
 
 
 # ============================================================ get_monthly_api_limit

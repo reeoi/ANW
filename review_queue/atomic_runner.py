@@ -8,9 +8,6 @@ Decisions (UI-rebuild plan §three):
 - 严格串行: process-global lock, 1 concurrent atomic task.
 - generate (Phase 0-6) failure → retry up to 3 times; otherwise status=failed.
 - AI review failure: handled inside ``review_story_in_database`` (R2 rerun).
-- publish failure: NOT retried this slot; story remains approved; next slot
-  retries it. After 3 consecutive publish failures across any slot, the most
-  recent story is marked needs_human and the scheduler is paused (red banner).
 - cancel_requested honoured inside the orchestrator between phases.
 """
 
@@ -21,7 +18,7 @@ import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Callable
+from typing import Any
 
 from config_loader import LoadedConfig
 from review_queue.db import (
@@ -41,13 +38,12 @@ _PUBLISH_FAIL_STREAK_THRESHOLD = 3
 
 @dataclass(frozen=True)
 class AtomicResult:
-    """Outcome of one atomic generate→review→publish run."""
+    """Outcome of one atomic generate→review run."""
 
     story_id: int | None
-    status: str  # 'published' | 'failed' | 'cancelled' | 'paused' | 'needs_human' | 'no_story'
-    phase: str  # last phase reached: 'generate' | 'review' | 'publish'
+    status: str  # 'approved' | 'failed' | 'cancelled' | 'paused' | 'needs_human' | 'no_story'
+    phase: str  # last phase reached: 'generate' | 'review'
     message: str
-    publish_status: str | None = None
     duration_seconds: float = 0.0
 
 
@@ -58,7 +54,6 @@ class AtomicRunnerState:
         self._lock = threading.RLock()
         self._busy_lock = threading.Lock()
         self._current: dict[str, Any] | None = None
-        self._publish_fail_streak = 0
 
     # -- busy lock ----------------------------------------------------------
     def try_acquire(self) -> bool:
@@ -98,25 +93,10 @@ class AtomicRunnerState:
         with self._lock:
             return None if self._current is None else dict(self._current)
 
-    # -- publish fail streak (per-process, scheduler-only) -------------------
-    def get_publish_fail_streak(self) -> int:
-        with self._lock:
-            return int(self._publish_fail_streak)
-
-    def increment_publish_fail_streak(self) -> int:
-        with self._lock:
-            self._publish_fail_streak += 1
-            return int(self._publish_fail_streak)
-
-    def reset_publish_fail_streak(self) -> None:
-        with self._lock:
-            self._publish_fail_streak = 0
-
     def reset(self) -> None:
         """Reset process-local runner state for tests and fresh manual runs."""
         with self._lock:
             self._current = None
-            self._publish_fail_streak = 0
         while self.is_busy():
             self.release()
 
@@ -200,9 +180,8 @@ def run_full_atomic_task(
     *,
     story_id: int | None = None,
     overrides: dict[str, Any] | None = None,
-    on_publish_fail_streak_exceeded: Callable[[int], None] | None = None,
 ) -> AtomicResult:
-    """Run the full atomic pipeline: generate → AI review → publish.
+    """Run the full atomic pipeline: generate → AI review.
 
     Acquires the global ``AtomicRunnerState`` busy lock for its entire
     duration. When the lock is already held (concurrent invocation), returns
@@ -292,14 +271,14 @@ def run_full_atomic_task(
         update_story_phase(db_path, sid, "phase_7_done")
 
         # ---------------- pipeline stops here (Q6=B 决策) ----------------
-        # 流水线在审核通过后停止；发布永远等用户在 UI 中点"立即发布"。
-        # 旧版本会自动调 ``_publish_one``，已在 v2.0 移除——避免未把关
+        # 流水线在审核通过后停止；后续分发不属于 ANW。
+        # The pipeline stops after review; distribution/export is outside ANW.
         # 内容意外上线 + 让用户在每篇前显式审核。
         return AtomicResult(
             story_id=sid,
             status="approved",
             phase="review",
-            message=f"AI 审核通过 (score={review_summary.final_score})，等待人工触发发布",
+            message=f"AI 审核通过 (score={review_summary.final_score})，等待人工复核",
             duration_seconds=round(time.monotonic() - started, 3),
         )
 
@@ -343,113 +322,11 @@ def kick_off_async(
     return story_id
 
 
-def _publish_one(config: LoadedConfig, story: Story) -> Any:
-    """Publish a single story through the configured platform adapter."""
-
-    from publisher.fansq import FansqPublisher
-
-    publisher = FansqPublisher(config)
-    return publisher.publish_story(story)
-
-
-def _publish_result_status(raw_status: Any) -> str:
-    value = str(raw_status or "").lower()
-    if value == "published" or value.endswith(".published"):
-        return "published"
-    if value in {"publish_paused", "paused"} or value.endswith(".paused"):
-        return "paused"
-    return "failed"
-
-
-def run_publish_only(config: LoadedConfig, story_id: int) -> AtomicResult:
-    """Publish one already-approved story.
-
-    This is the manual publish path used after the generate/review pipeline has
-    stopped at ``approved`` for human verification.
-    """
-
-    if not state.try_acquire():
-        return AtomicResult(
-            story_id=story_id,
-            status="busy",
-            phase="busy",
-            message="Another atomic task is already running.",
-        )
-
-    started = time.monotonic()
-    db_path = initialize_database(config)
-    try:
-        state.set_current(story_id, "publish")
-        from review_queue.db import update_story_phase
-        story = get_story(db_path, story_id)
-        if story is None:
-            return AtomicResult(
-                story_id=story_id,
-                status="failed",
-                phase="publish",
-                message=f"Story #{story_id} not found.",
-                duration_seconds=round(time.monotonic() - started, 3),
-            )
-        if story.status != "approved":
-            return AtomicResult(
-                story_id=story_id,
-                status="failed",
-                phase="publish",
-                message=f"Only approved stories can be published; current status is {story.status}.",
-                duration_seconds=round(time.monotonic() - started, 3),
-            )
-
-        update_story_phase(db_path, story_id, "phase_8_running")
-        result = _publish_one(config, story)
-        status = _publish_result_status(getattr(result, "status", None))
-        raw_status = str(getattr(result, "status", status))
-        message = str(getattr(result, "message", "") or status)
-        should_update = bool(getattr(result, "should_update_status", True))
-        if should_update:
-            if status == "published":
-                update_story_status(db_path, story_id, "published", summary=message)
-                update_story_phase(db_path, story_id, "phase_8_done")
-                state.reset_publish_fail_streak()
-            elif status == "paused":
-                update_story_status(db_path, story_id, "publish_paused", summary=message)
-                update_story_phase(db_path, story_id, "phase_8_paused")
-            else:
-                update_story_status(db_path, story_id, "publish_failed", summary=message)
-                update_story_phase(db_path, story_id, "phase_8_failed")
-                state.increment_publish_fail_streak()
-
-        return AtomicResult(
-            story_id=story_id,
-            status=status,
-            phase="publish",
-            message=message,
-            publish_status=raw_status,
-            duration_seconds=round(time.monotonic() - started, 3),
-        )
-    except Exception as exc:
-        logger.exception("manual publish failed: story_id=%s", story_id)
-        update_story_status(db_path, story_id, "publish_failed", summary=str(exc))
-        update_story_phase(db_path, story_id, "phase_8_failed")
-        return AtomicResult(
-            story_id=story_id,
-            status="failed",
-            phase="publish",
-            message=f"Publish failed: {exc.__class__.__name__}: {exc}",
-            duration_seconds=round(time.monotonic() - started, 3),
-        )
-    finally:
-        state.clear_current()
-        state.release()
-
-
-
-
 __all__ = [
     "AtomicResult",
     "AtomicRunnerState",
     "kick_off_async",
     "run_full_atomic_task",
     "run_generate_with_retry",
-    "run_publish_only",
     "state",
 ]
