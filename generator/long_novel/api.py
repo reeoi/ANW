@@ -25,7 +25,6 @@ from generator.long_novel.db import (
     list_books,
     list_chapters,
     list_volumes,
-    normalize_saved_chapter_statuses,
     update_book,
     upsert_chapter,
     upsert_volume,
@@ -36,6 +35,7 @@ from generator.long_novel.l0_book_setup import (
     setup_glob,
 )
 from generator.long_novel.l2_chapter_write import (
+    CHAPTER_FINAL_FILENAME,
     CHAPTER_STEP_FILES,
     chapter_dir,
     chapter_final_path,
@@ -55,6 +55,8 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/long-novel", tags=["long-novel"])
 _EXPAND_AUTO_SKIP_WORDS = 3000
+_AUTOPILOT_DEFAULT_MAX_REVISIONS = 2
+_AUTOPILOT_MAX_REVISIONS = 3
 
 # ── Cancel tokens for book operations ──────────────────────────────────
 _cancel_tokens: dict[int, bool] = {}
@@ -212,6 +214,46 @@ def _archive_step_version(work_dir: Path, chapter_number: int, chapter_title: st
         return None
 
 
+def _step_history_count(work_dir: Path, chapter_number: int, chapter_title: str, step: str) -> int:
+    history_dir = _step_history_dir(work_dir, chapter_number, chapter_title, step)
+    if not history_dir.exists():
+        return 0
+    try:
+        return sum(1 for p in history_dir.iterdir() if p.is_file())
+    except Exception:
+        logger.exception("count_step_history_failed step=%s chapter=%s", step, chapter_number)
+        return 0
+
+
+def _step_run_count(work_dir: Path, chapter_number: int, chapter_title: str, step: str, *, has_current: bool = True) -> int:
+    count = _step_history_count(work_dir, chapter_number, chapter_title, step)
+    if has_current:
+        count += 1
+    return max(0, count)
+
+
+def _chapter_batch_count(work_dir: Path, chapter_number: int, chapter_title: str) -> int:
+    """Use the draft run as the visible chapter-writing batch number."""
+    draft_path = _step_file_read(work_dir, chapter_number, "draft")
+    return _step_run_count(work_dir, chapter_number, chapter_title, "draft", has_current=bool(draft_path and draft_path.exists()))
+
+
+def _finalize_run_count(final_path: Path | None) -> int:
+    if not final_path:
+        return 0
+    count = 1 if final_path.exists() else 0
+    parent = final_path.parent
+    if parent.exists():
+        try:
+            count += sum(
+                1 for p in parent.iterdir()
+                if p.is_file() and p.name.startswith(final_path.stem) and p.name.endswith(".md.bak")
+            )
+        except Exception:
+            logger.exception("count_finalize_history_failed path=%s", final_path)
+    return count
+
+
 def _step_skip_path(work_dir: Path, chapter_number: int, chapter_title: str, step: str) -> Path:
     """Return write path for a skip marker."""
     return chapter_dir(work_dir, chapter_number, chapter_title) / f".skip_{step}.json"
@@ -293,6 +335,8 @@ def _step_status_snapshot(
     chapter_number: int,
     step_name: str,
 ) -> dict[str, Any]:
+    chapter_title = str(ch.get("title") or "")
+    batch_count = _chapter_batch_count(work_dir, chapter_number, chapter_title)
     progress_path = _step_progress_read(work_dir, chapter_number, step_name)
     if progress_path and progress_path.exists():
         data = _read_json_file(progress_path)
@@ -311,16 +355,33 @@ def _step_status_snapshot(
             "detail": detail,
             "updated_at": data.get("updated_at", ""),
             "result": data.get("result") or {},
+            "run_count": int((data.get("result") or {}).get("run_count") or 0),
+            "batch_count": int((data.get("result") or {}).get("batch_count") or batch_count),
         }
 
     if step_name == "finalize":
         if ch.get("draft_path"):
-            return {"step": step_name, "status": "done", "detail": "已成稿", "updated_at": ""}
-        return {"step": step_name, "status": "pending", "detail": "", "updated_at": ""}
+            final_path = Path(str(ch.get("draft_path")))
+            return {
+                "step": step_name,
+                "status": "done",
+                "detail": "已成稿",
+                "updated_at": "",
+                "run_count": _finalize_run_count(final_path),
+                "batch_count": batch_count,
+            }
+        return {"step": step_name, "status": "pending", "detail": "", "updated_at": "", "run_count": 0, "batch_count": batch_count}
 
     step_path = _step_file_read(work_dir, chapter_number, step_name)
     if step_path and step_path.exists():
-        return {"step": step_name, "status": "done", "detail": "已完成", "updated_at": ""}
+        return {
+            "step": step_name,
+            "status": "done",
+            "detail": "已完成",
+            "updated_at": "",
+            "run_count": _step_run_count(work_dir, chapter_number, chapter_title, step_name),
+            "batch_count": batch_count,
+        }
     skip_marker = _step_skip_read(work_dir, chapter_number, step_name)
     if skip_marker and skip_marker.exists():
         marker_data = _read_json_file(skip_marker)
@@ -329,8 +390,10 @@ def _step_status_snapshot(
             "status": "skipped",
             "detail": str(marker_data.get("reason") or "已跳过"),
             "updated_at": str(marker_data.get("created_at") or ""),
+            "run_count": _step_history_count(work_dir, chapter_number, chapter_title, step_name),
+            "batch_count": batch_count,
         }
-    return {"step": step_name, "status": "pending", "detail": "", "updated_at": ""}
+    return {"step": step_name, "status": "pending", "detail": "", "updated_at": "", "run_count": 0, "batch_count": batch_count}
 
 
 def _read_json_file(path: Path | None) -> dict[str, Any]:
@@ -614,6 +677,15 @@ def _review_issue_count(review: dict[str, Any]) -> int:
     return count
 
 
+def _expand_skip_threshold(target_words: Any) -> int:
+    """Return the configured expansion threshold, defaulting to 3000 words."""
+    try:
+        threshold = int(target_words or _EXPAND_AUTO_SKIP_WORDS)
+    except (TypeError, ValueError):
+        threshold = _EXPAND_AUTO_SKIP_WORDS
+    return max(1, threshold)
+
+
 def _cleanup_stale_step_outputs(work_dir: Path, chapter_number: int, steps: list[str]) -> None:
     for step in steps:
         path = _step_file_read(work_dir, chapter_number, step)
@@ -628,6 +700,483 @@ def _cleanup_stale_step_outputs(work_dir: Path, chapter_number: int, steps: list
                     marker.unlink()
                 except Exception:
                     pass
+        for marker in (
+            _step_skip_read(work_dir, chapter_number, step),
+            _step_progress_read(work_dir, chapter_number, step),
+        ):
+            if marker and marker.exists():
+                try:
+                    marker.unlink()
+                except Exception:
+                    pass
+
+
+_WRITING_STEP_ORDER = ["draft", "expand", "polish", "deslop", "review", "finalize"]
+
+
+def _writing_steps_after(step_name: str) -> list[str]:
+    try:
+        idx = _WRITING_STEP_ORDER.index(step_name)
+    except ValueError:
+        return []
+    return _WRITING_STEP_ORDER[idx + 1 :]
+
+
+def _archive_file_to_step_history(
+    work_dir: Path,
+    chapter_number: int,
+    chapter_title: str,
+    step_name: str,
+    path: Path,
+) -> None:
+    if not path.exists() or not path.is_file():
+        return
+    history_dir = _step_history_dir(work_dir, chapter_number, chapter_title, step_name)
+    history_dir.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    archived = history_dir / f"{ts}_{path.name}"
+    if archived.exists():
+        archived = history_dir / f"{ts}_{len(list(history_dir.iterdir()))}_{path.name}"
+    shutil.copy2(path, archived)
+
+
+def _archive_file_to_invalidated_history(
+    work_dir: Path,
+    chapter_number: int,
+    chapter_title: str,
+    step_name: str,
+    path: Path,
+) -> None:
+    if not path.exists() or not path.is_file():
+        return
+    history_dir = chapter_dir(work_dir, chapter_number, chapter_title) / "_history" / "invalidated" / step_name
+    history_dir.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    archived = history_dir / f"{ts}_{path.name}"
+    if archived.exists():
+        archived = history_dir / f"{ts}_{len(list(history_dir.iterdir()))}_{path.name}"
+    shutil.copy2(path, archived)
+
+
+def _archive_and_remove_step_artifact(
+    work_dir: Path,
+    chapter_number: int,
+    chapter_title: str,
+    step_name: str,
+) -> None:
+    paths: list[Path] = []
+
+    def _add(path: Path | None) -> None:
+        if path and path.exists() and path.is_file() and path not in paths:
+            paths.append(path)
+
+    _add(_step_file_read(work_dir, chapter_number, step_name))
+    if step_name in CHAPTER_STEP_FILES:
+        _add(_step_file_path(work_dir, chapter_number, chapter_title, step_name))
+
+    for path in paths:
+        try:
+            _archive_file_to_invalidated_history(work_dir, chapter_number, chapter_title, step_name, path)
+            path.unlink()
+        except Exception:
+            logger.exception("remove_step_artifact_failed step=%s path=%s", step_name, path)
+
+    for marker in (
+        _step_gate_read(work_dir, chapter_number, step_name),
+        _step_force_read(work_dir, chapter_number, step_name),
+        _step_skip_read(work_dir, chapter_number, step_name),
+        _step_progress_read(work_dir, chapter_number, step_name),
+    ):
+        if marker and marker.exists():
+            try:
+                marker.unlink()
+            except Exception:
+                logger.exception("remove_step_marker_failed step=%s path=%s", step_name, marker)
+
+
+def _archive_and_remove_final_artifact(
+    work_dir: Path,
+    chapter_number: int,
+    chapter_title: str,
+    chapter: dict[str, Any],
+) -> bool:
+    paths: list[Path] = []
+
+    def _add(path: Path | None) -> None:
+        if path and path.exists() and path.is_file() and path not in paths:
+            paths.append(path)
+
+    if chapter.get("draft_path"):
+        _add(Path(str(chapter["draft_path"])))
+    _add(chapter_final_path(work_dir, chapter_number, chapter_title))
+
+    removed = False
+    for path in paths:
+        try:
+            if not _path_within(path, work_dir):
+                logger.warning("skip_final_artifact_outside_work_dir path=%s", path)
+                continue
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            backup = path.with_name(f"{path.stem}.{ts}.md.bak")
+            shutil.copy2(path, backup)
+            path.unlink()
+            removed = True
+        except Exception:
+            logger.exception("remove_final_artifact_failed path=%s", path)
+    return removed
+
+
+def _invalidate_outputs_after_step(
+    db_path: Path,
+    book_id: int,
+    book: dict[str, Any],
+    chapter: dict[str, Any],
+    step_name: str,
+) -> None:
+    later_steps = _writing_steps_after(step_name)
+    if not later_steps:
+        return
+
+    chapter_number = int(chapter["chapter_number"])
+    chapter_title = str(chapter.get("title") or "")
+    work_dir = Path(str(book["work_dir"] or ""))
+    for later_step in later_steps:
+        if _step_job_active(book_id, chapter_number, later_step):
+            raise HTTPException(
+                status_code=409,
+                detail=f"{later_step} is still running; wait for it to finish before rerunning {step_name}.",
+            )
+
+    for later_step in later_steps:
+        if later_step == "finalize":
+            continue
+        _archive_and_remove_step_artifact(work_dir, chapter_number, chapter_title, later_step)
+
+    if "finalize" in later_steps:
+        _archive_and_remove_final_artifact(work_dir, chapter_number, chapter_title, chapter)
+        _upsert_chapter_preserving(
+            db_path,
+            chapter,
+            status="writing",
+            actual_words=0,
+            draft_path=None,
+            review_status=None,
+            ai_review_json=None,
+        )
+
+
+def _has_later_saved_chapter(db_path: Path, book_id: int, chapter_number: int) -> bool:
+    return any(
+        int(chapter.get("chapter_number") or 0) > int(chapter_number)
+        and chapter.get("draft_path")
+        and Path(str(chapter["draft_path"])).exists()
+        for chapter in list_chapters(db_path, book_id)
+    )
+
+
+def _path_within(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def _archive_and_reset_chapter_outputs(
+    db_path: Path,
+    book_id: int,
+    book: dict[str, Any],
+    chapter: dict[str, Any],
+) -> dict[str, Any]:
+    """Archive active chapter artifacts, remove them, and reset the DB row."""
+    chapter_number = int(chapter["chapter_number"])
+    chapter_title = str(chapter.get("title") or "")
+    work_dir = Path(str(book["work_dir"] or "")).resolve()
+    chapter_folder = chapter_dir(work_dir, chapter_number, chapter_title).resolve()
+    text_root = (work_dir / "正文").resolve()
+    if not _path_within(chapter_folder, text_root):
+        raise HTTPException(status_code=400, detail="章节目录不在正文目录内，无法安全删除")
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    archive_dir = chapter_folder / "_history" / "regenerate" / timestamp
+    active_paths: list[Path] = []
+
+    def _add(path: Path | None) -> None:
+        if not path:
+            return
+        resolved = path.resolve()
+        if resolved.exists() and resolved.is_file() and resolved not in active_paths:
+            active_paths.append(resolved)
+
+    for filename in CHAPTER_STEP_FILES.values():
+        _add(chapter_folder / filename)
+    _add(chapter_folder / CHAPTER_FINAL_FILENAME)
+    for step_name in [*CHAPTER_STEP_FILES.keys(), "finalize"]:
+        for marker in (
+            f".skip_{step_name}.json",
+            f".gate_{step_name}.json",
+            f".force_pass_{step_name}.json",
+            f".progress_{step_name}.json",
+        ):
+            _add(chapter_folder / marker)
+
+    saved_draft = Path(str(chapter["draft_path"])) if chapter.get("draft_path") else None
+    if saved_draft:
+        if not _path_within(saved_draft, work_dir):
+            raise HTTPException(status_code=400, detail="当前正文文件不在书籍目录内，无法安全删除")
+        _add(saved_draft)
+
+    # Legacy step files were stored at the work-dir root and otherwise become
+    # read fallbacks after reset, so archive and remove them as well.
+    for legacy_name in _LEGACY_STEP_FILES.values():
+        _add(work_dir / legacy_name)
+
+    archived: list[str] = []
+    for path in active_paths:
+        if not _path_within(path, work_dir):
+            raise HTTPException(status_code=400, detail=f"拒绝删除书籍目录外文件：{path}")
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        archive_name = path.name
+        if path.parent == work_dir:
+            archive_name = f"legacy_{archive_name}"
+        target = archive_dir / archive_name
+        if target.exists():
+            target = archive_dir / f"{target.stem}_{len(archived) + 1}{target.suffix}"
+        shutil.copy2(path, target)
+        path.unlink()
+        archived.append(str(target.relative_to(work_dir)).replace("\\", "/"))
+
+    upsert_chapter(
+        db_path,
+        book_id,
+        int(chapter.get("volume_number") or 1),
+        chapter_number,
+        title=chapter_title,
+        status="outline_only",
+        target_words=int(chapter.get("target_words") or book.get("target_words_per_chapter") or 3000),
+        actual_words=0,
+        outline_path=chapter.get("outline_path"),
+        draft_path=None,
+        review_status=None,
+        ai_review_json=None,
+    )
+    return {
+        "archived_files": archived,
+        "archive_dir": str(archive_dir.relative_to(work_dir)).replace("\\", "/") if archived else "",
+        "later_written_chapters": [
+            int(item["chapter_number"])
+            for item in list_chapters(db_path, book_id)
+            if int(item.get("chapter_number") or 0) > chapter_number
+            and item.get("draft_path")
+            and Path(str(item["draft_path"])).exists()
+        ],
+    }
+
+
+def _chapter_range(
+    db_path: Path,
+    book_id: int,
+    chapter_start: int,
+    chapter_end: int,
+) -> list[dict[str, Any]]:
+    """Return one validated inclusive chapter range."""
+    try:
+        start = int(chapter_start)
+        end = int(chapter_end)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="正文起止章必须是数字") from None
+    if start < 1 or end < 1:
+        raise HTTPException(status_code=400, detail="正文起止章必须大于 0")
+    if end < start:
+        raise HTTPException(status_code=400, detail="正文结束章不能小于起始章")
+    by_number = {
+        int(chapter.get("chapter_number") or 0): chapter
+        for chapter in list_chapters(db_path, book_id)
+    }
+    chapters: list[dict[str, Any]] = []
+    for chapter_number in range(start, end + 1):
+        chapter = by_number.get(chapter_number)
+        if not chapter:
+            raise HTTPException(status_code=400, detail=f"章节队列缺少第{chapter_number}章")
+        chapters.append(chapter)
+    return chapters
+
+
+def _chapter_has_outputs(work_dir: Path, chapter: dict[str, Any]) -> bool:
+    final_path = Path(str(chapter["draft_path"])) if chapter.get("draft_path") else None
+    if final_path and final_path.exists():
+        return True
+    return any(
+        path and path.exists()
+        for path in (_step_file_read(work_dir, int(chapter["chapter_number"]), step) for step in CHAPTER_STEP_FILES)
+    )
+
+
+def _reset_chapter_row_for_deleted_outputs(
+    db_path: Path,
+    book_id: int,
+    book: dict[str, Any],
+    chapter: dict[str, Any],
+) -> None:
+    upsert_chapter(
+        db_path,
+        book_id,
+        int(chapter.get("volume_number") or 1),
+        int(chapter["chapter_number"]),
+        title=str(chapter.get("title") or ""),
+        status="outline_only",
+        target_words=int(chapter.get("target_words") or book.get("target_words_per_chapter") or 3000),
+        actual_words=0,
+        outline_path=chapter.get("outline_path"),
+        draft_path=None,
+        review_status=None,
+        ai_review_json=None,
+    )
+
+
+def _reset_chapter_range_for_regeneration(
+    db_path: Path,
+    book_id: int,
+    book: dict[str, Any],
+    chapter_start: int,
+    chapter_end: int,
+) -> dict[str, Any]:
+    """Archive and clear a range only after every chapter passes safety checks."""
+    if _autopilot_job_active(book_id):
+        raise HTTPException(status_code=409, detail="全自动任务正在运行，请暂停后再删除正文")
+    chapters = _chapter_range(db_path, book_id, chapter_start, chapter_end)
+    work_dir = Path(str(book["work_dir"] or ""))
+    for chapter in chapters:
+        chapter_number = int(chapter["chapter_number"])
+        for step_name in [*CHAPTER_STEP_FILES.keys(), "finalize"]:
+            if _step_job_active(book_id, chapter_number, step_name):
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"第{chapter_number}章 {step_name} 步骤仍在运行，请等待完成后再删除正文",
+                )
+
+    chapters_with_outputs = [chapter for chapter in chapters if _chapter_has_outputs(work_dir, chapter)]
+    resets = [
+        {
+            "chapter": int(chapter["chapter_number"]),
+            **_archive_and_reset_chapter_outputs(db_path, book_id, book, chapter),
+        }
+        for chapter in chapters_with_outputs
+    ]
+    output_numbers = {int(item["chapter"]) for item in resets}
+    for chapter in chapters:
+        if int(chapter["chapter_number"]) not in output_numbers:
+            _reset_chapter_row_for_deleted_outputs(db_path, book_id, book, chapter)
+    reset_numbers = [int(chapter["chapter_number"]) for chapter in chapters]
+    return {
+        "chapter_start": int(chapter_start),
+        "chapter_end": int(chapter_end),
+        "reset_chapters": reset_numbers,
+        "skipped_chapters": [],
+        "results": resets,
+    }
+
+
+def _remove_tracking_sections_for_chapters(text: str, chapter_numbers: list[int]) -> str:
+    """Remove per-chapter tracking sections for the reset chapters."""
+    numbers = sorted({int(n) for n in chapter_numbers if int(n) > 0})
+    if not numbers or not text:
+        return text
+    number_pattern = "|".join(re.escape(str(n)) for n in numbers)
+    cleaned = re.sub(
+        rf"(?ms)^##\s*第(?:{number_pattern})章[^\n]*\n.*?(?=^##\s|\Z)",
+        "",
+        text,
+    )
+    return cleaned.strip() + ("\n" if cleaned.strip() else "")
+
+
+def _sync_tracking_after_chapter_reset(
+    db_path: Path,
+    book_id: int,
+    book: dict[str, Any],
+    reset_chapters: list[int],
+) -> None:
+    """Drop deleted chapters from tracking memory and roll the current head back."""
+    if not reset_chapters:
+        return
+    from generator.long_novel.l2_chapter_write import ensure_tracking_files, refresh_tracking_head
+
+    work_dir = Path(str(book["work_dir"] or ""))
+    ensure_tracking_files(work_dir, int(book.get("target_chapters") or 0))
+    tracking_dir = work_dir / "追踪"
+    for filename in ("全书进展.md", "时间线.md", "角色状态.md", "伏笔.md", "续写约束.md"):
+        path = tracking_dir / filename
+        if path.exists():
+            path.write_text(
+                _remove_tracking_sections_for_chapters(path.read_text(encoding="utf-8"), reset_chapters),
+                encoding="utf-8",
+            )
+
+    written_chapters: list[tuple[int, dict[str, Any], Path]] = []
+    for chapter in list_chapters(db_path, book_id):
+        raw_draft_path = str(chapter.get("draft_path") or "").strip()
+        if not raw_draft_path:
+            continue
+        draft_path = Path(raw_draft_path)
+        if draft_path.exists():
+            written_chapters.append((int(chapter.get("chapter_number") or 0), chapter, draft_path))
+    written_chapters.sort(key=lambda item: item[0])
+
+    if written_chapters:
+        latest_number, _latest_chapter, latest_path = written_chapters[-1]
+        draft = latest_path.read_text(encoding="utf-8")
+        summary = draft[:220].replace("\n", " ")
+        refresh_tracking_head(work_dir, latest_number, draft, summary_short=summary)
+        update_book(db_path, book_id, current_chapter=latest_number)
+        return
+
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    (tracking_dir / "上下文.md").write_text(
+        "## 写作上下文\n\n"
+        "- 当前进度：第0章尚未开始\n"
+        "- 字数：0字\n"
+        "- 本章摘要：暂无正文\n"
+        f"- 上次更新时间：{now}\n"
+        "- 下一章：第1章\n",
+        encoding="utf-8",
+    )
+    (tracking_dir / "全书进展.md").write_text(
+        "## 全书进展\n\n"
+        "- 当前进度：第0章尚未开始\n"
+        f"- 最近更新：{now}\n"
+        "- 最新章节摘要：暂无正文\n"
+        "- 下一章：第1章\n",
+        encoding="utf-8",
+    )
+    update_book(db_path, book_id, current_chapter=0)
+
+
+def _write_reset_idle_autopilot_snapshot(book: dict[str, Any], message: str) -> None:
+    """Replace stale completed-writing snapshots after deleting chapter output."""
+    from generator.long_novel.autopilot import write_autopilot_file
+
+    work_dir = Path(str(book["work_dir"] or ""))
+    write_autopilot_file(
+        work_dir,
+        {
+            "state": "idle",
+            "stage": "writing",
+            "completed": [
+                "premise",
+                "world",
+                "characters",
+                "factions",
+                "relations",
+                "outline",
+                "volume_outline",
+                "chapter_outlines",
+                "finalize",
+            ],
+            "detail": message,
+            "updated_at": datetime.now().strftime("%H:%M:%S"),
+        },
+    )
 
 
 # ── Books ────────────────────────────────────────────────────────────
@@ -670,7 +1219,6 @@ def api_get_book(book_id: int) -> dict[str, Any]:
     book = get_book(db, book_id)
     if not book:
         raise HTTPException(status_code=404, detail="书籍不存在")
-    normalize_saved_chapter_statuses(db, book_id)
     volumes = list_volumes(db, book_id)
     chapters = list_chapters(db, book_id)
     book["volumes"] = volumes
@@ -1233,37 +1781,86 @@ def _autopilot_write_one_chapter(
     chapter_number: int,
     report: Callable[..., None],
     *,
-    max_revisions: int = 0,
+    max_revisions: int = _AUTOPILOT_DEFAULT_MAX_REVISIONS,
 ) -> dict[str, Any]:
-    """Write → review once for reference → persist one chapter.
+    """Run the visible per-step chapter flow and persist one chapter.
 
-    Mirrors the manual write workbench flow, but unattended:
+    Autopilot intentionally uses the same step functions as the manual
+    workbench so every intermediate artifact remains visible:
 
-    1. ``run_full_chapter`` produces 正文.md and refreshes the tracking memory.
-    2. ``run_story_review`` scores it against the six-dimension gate for display.
+    ``初稿 → 扩写判断 → 润色 → 去AI → 审查 → 按建议修改/复审 → 成稿``.
 
-    The score is advisory: it never triggers an automatic rewrite and never
-    blocks the next chapter. ``max_revisions`` remains in the signature only for
-    backward compatibility with older callers. The upsert carries the chapter's
-    existing title/outline_path through so the status change does not wipe them.
+    A failed review triggers up to ``max_revisions`` concrete review-driven
+    rewrites. If the gate still does not pass, the saved chapter is marked for
+    human review and the multi-chapter autopilot can continue.
     """
-    from generator.long_novel.l2_chapter_write import (
-        count_chinese_chars,
-        run_full_chapter,
-    )
-    from generator.long_novel.l4_review import run_story_review
+    from generator.long_novel.l2_chapter_write import count_chinese_chars, strip_chapter_heading
 
     ch = get_chapter(db, book_id, chapter_number) or {}
     chapter_title = str(ch.get("title") or "")
     volume_number = int(ch.get("volume_number") or 1)
     target_words = int(ch.get("target_words") or book.get("target_words_per_chapter") or 3000)
-    outline_text = _outline_for_chapter(ch)
+    revision_limit = max(0, min(_AUTOPILOT_MAX_REVISIONS, int(max_revisions or 0)))
+    revisions = 0
+    step_trace: list[dict[str, Any]] = []
 
     def _report(status: str, detail: str = "", revisions: int = 0, **extra: Any) -> None:
         try:
             report(status, detail, revisions, **extra)
         except TypeError:
             report(status, detail, revisions)
+
+    def _trace_step(
+        step: str,
+        label: str,
+        status: str,
+        *,
+        word_count: int = 0,
+        message: str = "",
+    ) -> None:
+        step_trace.append({
+            "step": step,
+            "label": label,
+            "status": status,
+            "word_count": int(word_count or 0),
+            "message": message,
+        })
+
+    def _run_step(step: str, label: str, live_status: str) -> dict[str, Any]:
+        _report(
+            live_status,
+            f"第{chapter_number}章：正在{label}",
+            revisions,
+            step=step,
+            step_label=label,
+            step_status="running",
+            steps=list(step_trace),
+        )
+        result = _api_write_chapter_step_blocking(
+            book_id,
+            chapter_number,
+            step,
+            client=client,
+        )
+        status = "skipped" if result.get("skipped") else "done"
+        message = str(result.get("message") or "")
+        _trace_step(
+            step,
+            label,
+            status,
+            word_count=int(result.get("word_count") or result.get("final_words") or 0),
+            message=message,
+        )
+        _report(
+            live_status,
+            message or f"第{chapter_number}章：{label}{'已跳过' if status == 'skipped' else '已完成'}",
+            revisions,
+            step=step,
+            step_label=label,
+            step_status=status,
+            steps=list(step_trace),
+        )
+        return result
 
     # Mark writing without clobbering existing metadata (upsert overwrites all columns).
     upsert_chapter(
@@ -1273,43 +1870,80 @@ def _autopilot_write_one_chapter(
         outline_path=ch.get("outline_path"), draft_path=ch.get("draft_path"),
         review_status=ch.get("review_status"), ai_review_json=ch.get("ai_review_json"),
     )
-    update_book(db, book_id, current_chapter=chapter_number)
+    if not _has_later_saved_chapter(db, book_id, chapter_number):
+        update_book(db, book_id, current_chapter=chapter_number)
 
-    _report("drafting", f"第{chapter_number}章 初稿/扩写/润色/去AI…")
-    result = run_full_chapter(client, work_dir, chapter_number, chapter_title, target_words)
-    draft_path = Path(result["draft_path"])
-    text = draft_path.read_text(encoding="utf-8") if draft_path.exists() else ""
+    # An interrupted unwritten chapter may have partial intermediate files.
+    # Start the unattended run from a clean per-step chain.
+    _cleanup_stale_step_outputs(work_dir, chapter_number, ["draft", "expand", "polish", "deslop", "review"])
 
-    _report("reviewing", f"第{chapter_number}章 审核中…")
-    review = run_story_review(client, text, work_dir, chapter_number, outline_text)
-    revisions = 0
-    final_words = count_chinese_chars(text)
+    _run_step("draft", "生成初稿", "drafting")
+    _run_step("expand", "扩写判断", "expanding")
+    _run_step("polish", "润色", "polishing")
+    _run_step("deslop", "去 AI", "deslopping")
+    review_result = _run_step("review", "六维审查", "reviewing")
+    review = dict(review_result.get("review") or {})
+
+    while not review.get("passed") and revisions < revision_limit:
+        revisions += 1
+        reason = _review_rewrite_reason(review)
+        _report(
+            "revising",
+            f"第{chapter_number}章：审查未通过，正在按建议修改（{revisions}/{revision_limit}）"
+            + (f"：{reason}" if reason else ""),
+            revisions,
+            step="review_fix",
+            step_label="按审查建议修改",
+            step_status="running",
+            steps=list(step_trace),
+            reason=reason,
+        )
+        revised = _api_revise_chapter_step_blocking(
+            book_id,
+            chapter_number,
+            "review",
+            {},
+            client=client,
+        )
+        review = dict(revised.get("review") or {})
+        _trace_step(
+            f"review_fix_{revisions}",
+            f"按建议修改 #{revisions}",
+            "done" if review.get("passed") else "needs_revision",
+            word_count=int(revised.get("word_count") or 0),
+            message=str(revised.get("message") or ""),
+        )
+        _report(
+            "reviewing",
+            f"第{chapter_number}章：第 {revisions} 次修改后已复审"
+            + ("，审查通过" if review.get("passed") else "，仍有待修问题"),
+            revisions,
+            step="review",
+            step_label="复审",
+            step_status="done" if review.get("passed") else "needs_revision",
+            steps=list(step_trace),
+            reason="" if review.get("passed") else _review_rewrite_reason(review),
+        )
+
+    final_result = _run_step("finalize", "保存成稿", "finalizing")
+    final_text = str(final_result.get("content") or "")
+    final_words = int(final_result.get("final_words") or count_chinese_chars(final_text))
     reason = "" if review.get("passed") else _review_rewrite_reason(review)
-    review_json = json.dumps(review, ensure_ascii=False)
-
-    # Persist the review next to the chapter for parity with the manual flow.
-    review_path = _step_file_path(work_dir, chapter_number, chapter_title, "review")
-    review_path.parent.mkdir(parents=True, exist_ok=True)
-    review_path.write_text(json.dumps(review, ensure_ascii=False, indent=2), encoding="utf-8")
-
-    upsert_chapter(
-        db, book_id, volume_number, chapter_number,
-        title=chapter_title, status="draft", target_words=target_words,
-        actual_words=final_words,
-        outline_path=ch.get("outline_path"), draft_path=str(draft_path),
-        review_status=str(review.get("overall") or "CONCERNS"),
-        ai_review_json=review_json,
-    )
+    status = "passed" if review.get("passed") else "needs_human"
+    if status == "needs_human":
+        saved_chapter = get_chapter(db, book_id, chapter_number)
+        if saved_chapter:
+            _upsert_chapter_preserving(db, saved_chapter, status="needs_human")
 
     return {
         "chapter": chapter_number,
-        "status": "passed",
+        "status": status,
         "words": final_words,
         "score": int(review.get("score") or 0),
         "review_overall": str(review.get("overall") or ""),
         "revisions": revisions,
         "reason": reason,
-        "review_reference_only": True,
+        "steps": step_trace,
         "review_summary": str(review.get("summary") or ""),
     }
 
@@ -1338,7 +1972,6 @@ async def api_start_setup_phase(book_id: int, phase: str, request: Request) -> d
         raise HTTPException(status_code=400, detail=f"未知阶段：{phase}")
 
     payload = await _json_payload(request)
-    benchmark_dir = Path(payload["benchmark_dir"]) if payload.get("benchmark_dir") else None
     additional_prompt = str(payload.get("additional_prompt") or "").strip()
 
     # Clear any lingering cancel flag when explicitly starting a phase
@@ -1368,7 +2001,7 @@ async def api_start_setup_phase(book_id: int, phase: str, request: Request) -> d
                 _write("running", "AI正在分析题材趋势，生成题材定位文档...")
                 if _cancelled():
                     return
-                run_l0_premise(client, work_dir, book["title"], book["genre"], book["premise"], benchmark_dir, additional_prompt)
+                run_l0_premise(client, work_dir, book["title"], book["genre"], book["premise"], additional_prompt)
                 fp = work_dir / "设定" / "题材定位.md"
                 preview = fp.read_text(encoding="utf-8")[:2000] if fp.exists() else ""
                 _write("done", preview)
@@ -1538,10 +2171,12 @@ def _inferred_setup_phase_status(work_dir: Path, phase: str) -> dict[str, Any] |
 async def api_autopilot_start(book_id: int, request: Request) -> dict[str, Any]:
     """Run 设定 → 大纲 → 入库 →〔正文 × N〕as one background job.
 
-    Body: ``{"additional_prompt": "...", "chapter_count": N, "chapter_start": 1, "chapter_end": 3}``.
+    Body: ``{"additional_prompt": "...", "chapter_count": N, "chapter_start": 1,
+    "chapter_end": 3, "max_revisions": 2}``.
     When ``chapter_count > 0`` the job continues past 入库 into the 正文 autopilot:
-    it writes the next ``chapter_count`` unwritten chapters, each run_full_chapter
-    → 审核评分（仅供参考）→ 保存成稿并更新追踪/伏笔/进度 → 下一章.
+    it writes the next ``chapter_count`` unwritten chapters, each 初稿 → 扩写判断
+    → 润色 → 去 AI → 审查 → 按建议修改/复审 → 保存成稿并更新追踪/伏笔/进度
+    → 下一章.
     Everything streams to the same ``/autopilot/status`` /
     monitor panel. ``POST /cancel`` stops after the current stage or chapter.
     Stages and chapters already complete are skipped, so re-running resumes an
@@ -1575,7 +2210,11 @@ async def api_autopilot_start(book_id: int, request: Request) -> dict[str, Any]:
             _autopilot_chapters_to_write_range(_db_path(), book_id, chapter_start, chapter_end)
     else:
         chapter_count = max(0, int(payload.get("chapter_count") or 0))
-    max_revisions = 0
+    try:
+        max_revisions = int(payload.get("max_revisions", _AUTOPILOT_DEFAULT_MAX_REVISIONS))
+    except (TypeError, ValueError):
+        max_revisions = _AUTOPILOT_DEFAULT_MAX_REVISIONS
+    max_revisions = max(0, min(_AUTOPILOT_MAX_REVISIONS, max_revisions))
 
     work_dir = Path(book["work_dir"])
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -1680,7 +2319,6 @@ def api_autopilot_status(book_id: int) -> dict[str, Any]:
     book = get_book(db, book_id)
     if not book:
         raise HTTPException(status_code=404, detail="书籍不存在")
-    normalize_saved_chapter_statuses(db, book_id)
     from generator.long_novel.autopilot import AUTOPILOT_FILE, read_autopilot_file, write_autopilot_file
 
     work_dir = Path(book["work_dir"])
@@ -1694,35 +2332,38 @@ def api_autopilot_status(book_id: int) -> dict[str, Any]:
             data["detail"] = "进程中断（服务重启或超时），可重新开始"
             data["updated_at"] = datetime.now().strftime("%H:%M:%S")
             write_autopilot_file(work_dir, data)
+    data = _repair_invalid_autopilot_writing_snapshot(work_dir, data)
     data = _sync_paused_autopilot_snapshot(book_id, work_dir, data)
-    data = _normalize_reference_only_writing_snapshot(data)
     return {"ok": True, **data}
 
 
-def _normalize_reference_only_writing_snapshot(data: dict[str, Any]) -> dict[str, Any]:
-    """Hide legacy score-gate retries now that chapter scores are advisory."""
+def _repair_invalid_autopilot_writing_snapshot(work_dir: Path, data: dict[str, Any]) -> dict[str, Any]:
+    """Fix stale snapshots that say done while chapter writing is incomplete."""
     writing = data.get("writing")
-    if not isinstance(writing, dict):
+    if data.get("state") not in {"done", "error"} or not isinstance(writing, dict):
+        return data
+    total = int(writing.get("total") or 0)
+    done = int(writing.get("done") or 0)
+    if total <= 0 or done >= total:
         return data
 
-    normalized = dict(data)
-    normalized_writing = dict(writing)
-    results = []
-    for result in writing.get("results") or []:
-        item = dict(result)
-        if item.get("status") == "needs_human":
-            item["status"] = "passed"
-        item["revisions"] = 0
-        results.append(item)
-    normalized_writing["results"] = results
-    normalized_writing["needs_human"] = []
-    normalized_writing["current_revisions"] = 0
-    if normalized_writing.get("current_status") == "needs_human":
-        normalized_writing["current_status"] = "passed"
-    if normalized.get("state") == "done":
-        normalized["detail"] = f"正文写作完成：共 {int(normalized_writing.get('total') or 0)} 章"
-    normalized["writing"] = normalized_writing
-    return normalized
+    from generator.long_novel.autopilot import write_autopilot_file
+
+    failed_at = data.get("failed_at") or writing.get("current") or 1
+    detail = str(data.get("detail") or "")
+    if "完成" in detail or "同步" in detail or "继续全自动" in detail or not detail:
+        detail = f"第{failed_at}章生成失败，正文完成 {done}/{total} 章"
+    repaired = {
+        **data,
+        "state": "error",
+        "phase": "writing",
+        "stage": "writing",
+        "detail": detail,
+        "failed_at": failed_at,
+        "updated_at": datetime.now().strftime("%H:%M:%S"),
+    }
+    write_autopilot_file(work_dir, repaired)
+    return repaired
 
 
 def _sync_paused_autopilot_snapshot(book_id: int, work_dir: Path, data: dict[str, Any]) -> dict[str, Any]:
@@ -1758,23 +2399,35 @@ def _sync_paused_autopilot_snapshot(book_id: int, work_dir: Path, data: dict[str
     ordered_completed = [phase for phase, _label in stages if phase in completed]
     next_index = next((index for index, (phase, _label) in enumerate(stages) if phase not in completed), len(stages))
     next_phase, next_label = stages[next_index] if next_index < len(stages) else ("", "")
-    all_done = next_index == len(stages)
+    setup_done = next_index == len(stages)
+    writing = data.get("writing")
+    has_writing = isinstance(writing, dict) and int(writing.get("total") or 0) > 0
+    writing_done = bool(
+        has_writing
+        and int(writing.get("done") or 0) >= int(writing.get("total") or 0)
+    )
+    all_done = setup_done and (not has_writing or writing_done)
+    display_stage = "writing" if setup_done and has_writing and not writing_done else next_phase
+    display_label = "正文" if display_stage == "writing" else next_label
     if (
         ordered_completed == list(data.get("completed") or [])
-        and next_phase == str(data.get("stage") or "")
-        and (not all_done or data.get("state") == "done")
+        and display_stage == str(data.get("stage") or "")
+        and (not setup_done or data.get("state") == "done" or has_writing)
     ):
         return data
 
+    detail = "全自动生成完成" if all_done else "已同步手动生成结果，可继续全自动"
+    if has_writing and not writing_done:
+        detail = str(data.get("detail") or detail)
     synced = {
         **data,
         "state": "done" if all_done else data.get("state"),
-        "stage": next_phase,
-        "label": next_label,
+        "stage": display_stage,
+        "label": display_label,
         "index": next_index,
         "total": len(stages),
-        "stage_status": "done" if all_done else "",
-        "detail": "全自动生成完成" if all_done else "已同步手动生成结果，可继续全自动",
+        "stage_status": "done" if setup_done else "",
+        "detail": detail,
         "completed": ordered_completed,
         "updated_at": datetime.now().strftime("%H:%M:%S"),
     }
@@ -2029,7 +2682,7 @@ _PHASE_PROMPT_INFO = {
         "label": "题材定位",
         "system_file": "l0_premise_system.txt",
         "user_file": "l0_premise_user.txt",
-        "placeholders": ["title", "genre", "genre_note", "premise", "benchmark_section", "benchmark_text"],
+        "placeholders": ["title", "genre", "genre_note", "premise"],
         "user_template": """请为以下长篇小说撰写题材定位文档：
 
 书名：{title}
@@ -2042,11 +2695,6 @@ _PHASE_PROMPT_INFO = {
 - 核心梗概（三分法：表层/中层/深层）
 - 目标读者画像
 - 题材竞争力分析
-
-## 对标分析
-- 同题材爆款模式
-- 差异化切入点
-- 可借鉴套路
 
 ## 卖点设计
 - 核心卖点（至少3个）
@@ -2353,6 +3001,28 @@ def _missing_prompt_placeholders(content: str, placeholders: list[str]) -> list[
     return [p for p in placeholders if "{" + p + "}" not in content]
 
 
+_PROMPT_THINKING_MODE = {
+    "expand": False,
+    "polish": False,
+    "deslop": False,
+    "continuity": False,
+}
+
+
+def _prompt_call_parameters(phase: str) -> dict[str, Any]:
+    """Return the effective default parameters used by a prompt phase."""
+    settings = _deepseek_client().settings
+    thinking_mode = _PROMPT_THINKING_MODE.get(phase, True)
+    return {
+        "model": settings.model,
+        "thinking_mode": thinking_mode,
+        "temperature": 0.8,
+        "max_output_tokens": settings.max_output_tokens,
+        "timeout_seconds": settings.timeout_seconds,
+        "max_retries": settings.max_retries,
+    }
+
+
 def _save_prompt_file(filename: str, content: str) -> str:
     path = _PROMPTS_DIR / filename
     if path.suffix.lower() != ".txt":
@@ -2392,6 +3062,7 @@ def api_get_phase_prompt(phase: str) -> dict[str, Any]:
         "editable_user": bool(user_file),
         "placeholders": list(info.get("placeholders") or []),
         "related_prompts": list(info.get("related_prompts") or []),
+        "call_parameters": _prompt_call_parameters(phase),
         "system_prompt": system_prompt,
         "user_template": user_template,
     }
@@ -2739,6 +3410,7 @@ async def api_start_write_chapter_step(
             "status": current.get("status"),
             "detail": current.get("detail", ""),
             "updated_at": current.get("updated_at", ""),
+            "run_count": current.get("run_count") or 0,
         }
 
     _write_step_progress(progress_path, "starting", "后台任务已启动", {"step": step_name})
@@ -2753,6 +3425,8 @@ async def api_start_write_chapter_step(
                 "final_words": int(result.get("final_words") or 0),
                 "skipped": bool(result.get("skipped")),
                 "next_step": result.get("next_step") or "",
+                "run_count": int(result.get("run_count") or 0),
+                "batch_count": int(result.get("batch_count") or 0),
             }
             status = "skipped" if result.get("skipped") else "done"
             detail = str(result.get("message") or ("步骤已完成" if status == "done" else "步骤已跳过"))
@@ -2813,6 +3487,8 @@ def _api_write_chapter_step_blocking(
     chapter_number: int,
     step_name: str,
     force: bool = False,
+    *,
+    client: Any | None = None,
 ) -> dict[str, Any]:
     """Run a single step of the L2 chapter writing pipeline.
 
@@ -2843,32 +3519,49 @@ def _api_write_chapter_step_blocking(
         run_draft,
         run_expand,
         run_polish,
+        strip_chapter_heading,
         update_tracking_files,
     )
 
-    client = _deepseek_client(book)
+    client = client or _deepseek_client(book)
     work_dir = Path(book["work_dir"])
     target_words = ch.get("target_words", book["target_words_per_chapter"])
     chapter_title = ch.get("title", "")
+    expand_threshold = _expand_skip_threshold(target_words)
+    batch_count = _chapter_batch_count(work_dir, chapter_number, str(chapter_title or ""))
 
     # Step: draft
     if step_name == "draft":
-        if ch.get("status") not in ("outline_only", "writing"):
+        if ch.get("status") not in ("outline_only", "writing", "draft", "published"):
             raise HTTPException(status_code=400, detail=f"章节状态 {ch.get('status')} 无法开始写作")
-        _upsert_chapter_preserving(_db_path(), ch, status="writing")
-        update_book(_db_path(), book_id, current_chapter=chapter_number)
+        _invalidate_outputs_after_step(_db_path(), book_id, book, ch, "draft")
+        _upsert_chapter_preserving(
+            _db_path(),
+            ch,
+            status="writing",
+            actual_words=0,
+            draft_path=None,
+            review_status=None,
+            ai_review_json=None,
+        )
+        if not _has_later_saved_chapter(_db_path(), book_id, chapter_number):
+            update_book(_db_path(), book_id, current_chapter=chapter_number)
         _archive_step_version(work_dir, chapter_number, chapter_title, "draft")
         draft = run_draft(client, work_dir, chapter_number, chapter_title, target_words)
         draft_words = count_chinese_chars(draft)
         draft_path = _step_file_path(work_dir, chapter_number, chapter_title, "draft")
         draft_path.write_text(draft, encoding="utf-8")
         ctx = assemble_context(work_dir, chapter_number, chapter_title, target_words)
+        run_count = _step_run_count(work_dir, chapter_number, chapter_title, "draft")
+        batch_count = _chapter_batch_count(work_dir, chapter_number, str(chapter_title or ""))
         return {
             "ok": True, "step": "draft", "word_count": draft_words,
             "content": draft, "target_words": target_words,
             "llm_context": _draft_context_manifest(ctx),
-            "needs_expand": draft_words < target_words * 0.9,
-            "next_step": "expand" if draft_words < target_words * 0.9 else "polish",
+            "needs_expand": draft_words < expand_threshold,
+            "next_step": "expand" if draft_words < expand_threshold else "polish",
+            "run_count": run_count,
+            "batch_count": batch_count,
         }
 
     # Step: expand
@@ -2878,16 +3571,18 @@ def _api_write_chapter_step_blocking(
             raise HTTPException(status_code=400, detail="请先运行 draft 步骤")
         draft = draft_path.read_text(encoding="utf-8")
         draft_words = count_chinese_chars(draft)
-        if draft_words >= _EXPAND_AUTO_SKIP_WORDS and not force:
+        _invalidate_outputs_after_step(_db_path(), book_id, book, ch, "expand")
+        if draft_words >= expand_threshold and not force:
+            _archive_and_remove_step_artifact(work_dir, chapter_number, chapter_title, "expand")
             marker = _step_skip_path(work_dir, chapter_number, chapter_title, "expand")
             marker.write_text(
                 json.dumps(
                     {
                         "step": "expand",
                         "skipped": True,
-                        "reason": "draft_reached_3000_words",
+                        "reason": "draft_reached_target_words",
                         "word_count": draft_words,
-                        "threshold": _EXPAND_AUTO_SKIP_WORDS,
+                        "threshold": expand_threshold,
                         "created_at": datetime.now().isoformat(timespec="seconds"),
                     },
                     ensure_ascii=False,
@@ -2903,8 +3598,11 @@ def _api_write_chapter_step_blocking(
                 "content": draft,
                 "target_words": target_words,
                 "source_before": draft,
+                "source_word_count": draft_words,
                 "next_step": "polish",
-                "message": f"初稿已达到 {draft_words} 字，自动跳过扩写。",
+                "message": f"初稿已达到 {draft_words} 字（目标 {expand_threshold} 字），自动跳过扩写。",
+                "run_count": _step_history_count(work_dir, chapter_number, chapter_title, "expand"),
+                "batch_count": batch_count,
             }
         if force:
             try:
@@ -2918,11 +3616,15 @@ def _api_write_chapter_step_blocking(
         expanded_words = count_chinese_chars(expanded)
         expand_path = _step_file_path(work_dir, chapter_number, chapter_title, "expand")
         expand_path.write_text(expanded, encoding="utf-8")
+        run_count = _step_run_count(work_dir, chapter_number, chapter_title, "expand")
         return {
             "ok": True, "step": "expand", "word_count": expanded_words,
             "content": expanded, "target_words": target_words,
             "source_before": draft,
+            "source_word_count": draft_words,
             "next_step": "polish",
+            "run_count": run_count,
+            "batch_count": batch_count,
         }
 
     # Step: polish
@@ -2935,15 +3637,20 @@ def _api_write_chapter_step_blocking(
             source = draft_path.read_text(encoding="utf-8")
         else:
             raise HTTPException(status_code=400, detail="请先运行 draft 步骤")
+        _invalidate_outputs_after_step(_db_path(), book_id, book, ch, "polish")
         polished = run_polish(client, source)
         polished_words = count_chinese_chars(polished)
         polish_path = _step_file_path(work_dir, chapter_number, chapter_title, "polish")
         _archive_step_version(work_dir, chapter_number, chapter_title, "polish")
         polish_path.write_text(polished, encoding="utf-8")
+        run_count = _step_run_count(work_dir, chapter_number, chapter_title, "polish")
         return {
             "ok": True, "step": "polish", "word_count": polished_words,
             "content": polished, "next_step": "deslop",
             "source_before": source,
+            "source_word_count": count_chinese_chars(source),
+            "run_count": run_count,
+            "batch_count": batch_count,
         }
 
     # Step: review
@@ -2951,16 +3658,20 @@ def _api_write_chapter_step_blocking(
         source = _read_step_source(work_dir, chapter_number, ["deslop", "polish", "expand", "draft"])
         if not source:
             raise HTTPException(status_code=400, detail="请先运行去 AI 步骤")
+        _invalidate_outputs_after_step(_db_path(), book_id, book, ch, "review")
         from generator.long_novel.l4_review import run_story_review
         review = run_story_review(client, source, work_dir, chapter_number, _outline_for_chapter(ch))
         review_path = _step_file_path(work_dir, chapter_number, chapter_title, "review")
         _archive_step_version(work_dir, chapter_number, chapter_title, "review")
         review_path.write_text(json.dumps(review, ensure_ascii=False, indent=2), encoding="utf-8")
+        run_count = _step_run_count(work_dir, chapter_number, chapter_title, "review")
         return {
             "ok": True,
             "step": "review",
             "review": review,
             "next_step": "finalize",
+            "run_count": run_count,
+            "batch_count": batch_count,
         }
 
     # Step: deslop
@@ -2976,7 +3687,8 @@ def _api_write_chapter_step_blocking(
             source = draft_path.read_text(encoding="utf-8")
         else:
             raise HTTPException(status_code=400, detail="请先运行 draft 步骤")
-        final = ensure_chapter_heading(run_deslop(client, source), chapter_number)
+        _invalidate_outputs_after_step(_db_path(), book_id, book, ch, "deslop")
+        final = strip_chapter_heading(run_deslop(client, source))
         final_words = count_chinese_chars(final)
         deslop_path = _step_file_path(work_dir, chapter_number, chapter_title, "deslop")
         _archive_step_version(work_dir, chapter_number, chapter_title, "deslop")
@@ -2988,10 +3700,14 @@ def _api_write_chapter_step_blocking(
             json.dumps({"zhuque": {}, "deai": deai}, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+        run_count = _step_run_count(work_dir, chapter_number, chapter_title, "deslop")
         return {
             "ok": True, "step": "deslop", "word_count": final_words,
             "content": final, "zhuque": {}, "deai": deai, "next_step": "review",
-            "source_before": source,
+            "source_before": strip_chapter_heading(source),
+            "source_word_count": count_chinese_chars(strip_chapter_heading(source)),
+            "run_count": run_count,
+            "batch_count": batch_count,
         }
 
     # Step: continuity
@@ -3005,7 +3721,15 @@ def _api_write_chapter_step_blocking(
         else:
             raise HTTPException(status_code=400, detail="请先运行 draft 步骤")
         if chapter_number <= 1:
-            return {"ok": True, "step": "continuity", "skipped": True, "reason": "第一章无需连续性检查", "next_step": "finalize"}
+            return {
+                "ok": True,
+                "step": "continuity",
+                "skipped": True,
+                "reason": "第一章无需连续性检查",
+                "next_step": "finalize",
+                "run_count": 0,
+                "batch_count": batch_count,
+            }
         continuity = run_continuity_check(client, work_dir, chapter_number, source)
         return {
             "ok": True, "step": "continuity",
@@ -3013,6 +3737,8 @@ def _api_write_chapter_step_blocking(
             "issue_count": continuity.get("issue_count", 0),
             "passed": continuity.get("ok", False),
             "next_step": "finalize",
+            "run_count": 1,
+            "batch_count": batch_count,
         }
 
     # Step: finalize — save the post-deAI text, update tracking, and persist review.
@@ -3041,7 +3767,14 @@ def _api_write_chapter_step_blocking(
             shutil.copy2(final_draft_path, backup)
         final_draft_path.write_text(final_text, encoding="utf-8")
 
-        update_tracking_files(work_dir, chapter_number, final_text, client)
+        has_later_draft = _has_later_saved_chapter(_db_path(), book_id, chapter_number)
+        update_tracking_files(
+            work_dir,
+            chapter_number,
+            final_text,
+            client,
+            advance_current=not has_later_draft,
+        )
 
         review_existing = _step_file_read(work_dir, chapter_number, "review")
         if review_existing and review_existing.exists():
@@ -3087,6 +3820,8 @@ def _api_write_chapter_step_blocking(
             "content": final_text,
             "review": review,
             "message": f"第{chapter_number}章已保存，共{final_words}字",
+            "run_count": _finalize_run_count(final_draft_path),
+            "batch_count": batch_count,
         }
 
 
@@ -3100,9 +3835,11 @@ def api_write_chapter_step_status(book_id: int, chapter_number: int) -> dict[str
     if not ch:
         raise HTTPException(status_code=404, detail="章节不存在")
 
-    from generator.long_novel.l2_chapter_write import count_chinese_chars
+    from generator.long_novel.l2_chapter_write import count_chinese_chars, strip_chapter_heading
 
     work_dir = Path(book["work_dir"])
+    chapter_title = str(ch.get("title") or "")
+    batch_count = _chapter_batch_count(work_dir, chapter_number, chapter_title)
     steps_available = []
     for step_name in CHAPTER_STEP_FILES.keys():
         fp = _step_file_read(work_dir, chapter_number, step_name)
@@ -3112,6 +3849,8 @@ def api_write_chapter_step_status(book_id: int, chapter_number: int) -> dict[str
                 "step": step_name,
                 "word_count": count_chinese_chars(text),
                 "has_content": True,
+                "run_count": _step_run_count(work_dir, chapter_number, str(ch.get("title") or ""), step_name),
+                "batch_count": batch_count,
             })
         elif _step_skip_read(work_dir, chapter_number, step_name):
             steps_available.append({
@@ -3119,12 +3858,17 @@ def api_write_chapter_step_status(book_id: int, chapter_number: int) -> dict[str
                 "word_count": 0,
                 "has_content": False,
                 "skipped": True,
+                "run_count": _step_history_count(work_dir, chapter_number, str(ch.get("title") or ""), step_name),
+                "batch_count": batch_count,
             })
     if ch.get("draft_path"):
+        final_path = Path(str(ch.get("draft_path")))
         steps_available.append({
             "step": "finalize",
             "word_count": int(ch.get("actual_words") or 0),
             "has_content": True,
+            "run_count": _finalize_run_count(final_path),
+            "batch_count": batch_count,
         })
     steps_progress = [
         _step_status_snapshot(book_id, work_dir, ch, chapter_number, step_name)
@@ -3135,6 +3879,7 @@ def api_write_chapter_step_status(book_id: int, chapter_number: int) -> dict[str
         "ok": True,
         "chapter_status": ch.get("status"),
         "review_status": ch.get("review_status"),
+        "batch_count": batch_count,
         "steps_available": steps_available,
         "steps_progress": steps_progress,
     }
@@ -3157,9 +3902,11 @@ def api_write_chapter_step_output(book_id: int, chapter_number: int, step_name: 
     if not ch:
         raise HTTPException(status_code=404, detail="章节不存在")
 
-    from generator.long_novel.l2_chapter_write import count_chinese_chars
+    from generator.long_novel.l2_chapter_write import count_chinese_chars, strip_chapter_heading
 
     work_dir = Path(book["work_dir"])
+    chapter_title = str(ch.get("title") or "")
+    batch_count = _chapter_batch_count(work_dir, chapter_number, chapter_title)
     if step_name == "finalize":
         draft_path = Path(ch["draft_path"]) if ch.get("draft_path") else None
         content = draft_path.read_text(encoding="utf-8") if draft_path and draft_path.exists() else ""
@@ -3179,6 +3926,8 @@ def api_write_chapter_step_output(book_id: int, chapter_number: int, step_name: 
             "final_words": int(ch.get("actual_words") or count_chinese_chars(content)),
             "draft_path": str(draft_path) if draft_path else "",
             "review": review,
+            "run_count": _finalize_run_count(draft_path),
+            "batch_count": batch_count,
         }
 
     step_path = _step_file_read(work_dir, chapter_number, step_name)
@@ -3192,8 +3941,8 @@ def api_write_chapter_step_output(book_id: int, chapter_number: int, step_name: 
             threshold = int(marker_data.get("threshold") or _EXPAND_AUTO_SKIP_WORDS)
             reason = str(marker_data.get("reason") or "")
             message = (
-                f"初稿已达到 {word_count} 字，自动跳过扩写。"
-                if reason == "draft_reached_3000_words"
+                f"初稿已达到 {word_count} 字（目标 {threshold} 字），自动跳过扩写。"
+                if reason in {"draft_reached_3000_words", "draft_reached_target_words"}
                 else "扩写已跳过。"
             )
             return {
@@ -3202,11 +3951,14 @@ def api_write_chapter_step_output(book_id: int, chapter_number: int, step_name: 
                 "skipped": True,
                 "content": draft,
                 "source_before": draft,
+                "source_word_count": word_count,
                 "word_count": word_count,
                 "target_words": int(ch.get("target_words") or book.get("target_words_per_chapter") or 0),
                 "skip": marker_data,
                 "message": message,
                 "threshold": threshold,
+                "run_count": _step_history_count(work_dir, chapter_number, chapter_title, "expand"),
+                "batch_count": batch_count,
             }
         if step_name == "review" and ch.get("ai_review_json"):
             raw = str(ch["ai_review_json"])
@@ -3215,14 +3967,19 @@ def api_write_chapter_step_output(book_id: int, chapter_number: int, step_name: 
             except Exception:
                 review = {"overall": "CONCERNS", "dimensions": {}, "raw": raw}
             review = _normalize_review_gate(review, chapter_number)
+            revised_content = _read_step_source(work_dir, chapter_number, ["deslop", "polish", "expand", "draft"])
+            revised_content = strip_chapter_heading(revised_content) if revised_content else ""
             return {
                 "ok": True,
                 "step": "review",
                 "review": review,
                 "force_pass": {},
                 "content": raw,
+                "revised_content": revised_content,
+                "revised_word_count": count_chinese_chars(revised_content),
                 "word_count": count_chinese_chars(raw),
                 "fallback_from_final": True,
+                "batch_count": batch_count,
             }
         final_draft_path = Path(ch["draft_path"]) if ch.get("draft_path") else None
         if step_name in {"draft", "expand", "polish", "deslop"} and final_draft_path and final_draft_path.exists():
@@ -3236,10 +3993,17 @@ def api_write_chapter_step_output(book_id: int, chapter_number: int, step_name: 
                 "target_words": int(ch.get("target_words") or book.get("target_words_per_chapter") or 0),
                 "fallback_from_final": True,
                 "message": "该步骤的中间产物不存在，已显示最终成稿。",
+                "run_count": 0,
+                "batch_count": batch_count,
             }
         raise HTTPException(status_code=404, detail="步骤产物不存在")
 
     raw = step_path.read_text(encoding="utf-8")
+    if step_name == "deslop":
+        cleaned_raw = strip_chapter_heading(raw)
+        if cleaned_raw != raw:
+            step_path.write_text(cleaned_raw, encoding="utf-8")
+            raw = cleaned_raw
     if step_name == "review":
         try:
             review = json.loads(raw)
@@ -3247,13 +4011,19 @@ def api_write_chapter_step_output(book_id: int, chapter_number: int, step_name: 
             review = {"overall": "CONCERNS", "dimensions": {}, "raw": raw}
         review = _normalize_review_gate(review, chapter_number)
         force_pass = _read_json_file(_step_force_read(work_dir, chapter_number, "review"))
+        revised_content = _read_step_source(work_dir, chapter_number, ["deslop", "polish", "expand", "draft"])
+        revised_content = strip_chapter_heading(revised_content) if revised_content else ""
         return {
             "ok": True,
             "step": "review",
             "review": review,
             "force_pass": force_pass,
             "content": raw,
+            "revised_content": revised_content,
+            "revised_word_count": count_chinese_chars(revised_content),
             "word_count": count_chinese_chars(raw),
+            "run_count": _step_run_count(work_dir, chapter_number, chapter_title, "review"),
+            "batch_count": batch_count,
         }
 
     gate = _read_json_file(_step_gate_read(work_dir, chapter_number, step_name))
@@ -3275,17 +4045,22 @@ def api_write_chapter_step_output(book_id: int, chapter_number: int, step_name: 
             if prev_path and prev_path.exists():
                 source_before = prev_path.read_text(encoding="utf-8")
                 break
+        if step_name == "deslop" and source_before:
+            source_before = strip_chapter_heading(source_before)
 
     return {
         "ok": True,
         "step": step_name,
         "content": raw,
         "source_before": source_before,
+        "source_word_count": count_chinese_chars(source_before),
         "word_count": count_chinese_chars(raw),
         "target_words": int(ch.get("target_words") or book.get("target_words_per_chapter") or 0),
         "zhuque": gate.get("zhuque") if step_name == "deslop" else None,
         "deai": gate.get("deai") if step_name == "deslop" else None,
         "force_pass": force_pass,
+        "run_count": _step_run_count(work_dir, chapter_number, chapter_title, step_name),
+        "batch_count": batch_count,
     }
 
 
@@ -3336,7 +4111,7 @@ async def api_save_step_content(
     content: str = Body(..., embed=True),
 ) -> dict[str, Any]:
     """Save edited content for a chapter writing step."""
-    valid_steps = set(CHAPTER_STEP_FILES.keys())
+    valid_steps = set(CHAPTER_STEP_FILES.keys()) | {"finalize"}
     if step_name not in valid_steps:
         raise HTTPException(status_code=400, detail=f"Invalid step: {step_name}. Valid: {', '.join(sorted(valid_steps))}")
 
@@ -3349,6 +4124,40 @@ async def api_save_step_content(
 
     work_dir = Path(book["work_dir"])
     chapter_title = ch.get("title", "")
+    from generator.long_novel.l2_chapter_write import count_chinese_chars, ensure_chapter_heading, strip_chapter_heading
+
+    if step_name == "finalize":
+        final_text = ensure_chapter_heading(content, chapter_number)
+        step_file = Path(ch["draft_path"]) if ch.get("draft_path") else chapter_final_path(work_dir, chapter_number, chapter_title)
+        step_file.parent.mkdir(parents=True, exist_ok=True)
+        if step_file.exists():
+            backup = step_file.with_suffix(".md.bak")
+            if backup.exists():
+                backup = step_file.with_name(
+                    f"{step_file.stem}.{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.md.bak"
+                )
+            shutil.copy2(step_file, backup)
+        step_file.write_text(final_text, encoding="utf-8")
+        final_words = count_chinese_chars(final_text)
+        _upsert_chapter_preserving(
+            _db_path(),
+            ch,
+            status=str(ch.get("status") or "draft"),
+            draft_path=str(step_file),
+            actual_words=final_words,
+        )
+        return {
+            "ok": True,
+            "message": "内容已保存",
+            "step": step_name,
+            "content": final_text,
+            "word_count": final_words,
+            "final_words": final_words,
+            "draft_path": str(step_file),
+        }
+
+    if step_name == "deslop":
+        content = strip_chapter_heading(content)
     step_file = _step_file_path(work_dir, chapter_number, chapter_title, step_name)
     step_file.parent.mkdir(parents=True, exist_ok=True)
     step_file.write_text(content, encoding="utf-8")
@@ -3418,11 +4227,111 @@ async def api_revise_chapter_step(
     )
 
 
+def _revise_progress_step(step_name: str) -> str:
+    return f"{step_name}_revise"
+
+
+@router.post("/books/{book_id}/write-chapter/{chapter_number}/step/{step_name}/revise/start")
+async def api_start_revise_chapter_step(
+    book_id: int,
+    chapter_number: int,
+    step_name: str,
+    request: Request,
+) -> dict[str, Any]:
+    payload = await _json_payload(request)
+    if step_name not in {"review", "deslop"}:
+        raise HTTPException(status_code=400, detail="只有审查和去 AI 步骤支持按建议修改")
+
+    book = get_book(_db_path(), book_id)
+    if not book:
+        raise HTTPException(status_code=404, detail="书籍不存在")
+    ch = get_chapter(_db_path(), book_id, chapter_number)
+    if not ch:
+        raise HTTPException(status_code=404, detail="章节不存在")
+
+    work_dir = Path(book["work_dir"])
+    chapter_title = str(ch.get("title") or "")
+    progress_step = _revise_progress_step(step_name)
+    progress_path = _step_progress_path(work_dir, chapter_number, chapter_title, progress_step)
+    current = _step_status_snapshot(book_id, work_dir, ch, chapter_number, progress_step)
+    if current.get("status") in {"starting", "running"}:
+        return {
+            "ok": True,
+            "accepted": True,
+            "already_running": True,
+            "step": step_name,
+            "progress_step": progress_step,
+            "status": current.get("status"),
+            "detail": current.get("detail", ""),
+            "updated_at": current.get("updated_at", ""),
+            "run_count": current.get("run_count") or 0,
+            "batch_count": current.get("batch_count") or 0,
+        }
+
+    _write_step_progress(progress_path, "starting", "按建议修改任务已启动", {"step": step_name, "progress_step": progress_step})
+    _step_job_mark(book_id, chapter_number, progress_step, True)
+
+    def _run() -> None:
+        try:
+            _write_step_progress(progress_path, "running", "按建议修改中，完成后会自动复审…", {"step": step_name, "progress_step": progress_step})
+            result = _api_revise_chapter_step_blocking(book_id, chapter_number, step_name, payload)
+            review = result.get("review") if isinstance(result.get("review"), dict) else {}
+            result_summary = {
+                "word_count": int(result.get("word_count") or 0),
+                "revised_word_count": int(result.get("revised_word_count") or result.get("word_count") or 0),
+                "review_passed": bool(review.get("passed")),
+                "run_count": int(result.get("run_count") or 0),
+                "batch_count": int(result.get("batch_count") or 0),
+            }
+            detail = str(result.get("message") or "已按建议修改，并已自动复审")
+            _write_step_progress(progress_path, "done", detail, {"step": step_name, "progress_step": progress_step, "result": result_summary})
+        except HTTPException as exc:
+            _write_step_progress(
+                progress_path,
+                "error",
+                str(exc.detail)[:500],
+                {"step": step_name, "progress_step": progress_step, "http_status": exc.status_code},
+            )
+        except Exception as exc:
+            logger.exception("chapter revise failed book=%s chapter=%s step=%s", book_id, chapter_number, step_name)
+            _write_step_progress(progress_path, "error", str(exc)[:500], {"step": step_name, "progress_step": progress_step})
+        finally:
+            _step_job_mark(book_id, chapter_number, progress_step, False)
+
+    threading.Thread(target=_run, daemon=True).start()
+    return {
+        "ok": True,
+        "accepted": True,
+        "step": step_name,
+        "progress_step": progress_step,
+        "status": "starting",
+        "detail": "按建议修改任务已启动",
+    }
+
+
+@router.get("/books/{book_id}/write-chapter/{chapter_number}/step/{step_name}/revise/status")
+def api_revise_chapter_step_progress(book_id: int, chapter_number: int, step_name: str) -> dict[str, Any]:
+    if step_name not in {"review", "deslop"}:
+        raise HTTPException(status_code=400, detail="只有审查和去 AI 步骤支持按建议修改")
+    book = get_book(_db_path(), book_id)
+    if not book:
+        raise HTTPException(status_code=404, detail="书籍不存在")
+    ch = get_chapter(_db_path(), book_id, chapter_number)
+    if not ch:
+        raise HTTPException(status_code=404, detail="章节不存在")
+    work_dir = Path(book["work_dir"])
+    progress_step = _revise_progress_step(step_name)
+    data = _step_status_snapshot(book_id, work_dir, ch, chapter_number, progress_step)
+    return {"ok": True, **data, "step": step_name, "progress_step": progress_step}
+
+
 def _api_revise_chapter_step_blocking(
     book_id: int,
     chapter_number: int,
     step_name: str,
     payload: dict[str, Any],
+    *,
+    client: Any | None = None,
 ) -> dict[str, Any]:
     if step_name not in {"review", "deslop"}:
         raise HTTPException(status_code=400, detail="只有审查和去 AI 步骤支持按建议修改")
@@ -3433,9 +4342,9 @@ def _api_revise_chapter_step_blocking(
     if not ch:
         raise HTTPException(status_code=404, detail="章节不存在")
 
-    from generator.long_novel.l2_chapter_write import count_chinese_chars, ensure_chapter_heading, run_deslop
+    from generator.long_novel.l2_chapter_write import count_chinese_chars, run_deslop, strip_chapter_heading
 
-    client = _deepseek_client(book)
+    client = client or _deepseek_client(book)
     work_dir = Path(book["work_dir"])
     chapter_title = str(ch.get("title") or "")
     extra_prompt = str(payload.get("prompt") or "").strip()
@@ -3461,7 +4370,7 @@ def _api_revise_chapter_step_blocking(
             "source": source,
         })
         revised = _chat_text(client, system, user, thinking=True).strip()
-        revised = ensure_chapter_heading(run_deslop(client, revised), chapter_number)
+        revised = strip_chapter_heading(run_deslop(client, revised))
         deslop_path = _step_file_path(work_dir, chapter_number, chapter_title, "deslop")
         _archive_step_version(work_dir, chapter_number, chapter_title, "deslop")
         deslop_path.write_text(revised, encoding="utf-8")
@@ -3473,6 +4382,7 @@ def _api_revise_chapter_step_blocking(
         )
         from generator.long_novel.l4_review import run_story_review
         new_review = run_story_review(client, revised, work_dir, chapter_number, _outline_for_chapter(ch))
+        new_review = _normalize_review_gate(new_review, chapter_number)
         new_review["revision_audit"] = {
             "mode": "review_fix_then_auto_recheck",
             "source_step": "deslop",
@@ -3502,7 +4412,12 @@ def _api_revise_chapter_step_blocking(
             "zhuque": {},
             "deai": deai,
             "review": new_review,
+            "revised_content": revised,
+            "revised_word_count": count_chinese_chars(revised),
             "source_before": source,
+            "source_word_count": count_chinese_chars(source),
+            "run_count": _step_run_count(work_dir, chapter_number, chapter_title, "review"),
+            "batch_count": _chapter_batch_count(work_dir, chapter_number, chapter_title),
             "message": msg,
         }
 
@@ -3526,7 +4441,7 @@ def _api_revise_chapter_step_blocking(
         "source": source,
     })
     revised = _chat_text(client, system, user, thinking=True).strip()
-    revised = ensure_chapter_heading(run_deslop(client, revised), chapter_number)
+    revised = strip_chapter_heading(run_deslop(client, revised))
     deslop_path = _step_file_path(work_dir, chapter_number, chapter_title, "deslop")
     if deslop_path.exists():
         deslop_path.with_suffix(".md.bak").write_text(deslop_path.read_text(encoding="utf-8"), encoding="utf-8")
@@ -3568,12 +4483,27 @@ def api_list_step_history(book_id: int, chapter_number: int, step_name: str) -> 
     history_dir = _step_history_dir(work_dir, chapter_number, chapter_title, step_name)
     if not history_dir.exists():
         return {"ok": True, "step": step_name, "versions": []}
+    batch_started_at = 0.0
+    if step_name != "draft":
+        draft_path = _step_file_read(work_dir, chapter_number, "draft")
+        if draft_path and draft_path.exists():
+            try:
+                batch_started_at = draft_path.stat().st_mtime
+            except Exception:
+                batch_started_at = 0.0
     versions: list[dict[str, Any]] = []
     for p in sorted(history_dir.iterdir(), key=lambda x: x.name, reverse=True):
         if not p.is_file():
             continue
+        # Direct reruns are archived as YYYYMMDD_HHMMSS.md/json. Stale outputs
+        # invalidated by rerunning an upstream step are stored separately and
+        # should not appear as this step's current-batch history.
+        if not re.match(r"^\d{8}_\d{6}\.(?:md|json)$", p.name):
+            continue
         try:
             stat = p.stat()
+            if batch_started_at and stat.st_mtime < batch_started_at:
+                continue
             versions.append({
                 "id": p.stem,
                 "filename": p.name,
@@ -3608,12 +4538,48 @@ def api_read_step_history(book_id: int, chapter_number: int, step_name: str, ver
         raise HTTPException(status_code=404, detail="历史版本不存在")
     path = matches[0]
     content = path.read_text(encoding="utf-8")
+    from generator.long_novel.l2_chapter_write import count_chinese_chars
     return {
         "ok": True,
         "step": step_name,
         "version_id": version_id,
         "content": content,
-        "word_count": len(re.findall(r"[一-龥]", content)),
+        "word_count": count_chinese_chars(content),
+    }
+
+
+@router.delete("/books/{book_id}/write-chapter/{chapter_number}/step/{step_name}/history/{version_id}")
+def api_delete_step_history(book_id: int, chapter_number: int, step_name: str, version_id: str) -> dict[str, Any]:
+    """Delete one archived history version file from disk."""
+    valid_steps = set(CHAPTER_STEP_FILES.keys())
+    if step_name not in valid_steps:
+        raise HTTPException(status_code=400, detail=f"Invalid step: {step_name}")
+    if "/" in version_id or "\\" in version_id or ".." in version_id:
+        raise HTTPException(status_code=400, detail="Invalid version id")
+    book = get_book(_db_path(), book_id)
+    if not book:
+        raise HTTPException(status_code=404, detail="书籍不存在")
+    ch = get_chapter(_db_path(), book_id, chapter_number)
+    if not ch:
+        raise HTTPException(status_code=404, detail="章节不存在")
+
+    work_dir = Path(book["work_dir"])
+    chapter_title = str(ch.get("title") or "")
+    history_dir = _step_history_dir(work_dir, chapter_number, chapter_title, step_name)
+    matches = [p for p in history_dir.glob(f"{version_id}.*")] if history_dir.exists() else []
+    if not matches:
+        raise HTTPException(status_code=404, detail="历史版本不存在")
+    path = matches[0]
+    if not _path_within(path, history_dir):
+        raise HTTPException(status_code=400, detail="拒绝删除历史目录外文件")
+    deleted_name = path.name
+    path.unlink()
+    return {
+        "ok": True,
+        "step": step_name,
+        "version_id": version_id,
+        "deleted": deleted_name,
+        "message": "历史版本源文件已删除",
     }
 
 
@@ -3663,6 +4629,10 @@ async def api_update_chapter(book_id: int, chapter_number: int, request: Request
 
 @router.post("/books/{book_id}/chapters/{chapter_number}/generate-title")
 async def api_generate_chapter_title(book_id: int, chapter_number: int) -> dict[str, Any]:
+    return await run_in_threadpool(_generate_chapter_title_blocking, book_id, chapter_number)
+
+
+def _generate_chapter_title_blocking(book_id: int, chapter_number: int) -> dict[str, Any]:
     """让 LLM 根据章节大纲/正文给出标题候选；返回但不直接落库。"""
     book = get_book(_db_path(), book_id)
     if not book:
@@ -3749,10 +4719,119 @@ async def api_review_chapter(book_id: int, chapter_number: int) -> dict[str, Any
 # ── Pipeline: Rewrite Chapter (L3) ────────────────────────────────────
 
 
-@router.post("/books/{book_id}/rewrite-chapter/{chapter_number}")
-async def api_rewrite_chapter(book_id: int, chapter_number: int) -> dict[str, Any]:
-    """Rewrite a chapter and check cascade continuity."""
-    book = get_book(_db_path(), book_id)
+@router.post("/books/{book_id}/reset-chapter/{chapter_number}")
+async def api_reset_chapter_for_regeneration(book_id: int, chapter_number: int) -> dict[str, Any]:
+    """Delete active chapter outputs so the chapter can be generated from scratch."""
+    db_path = _db_path()
+    book = get_book(db_path, book_id)
+    if not book:
+        raise HTTPException(status_code=404, detail="书籍不存在")
+    chapter = get_chapter(db_path, book_id, chapter_number)
+    if not chapter:
+        raise HTTPException(status_code=404, detail="章节不存在")
+    if _autopilot_job_active(book_id):
+        raise HTTPException(status_code=409, detail="全自动任务正在运行，请暂停后再删除正文")
+    for step_name in [*CHAPTER_STEP_FILES.keys(), "finalize"]:
+        if _step_job_active(book_id, chapter_number, step_name):
+            raise HTTPException(status_code=409, detail=f"本章 {step_name} 步骤仍在运行，请等待完成后再删除正文")
+
+    work_dir = Path(str(book["work_dir"] or ""))
+    final_path = Path(str(chapter["draft_path"])) if chapter.get("draft_path") else None
+    has_final = bool(final_path and final_path.exists())
+    has_steps = any(_step_file_read(work_dir, chapter_number, step) for step in CHAPTER_STEP_FILES)
+    if has_final or has_steps:
+        reset = _archive_and_reset_chapter_outputs(db_path, book_id, book, chapter)
+    else:
+        _reset_chapter_row_for_deleted_outputs(db_path, book_id, book, chapter)
+        reset = {
+            "archived_files": [],
+            "archive_dir": "",
+            "later_written_chapters": [
+                int(item["chapter_number"])
+                for item in list_chapters(db_path, book_id)
+                if int(item.get("chapter_number") or 0) > chapter_number
+                and item.get("draft_path")
+                and Path(str(item["draft_path"])).exists()
+            ],
+        }
+    later = reset["later_written_chapters"]
+    message = f"第{chapter_number}章正文已归档并删除"
+    if later:
+        message += f"；后续已有 {len(later)} 章正文，重写后请检查连续性"
+    _sync_tracking_after_chapter_reset(db_path, book_id, book, [chapter_number])
+    _write_reset_idle_autopilot_snapshot(book, message)
+    return {
+        "ok": True,
+        "chapter": chapter_number,
+        "message": message,
+        **reset,
+    }
+
+
+@router.post("/books/{book_id}/reset-chapters")
+async def api_reset_chapter_range_for_regeneration(book_id: int, request: Request) -> dict[str, Any]:
+    """Archive and clear an inclusive chapter range for fresh generation."""
+    payload = await _json_payload(request)
+    db_path = _db_path()
+    book = get_book(db_path, book_id)
+    if not book:
+        raise HTTPException(status_code=404, detail="书籍不存在")
+    reset = _reset_chapter_range_for_regeneration(
+        db_path,
+        book_id,
+        book,
+        payload.get("chapter_start"),
+        payload.get("chapter_end"),
+    )
+    count = len(reset["reset_chapters"])
+    message = f"已归档并清空 {count} 章正文"
+    _sync_tracking_after_chapter_reset(db_path, book_id, book, reset["reset_chapters"])
+    _write_reset_idle_autopilot_snapshot(book, message)
+    return {
+        "ok": True,
+        "message": message,
+        **reset,
+    }
+
+
+def _cascade_continuity_issues(
+    client: Any,
+    work_dir: Path,
+    chapters: list[dict[str, Any]],
+    *,
+    after_chapter: int,
+) -> list[dict[str, Any]]:
+    from generator.long_novel.l2_chapter_write import run_continuity_check
+
+    cascade_issues: list[dict[str, Any]] = []
+    for chapter in chapters:
+        chapter_number = int(chapter["chapter_number"])
+        if chapter_number <= int(after_chapter) or not chapter.get("draft_path"):
+            continue
+        draft_path = Path(str(chapter["draft_path"]))
+        if not draft_path.exists():
+            continue
+        result = run_continuity_check(
+            client,
+            work_dir,
+            chapter_number,
+            draft_path.read_text(encoding="utf-8"),
+        )
+        if result.get("issue_count", 0) > 0:
+            cascade_issues.append({"chapter": chapter_number, "issues": result["issues"]})
+    return cascade_issues
+
+
+def _rewrite_chapter_blocking(
+    book_id: int,
+    chapter_number: int,
+    *,
+    client: Any | None = None,
+    check_cascade: bool = True,
+) -> dict[str, Any]:
+    """Rewrite one saved chapter from its prior text and optionally check later continuity."""
+    db_path = _db_path()
+    book = get_book(db_path, book_id)
     if not book:
         raise HTTPException(status_code=404, detail="书籍不存在")
 
@@ -3760,21 +4839,19 @@ async def api_rewrite_chapter(book_id: int, chapter_number: int) -> dict[str, An
         count_chinese_chars,
         ensure_chapter_heading,
         rewrite_chapter_from_source,
-        run_continuity_check,
         run_deslop,
         run_polish,
         update_tracking_files,
     )
 
-    client = _deepseek_client(book)
+    active_client = client or _deepseek_client(book)
     work_dir = Path(book["work_dir"])
-
-    ch = get_chapter(_db_path(), book_id, chapter_number)
-    if not ch or not ch.get("draft_path"):
-        raise HTTPException(status_code=400, detail="本章尚未生成正文")
-    old_path = Path(ch["draft_path"])
+    chapter = get_chapter(db_path, book_id, chapter_number)
+    if not chapter or not chapter.get("draft_path"):
+        raise HTTPException(status_code=400, detail=f"第{chapter_number}章尚未生成正文")
+    old_path = Path(str(chapter["draft_path"]))
     if not old_path.exists():
-        raise HTTPException(status_code=400, detail="本章正文文件不存在")
+        raise HTTPException(status_code=400, detail=f"第{chapter_number}章正文文件不存在")
     source_text = old_path.read_text(encoding="utf-8")
 
     # Keep the prior text available even if rewriting fails midway.
@@ -3782,72 +4859,219 @@ async def api_rewrite_chapter(book_id: int, chapter_number: int) -> dict[str, An
     if backup.exists():
         backup = old_path.with_name(
             f"{old_path.stem}.{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.md.bak"
-        )
+    )
     shutil.copy2(old_path, backup)
+    _invalidate_outputs_after_step(db_path, book_id, book, chapter, "draft")
 
     # Rewrite this chapter from its own source text. Loading global tracking
     # here would leak later chapters into rewrites of an earlier chapter.
+    chapter_title = str(chapter.get("title") or "")
     draft = rewrite_chapter_from_source(
-        client,
+        active_client,
         source_text,
         chapter_number,
-        str(ch.get("title") or ""),
-        _outline_for_chapter(ch),
+        chapter_title,
+        _outline_for_chapter(chapter),
     )
-    polished = run_polish(client, draft)
-    final = ensure_chapter_heading(run_deslop(client, polished), chapter_number)
+    _archive_step_version(work_dir, chapter_number, chapter_title, "draft")
+    step_draft_path = _step_file_path(work_dir, chapter_number, chapter_title, "draft")
+    step_draft_path.write_text(draft, encoding="utf-8")
 
-    # Save new draft into the per-chapter folder
-    draft_path = chapter_final_path(work_dir, chapter_number, ch.get("title", "") if ch else "")
+    polished = run_polish(active_client, draft)
+    step_polish_path = _step_file_path(work_dir, chapter_number, chapter_title, "polish")
+    step_polish_path.write_text(polished, encoding="utf-8")
+
+    final = ensure_chapter_heading(run_deslop(active_client, polished), chapter_number)
+    step_deslop_path = _step_file_path(work_dir, chapter_number, chapter_title, "deslop")
+    step_deslop_path.write_text(final, encoding="utf-8")
+
+    draft_path = chapter_final_path(work_dir, chapter_number, chapter_title)
     draft_path.write_text(final, encoding="utf-8")
 
-    # Cascade continuity check
-    cascade_issues = []
-    all_chapters = list_chapters(_db_path(), book_id)
-    for c in all_chapters:
-        cn = c["chapter_number"]
-        if cn <= chapter_number:
-            continue
-        if not c.get("draft_path"):
-            continue
-        dp = Path(c["draft_path"])
-        if not dp.exists():
-            continue
-        content = dp.read_text(encoding="utf-8")
-        ck = run_continuity_check(client, work_dir, cn, content)
-        if ck.get("issue_count", 0) > 0:
-            cascade_issues.append({"chapter": cn, "issues": ck["issues"]})
-
+    all_chapters = list_chapters(db_path, book_id)
+    cascade_issues = (
+        _cascade_continuity_issues(
+            active_client,
+            work_dir,
+            all_chapters,
+            after_chapter=chapter_number,
+        )
+        if check_cascade
+        else []
+    )
     has_later_draft = any(
-        int(c.get("chapter_number") or 0) > chapter_number
-        and c.get("draft_path")
-        and Path(c["draft_path"]).exists()
-        for c in all_chapters
+        int(item.get("chapter_number") or 0) > chapter_number
+        and item.get("draft_path")
+        and Path(str(item["draft_path"])).exists()
+        for item in all_chapters
     )
     update_tracking_files(
         work_dir,
         chapter_number,
         final,
-        client,
+        active_client,
         advance_current=not has_later_draft,
     )
-
     upsert_chapter(
-        _db_path(), book_id, int(ch.get("volume_number") or 1), chapter_number,
-        title=str(ch.get("title") or ""),
-        status="draft", draft_path=str(draft_path),
-        target_words=int(ch.get("target_words") or book["target_words_per_chapter"]),
+        db_path,
+        book_id,
+        int(chapter.get("volume_number") or 1),
+        chapter_number,
+        title=str(chapter.get("title") or ""),
+        status="draft",
+        draft_path=str(draft_path),
+        target_words=int(chapter.get("target_words") or book["target_words_per_chapter"]),
         actual_words=count_chinese_chars(final),
-        outline_path=ch.get("outline_path"),
+        outline_path=chapter.get("outline_path"),
         review_status=None,
         ai_review_json=None,
     )
-
     return {
         "ok": True,
+        "chapter": chapter_number,
         "message": f"第{chapter_number}章已重写",
         "cascade_affected": len(cascade_issues),
         "cascade_issues": cascade_issues,
+        "batch_count": _chapter_batch_count(work_dir, chapter_number, chapter_title),
+    }
+
+
+@router.post("/books/{book_id}/rewrite-chapter/{chapter_number}")
+async def api_rewrite_chapter(book_id: int, chapter_number: int) -> dict[str, Any]:
+    """Rewrite a chapter and check cascade continuity."""
+    return await run_in_threadpool(_rewrite_chapter_blocking, book_id, chapter_number)
+
+
+@router.post("/books/{book_id}/rewrite-chapters")
+async def api_rewrite_chapter_range(book_id: int, request: Request) -> dict[str, Any]:
+    """Rewrite an inclusive range in the background and expose progress in the autopilot panel."""
+    payload = await _json_payload(request)
+    db_path = _db_path()
+    book = get_book(db_path, book_id)
+    if not book:
+        raise HTTPException(status_code=404, detail="书籍不存在")
+    if _autopilot_job_active(book_id):
+        raise HTTPException(status_code=409, detail="全自动任务正在运行，请暂停后再批量改写")
+    chapters = _chapter_range(
+        db_path,
+        book_id,
+        payload.get("chapter_start"),
+        payload.get("chapter_end"),
+    )
+    for chapter in chapters:
+        chapter_number = int(chapter["chapter_number"])
+        if not chapter.get("draft_path") or not Path(str(chapter["draft_path"])).exists():
+            raise HTTPException(status_code=400, detail=f"第{chapter_number}章还没有可用旧稿")
+        for step_name in [*CHAPTER_STEP_FILES.keys(), "finalize"]:
+            if _step_job_active(book_id, chapter_number, step_name):
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"第{chapter_number}章 {step_name} 步骤仍在运行，请等待完成后再批量改写",
+                )
+
+    work_dir = Path(str(book["work_dir"] or ""))
+    work_dir.mkdir(parents=True, exist_ok=True)
+    chapter_numbers = [int(chapter["chapter_number"]) for chapter in chapters]
+    total = len(chapter_numbers)
+    _set_cancel(book_id, False)
+
+    def _snapshot(
+        state: str,
+        *,
+        detail: str,
+        results: list[dict[str, Any]],
+        current: int = 0,
+    ) -> dict[str, Any]:
+        return {
+            "state": state,
+            "operation": "batch_rewrite",
+            "operation_label": "批量重写",
+            "phase": "batch_rewrite",
+            "stage": "writing",
+            "detail": detail,
+            "writing": {
+                "total": total,
+                "done": len(results),
+                "current": current,
+                "current_status": "rewriting" if state == "running" and current else "",
+                "results": list(results),
+            },
+            "updated_at": datetime.now().strftime("%H:%M:%S"),
+        }
+
+    from generator.long_novel.autopilot import write_autopilot_file
+
+    def _run() -> None:
+        results: list[dict[str, Any]] = []
+        try:
+            active_client = _deepseek_client(book)
+            for chapter_number in chapter_numbers:
+                if _is_cancelled(book_id):
+                    write_autopilot_file(
+                        work_dir,
+                        _snapshot("cancelled", detail="批量改写已暂停，已完成的章节会保留", results=results),
+                    )
+                    return
+                write_autopilot_file(
+                    work_dir,
+                    _snapshot(
+                        "running",
+                        detail=f"正在重写第{chapter_number}章",
+                        results=results,
+                        current=chapter_number,
+                    ),
+                )
+                _rewrite_chapter_blocking(
+                    book_id,
+                    chapter_number,
+                    client=active_client,
+                    check_cascade=False,
+                )
+                results.append({"chapter": chapter_number, "status": "rewritten"})
+
+            cascade_issues = _cascade_continuity_issues(
+                active_client,
+                work_dir,
+                list_chapters(db_path, book_id),
+                after_chapter=chapter_numbers[0] - 1,
+            )
+            detail = f"批量改写完成：共 {total} 章"
+            if cascade_issues:
+                detail += f"，连续性检查发现 {len(cascade_issues)} 章需要留意"
+            write_autopilot_file(
+                work_dir,
+                {
+                    **_snapshot("done", detail=detail, results=results),
+                    "cascade_affected": len(cascade_issues),
+                    "cascade_issues": cascade_issues,
+                },
+            )
+        except Exception as exc:
+            write_autopilot_file(
+                work_dir,
+                _snapshot("error", detail=str(exc)[:300], results=results),
+            )
+            logger.exception("batch rewrite failed for book %s", book_id)
+        finally:
+            _autopilot_job_mark(book_id, False)
+
+    write_autopilot_file(
+        work_dir,
+        _snapshot("running", detail=f"准备批量改写第{chapter_numbers[0]}-{chapter_numbers[-1]}章", results=[]),
+    )
+    _autopilot_job_mark(book_id, True)
+    try:
+        threading.Thread(target=_run, daemon=True).start()
+    except Exception:
+        _autopilot_job_mark(book_id, False)
+        raise
+    return {
+        "ok": True,
+        "accepted": True,
+        "message": f"已开始批量改写第{chapter_numbers[0]}-{chapter_numbers[-1]}章",
+        "chapter_start": chapter_numbers[0],
+        "chapter_end": chapter_numbers[-1],
+        "chapter_count": total,
     }
 
 

@@ -1,4 +1,4 @@
-(() => {
+﻿(() => {
 
 
   const $ = (id) => document.getElementById(id);
@@ -81,6 +81,68 @@
   function showConfirmAsync(msg) {
     return new Promise(function(resolve) { showConfirm(msg, function() { resolve(true); }); });
   }
+
+  function showTextPromptAsync(options) {
+    options = options || {};
+    return new Promise(function(resolve) {
+      var backdrop = document.createElement('div');
+      backdrop.className = 'modal-backdrop show text-prompt-backdrop';
+      backdrop.setAttribute('role', 'dialog');
+      backdrop.setAttribute('aria-modal', 'true');
+      backdrop.innerHTML =
+        '<div class="modal text-prompt-modal">' +
+          '<div class="text-prompt-head">' +
+            '<span class="text-prompt-kicker">' + escapeHtml(options.kicker || 'CHANNEL PRESET') + '</span>' +
+            '<h3>' + escapeHtml(options.title || '请输入名称') + '</h3>' +
+          '</div>' +
+          '<div class="modal-body">' +
+            (options.description ? '<p class="text-prompt-description">' + escapeHtml(options.description) + '</p>' : '') +
+            '<input class="text-prompt-input" type="text" maxlength="' + escapeHtml(options.maxlength || 60) + '" placeholder="' + escapeHtml(options.placeholder || '') + '" value="' + escapeHtml(options.value || '') + '">' +
+          '</div>' +
+          '<div class="modal-actions">' +
+            '<button class="ghost" type="button" data-text-prompt-cancel>取消</button>' +
+            '<button class="primary" type="button" data-text-prompt-confirm>' + escapeHtml(options.confirmText || '确定') + '</button>' +
+          '</div>' +
+        '</div>';
+      var input = backdrop.querySelector('.text-prompt-input');
+      var confirm = backdrop.querySelector('[data-text-prompt-confirm]');
+      var cancel = backdrop.querySelector('[data-text-prompt-cancel]');
+      function close(value) {
+        document.removeEventListener('keydown', onKeydown);
+        backdrop.remove();
+        resolve(value);
+      }
+      function submit() {
+        var value = String(input.value || '').trim();
+        if (!value && !options.allowEmpty) {
+          input.classList.add('invalid');
+          input.focus();
+          return;
+        }
+        close(value);
+      }
+      function onKeydown(event) {
+        if (event.key === 'Escape') close(Object.prototype.hasOwnProperty.call(options, 'cancelValue') ? options.cancelValue : '');
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          submit();
+        }
+      }
+      confirm.addEventListener('click', submit);
+      cancel.addEventListener('click', function() { close(Object.prototype.hasOwnProperty.call(options, 'cancelValue') ? options.cancelValue : ''); });
+      backdrop.addEventListener('click', function(event) {
+        if (event.target === backdrop) close(Object.prototype.hasOwnProperty.call(options, 'cancelValue') ? options.cancelValue : '');
+      });
+      input.addEventListener('input', function() { input.classList.remove('invalid'); });
+      document.addEventListener('keydown', onKeydown);
+      document.body.appendChild(backdrop);
+      requestAnimationFrame(function() {
+        input.focus();
+        input.select();
+      });
+    });
+  }
+
   // Inline confirm — replaces window.confirm() which can be suppressed in CDP mode
   function showConfirm(msg, onOk) {
     var ok = document.createElement('button');
@@ -155,6 +217,21 @@
       throw error;
     }
     return data || {};
+  }
+
+  async function apiWithTimeout(path, options = {}, timeoutMs = 45000) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      return await api(path, Object.assign({}, options, { signal: controller.signal }));
+    } catch (err) {
+      if (err && err.name === 'AbortError') {
+        throw new Error('请求超时，请稍后重试');
+      }
+      throw err;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   function withBusy(button, label = '处理中…') {
@@ -234,7 +311,6 @@
       'phase 3 aggregate': '阶段 3 · 合并成稿',
       'phase 4': '阶段 4 · 精修',
       'phase 5': '阶段 5 · 去 AI 味',
-      'phase 5 5': '阶段 5.5 · 朱雀检测',
       'phase 6': '阶段 6 · 审核',
       'phase 7': '阶段 7 · 发布',
       'chat': '通用调用',
@@ -449,6 +525,65 @@
     }
   }
 
+  function renderGenerationModelOptions(models) {
+    const seen = new Set();
+    const normalized = (models || []).map((model) => String(model || '').trim()).filter((model) => {
+      if (!model || seen.has(model)) return false;
+      seen.add(model);
+      return true;
+    });
+    ['gen-model', 'gen-flash-model'].forEach((id) => {
+      const select = $(id);
+      if (!select) return;
+      const current = String(select.value || '').trim();
+      const options = current && normalized.indexOf(current) < 0 ? [current].concat(normalized) : normalized;
+      select.innerHTML = options.map((model) => '<option value="' + escapeHtml(model) + '">' + escapeHtml(model) + '</option>').join('');
+      if (current) select.value = current;
+    });
+  }
+
+  function renderDiscoveredGenerationModelOptions(models) {
+    const seen = new Set();
+    const normalized = (models || []).map((model) => String(model || '').trim()).filter((model) => {
+      if (!model || seen.has(model)) return false;
+      seen.add(model);
+      return true;
+    });
+    ['gen-model', 'gen-flash-model'].forEach((id) => {
+      const select = $(id);
+      if (!select) return;
+      select.innerHTML = normalized.map((model) => '<option value="' + escapeHtml(model) + '">' + escapeHtml(model) + '</option>').join('');
+    });
+  }
+
+  function setGenerationModelValue(id, value) {
+    const select = $(id);
+    if (!select) return;
+    const model = String(value || '').trim();
+    if (model && Array.from(select.options).every((option) => option.value !== model)) {
+      select.insertAdjacentHTML('beforeend', '<option value="' + escapeHtml(model) + '">' + escapeHtml(model) + '</option>');
+    }
+    select.value = model;
+  }
+
+  function selectedGenerationModel(id, customId) {
+    const customValue = (($(customId) || {}).value || '').trim();
+    if (customValue) return customValue;
+    return (($(id) || {}).value || '').trim();
+  }
+
+  function preferredDiscoveredGenerationModel(models, current) {
+    const list = (models || []).map((model) => String(model || '').trim()).filter(Boolean);
+    if (current && list.indexOf(current) >= 0) return current;
+    const bad = /(review|embedding|embed|rerank|moderation|audio|image|tts|stt)/i;
+    const good = /(gpt|claude|gemini|mimo|qwen|deepseek|glm|moonshot|yi|doubao)/i;
+    return list.find((model) => good.test(model) && !bad.test(model) && !/codex/i.test(model))
+      || list.find((model) => good.test(model) && !bad.test(model))
+      || list.find((model) => !bad.test(model))
+      || list[0]
+      || '';
+  }
+
   async function loadGenerationSettings() {
     const meta = $('settings-meta');
     const msg = $('gen-test-msg');
@@ -459,9 +594,11 @@
       const protocol = $('gen-protocol');
       const model = $('gen-model');
       const flashModel = $('gen-flash-model');
+      const customModel = $('gen-model-custom');
+      const customFlashModel = $('gen-flash-model-custom');
       const base = $('gen-base');
       const status = $('gen-key-status');
-      if (key) key.value = '';
+      if (key) key.value = data.api_key_masked || '';
       setGenKeyVisible(false);
       if (provider) {
         provider.innerHTML = (data.providers || []).map(function(p) {
@@ -471,12 +608,16 @@
         provider.value = data.provider || 'deepseek';
       }
       if (protocol) protocol.value = data.protocol || 'openai';
-      if (model) model.value = data.model || '';
-      if (flashModel) flashModel.value = data.flash_model || '';
+      renderGenerationModelOptions([data.model, data.flash_model]);
+      setGenerationModelValue('gen-model', data.model || '');
+      setGenerationModelValue('gen-flash-model', data.flash_model || '');
+      if (customModel) customModel.value = '';
+      if (customFlashModel) customFlashModel.value = '';
       if (base) base.value = data.base_url || '';
       if (status) status.textContent = data.has_api_key ? '已配置' : '';
       if (msg) msg.textContent = '';
       if (meta) meta.textContent = '设置面板已加载。';
+      renderGenerationPresets();
     } catch (err) {
       if (meta) meta.textContent = '加载失败：' + err.message;
       toast(err.message, 'error');
@@ -490,14 +631,13 @@
       const payload = {
         provider: (($('gen-provider') || {}).value || 'deepseek').trim(),
         protocol: (($('gen-protocol') || {}).value || 'openai').trim(),
-        model: (($('gen-model') || {}).value || '').trim(),
-        flash_model: (($('gen-flash-model') || {}).value || '').trim(),
+        model: selectedGenerationModel('gen-model', 'gen-model-custom'),
+        flash_model: selectedGenerationModel('gen-flash-model', 'gen-flash-model-custom'),
         base_url: (($('gen-base') || {}).value || '').trim(),
       };
       const keyValue = (($('gen-key') || {}).value || '').trim();
       if (keyValue) payload.api_key = keyValue;
       const data = await api('/api/settings/generation', { method: 'POST', body: payload });
-      if ($('gen-key')) $('gen-key').value = '';
       const status = $('gen-key-status');
       if (status && (keyValue || status.textContent)) status.textContent = '已配置';
       if (msg) msg.textContent = data.message || '已保存';
@@ -510,18 +650,33 @@
     }
   }
 
+  function generationSettingsPayloadFromForm() {
+    const payload = {
+      provider: (($('gen-provider') || {}).value || 'deepseek').trim(),
+      protocol: (($('gen-protocol') || {}).value || 'openai').trim(),
+      model: selectedGenerationModel('gen-model', 'gen-model-custom'),
+      flash_model: selectedGenerationModel('gen-flash-model', 'gen-flash-model-custom'),
+      base_url: (($('gen-base') || {}).value || '').trim(),
+    };
+    const keyValue = (($('gen-key') || {}).value || '').trim();
+    if (keyValue) payload.api_key = keyValue;
+    return payload;
+  }
+
+  async function persistGenerationSettingsFromForm() {
+    const payload = generationSettingsPayloadFromForm();
+    await api('/api/settings/generation', { method: 'POST', body: payload });
+    const status = $('gen-key-status');
+    if (status && (payload.api_key || status.textContent)) status.textContent = '已配置';
+    return payload;
+  }
+
   async function testGenerationSettings(button) {
     const done = withBusy(button, '测试中…');
     const msg = $('gen-test-msg');
     try {
-      const payload = {
-        provider: (($('gen-provider') || {}).value || 'deepseek').trim(),
-        protocol: (($('gen-protocol') || {}).value || 'openai').trim(),
-        model: (($('gen-model') || {}).value || '').trim(),
-        base_url: (($('gen-base') || {}).value || '').trim(),
-      };
-      const keyValue = (($('gen-key') || {}).value || '').trim();
-      if (keyValue) payload.api_key = keyValue;
+      if (msg) msg.textContent = '正在保存本地配置并测试...';
+      const payload = await persistGenerationSettingsFromForm();
       const data = await api('/api/settings/generation/test', { method: 'POST', body: payload });
       if (msg) msg.textContent = data.message || (data.ok ? '连接成功' : '连接失败');
       toast(data.message || (data.ok ? '连接成功' : '连接失败'), data.ok ? 'success' : 'error');
@@ -531,6 +686,185 @@
     } finally {
       done();
     }
+  }
+
+  async function discoverGenerationModels(button) {
+    const done = withBusy(button, '???...');
+    const msg = $('gen-model-discovery-msg');
+    try {
+      if (msg) msg.textContent = '?????????????...';
+      const payload = await persistGenerationSettingsFromForm();
+      const data = await api('/api/settings/generation/models', { method: 'POST', body: payload });
+      const models = Array.isArray(data.models) ? data.models : [];
+      const selectedModel = selectedGenerationModel('gen-model', 'gen-model-custom');
+      const selectedFlashModel = selectedGenerationModel('gen-flash-model', 'gen-flash-model-custom');
+      if (models.length) {
+        renderDiscoveredGenerationModelOptions(models);
+        const nextModel = preferredDiscoveredGenerationModel(models, selectedModel);
+        const nextFlashModel = preferredDiscoveredGenerationModel(models, selectedFlashModel) || nextModel;
+        setGenerationModelValue('gen-model', nextModel);
+        setGenerationModelValue('gen-flash-model', nextFlashModel);
+        const customModel = $('gen-model-custom');
+        const customFlashModel = $('gen-flash-model-custom');
+        if (customModel) customModel.value = '';
+        if (customFlashModel) customFlashModel.value = '';
+        const saved = await persistGenerationSettingsFromForm();
+        if (msg) msg.textContent = (data.message || ('??? ' + models.length + ' ?????')) + '??????????' + saved.model;
+      } else {
+        renderGenerationModelOptions([selectedModel, selectedFlashModel]);
+        setGenerationModelValue('gen-model', selectedModel);
+        setGenerationModelValue('gen-flash-model', selectedFlashModel);
+        if (msg) msg.textContent = data.message || '??????????????';
+      }
+      toast(data.message || (models.length ? ('??? ' + models.length + ' ?????') : '??????'), data.ok ? 'success' : 'warning');
+    } catch (err) {
+      if (msg) msg.textContent = '?????' + err.message + '????????';
+      toast(err.message, 'error');
+    } finally {
+      done();
+    }
+  }
+
+  const GENERATION_PRESETS_KEY = 'anp-generation-channel-presets:v1';
+
+  function readGenerationPresets() {
+    try {
+      const value = JSON.parse(localStorage.getItem(GENERATION_PRESETS_KEY) || '[]');
+      return Array.isArray(value) ? value.filter((item) => item && item.id && item.name) : [];
+    } catch (_err) {
+      return [];
+    }
+  }
+
+  function writeGenerationPresets(items) {
+    localStorage.setItem(GENERATION_PRESETS_KEY, JSON.stringify(items));
+    renderGenerationPresets();
+  }
+
+  function isMaskedGenerationKey(value) {
+    return /^.{6}\.\.\..{4}$/.test(String(value || '').trim());
+  }
+
+  function providerLabel(providerId) {
+    const provider = $('gen-provider');
+    if (!provider) return providerId || '自定义';
+    const option = Array.from(provider.options).find((item) => item.value === providerId);
+    return option ? option.textContent : (providerId || '自定义');
+  }
+
+  function generationPresetFromForm(existing) {
+    const payload = generationSettingsPayloadFromForm();
+    const key = (($('gen-key') || {}).value || '').trim();
+    return {
+      id: existing && existing.id ? existing.id : ('channel-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7)),
+      name: existing && existing.name ? existing.name : '',
+      provider: payload.provider,
+      protocol: payload.protocol,
+      base_url: payload.base_url,
+      model: payload.model,
+      flash_model: payload.flash_model,
+      api_key: key && !isMaskedGenerationKey(key) ? key : ((existing && existing.api_key) || ''),
+      updated_at: new Date().toISOString(),
+    };
+  }
+
+  function renderGenerationPresets() {
+    const list = $('generation-preset-list');
+    if (!list) return;
+    const presets = readGenerationPresets();
+    if (!presets.length) {
+      list.innerHTML = '<div class="generation-preset-empty">还没有渠道预设。配置好当前渠道后，点击“保存当前”。</div>';
+      return;
+    }
+    list.innerHTML = presets.map((preset) => {
+      const subtitle = [providerLabel(preset.provider), preset.protocol === 'anthropic' ? 'Anthropic' : 'OpenAI 兼容']
+        .filter(Boolean).join(' · ');
+      return '<article class="generation-preset-card">' +
+        '<button class="generation-preset-main" type="button" data-generation-preset-apply="' + escapeHtml(preset.id) + '">' +
+          '<strong>' + escapeHtml(preset.name) + '</strong>' +
+          '<span>' + escapeHtml(subtitle) + '</span>' +
+          '<code>' + escapeHtml(preset.base_url || '未填写 Base URL') + '</code>' +
+          '<span class="generation-preset-model">' + escapeHtml(preset.model || '未填写模型') + '</span>' +
+        '</button>' +
+        '<div class="generation-preset-actions">' +
+          '<button class="tiny ghost" type="button" data-generation-preset-overwrite="' + escapeHtml(preset.id) + '">覆盖</button>' +
+          '<button class="tiny danger" type="button" data-generation-preset-delete="' + escapeHtml(preset.id) + '">删除</button>' +
+        '</div>' +
+      '</article>';
+    }).join('');
+  }
+
+  async function applyGenerationPreset(id, button) {
+    const preset = readGenerationPresets().find((item) => item.id === id);
+    if (!preset) return;
+    const done = withBusy(button, '切换中...');
+    try {
+      if (!preset.api_key) throw new Error('这个预设没有保存完整 API Key，请在左侧重新输入后覆盖预设。');
+      const provider = $('gen-provider');
+      const protocol = $('gen-protocol');
+      const base = $('gen-base');
+      const key = $('gen-key');
+      if (provider) provider.value = preset.provider || 'custom';
+      if (protocol) protocol.value = preset.protocol || 'openai';
+      if (base) base.value = preset.base_url || '';
+      if (key && preset.api_key) key.value = preset.api_key;
+      renderGenerationModelOptions([preset.model, preset.flash_model]);
+      setGenerationModelValue('gen-model', preset.model || '');
+      setGenerationModelValue('gen-flash-model', preset.flash_model || preset.model || '');
+      if ($('gen-model-custom')) $('gen-model-custom').value = '';
+      if ($('gen-flash-model-custom')) $('gen-flash-model-custom').value = '';
+      await persistGenerationSettingsFromForm();
+      await loadGenerationSettings();
+      toast('已切换到渠道预设：' + preset.name, 'success');
+    } catch (err) {
+      toast('切换预设失败：' + err.message, 'error');
+    } finally {
+      done();
+    }
+  }
+
+  async function saveCurrentGenerationPreset() {
+    const key = (($('gen-key') || {}).value || '').trim();
+    if (!key || isMaskedGenerationKey(key)) {
+      toast('首次保存渠道预设时，请在左侧重新输入一次完整 API Key。', 'warning');
+      if ($('gen-key')) $('gen-key').focus();
+      return;
+    }
+    const name = await showTextPromptAsync({
+      kicker: 'CHANNEL PRESET',
+      title: '保存渠道预设',
+      description: '保存当前供应商、接口地址、模型和 API Key，之后可从右侧一键切换。',
+      placeholder: '例如：小米官方、DeepSeek 中转',
+      confirmText: '保存预设',
+    });
+    if (!name) return;
+    const preset = generationPresetFromForm(null);
+    preset.name = name;
+    writeGenerationPresets([preset].concat(readGenerationPresets()));
+    toast('渠道预设已保存：' + name, 'success');
+  }
+
+  function overwriteGenerationPreset(id) {
+    const presets = readGenerationPresets();
+    const index = presets.findIndex((item) => item.id === id);
+    if (index < 0) return;
+    const key = (($('gen-key') || {}).value || '').trim();
+    if ((!key || isMaskedGenerationKey(key)) && !presets[index].api_key) {
+      toast('请先在左侧输入完整 API Key，再覆盖这个预设。', 'warning');
+      if ($('gen-key')) $('gen-key').focus();
+      return;
+    }
+    presets[index] = generationPresetFromForm(presets[index]);
+    writeGenerationPresets(presets);
+    toast('已用当前配置覆盖预设：' + presets[index].name, 'success');
+  }
+
+  async function deleteGenerationPreset(id) {
+    const presets = readGenerationPresets();
+    const preset = presets.find((item) => item.id === id);
+    if (!preset || !await showConfirmAsync('删除渠道预设“' + preset.name + '”？')) return;
+    writeGenerationPresets(presets.filter((item) => item.id !== id));
+    toast('渠道预设已删除', 'success');
   }
 
   function bindSettings() {
@@ -543,12 +877,19 @@
         const preset = presets.find((p) => p.id === provider.value) || {};
         const model = $('gen-model');
         const flashModel = $('gen-flash-model');
+        const customModel = $('gen-model-custom');
+        const customFlashModel = $('gen-flash-model-custom');
         const base = $('gen-base');
         const protocol = $('gen-protocol');
         if (protocol && preset.protocol) protocol.value = preset.protocol;
         if (base) base.value = preset.base_url || '';
         if (model) model.value = '';
         if (flashModel) flashModel.value = '';
+        renderGenerationModelOptions([preset.model, preset.flash_model]);
+        setGenerationModelValue('gen-model', preset.model || '');
+        setGenerationModelValue('gen-flash-model', preset.flash_model || '');
+        if (customModel) customModel.value = '';
+        if (customFlashModel) customFlashModel.value = '';
       });
     }
     $$('[data-eye]').forEach((btn) => {
@@ -567,6 +908,26 @@
     });
     const testBtn = $('gen-test');
     if (testBtn) testBtn.addEventListener('click', () => testGenerationSettings(testBtn));
+    const discoverBtn = $('gen-discover-models');
+    if (discoverBtn) discoverBtn.addEventListener('click', () => discoverGenerationModels(discoverBtn));
+    const presetSave = $('generation-preset-save');
+    if (presetSave && presetSave.dataset.bound !== '1') {
+      presetSave.dataset.bound = '1';
+      presetSave.addEventListener('click', saveCurrentGenerationPreset);
+    }
+    const presetList = $('generation-preset-list');
+    if (presetList && presetList.dataset.bound !== '1') {
+      presetList.dataset.bound = '1';
+      presetList.addEventListener('click', (event) => {
+        const applyButton = event.target.closest('[data-generation-preset-apply]');
+        if (applyButton) return applyGenerationPreset(applyButton.dataset.generationPresetApply, applyButton);
+        const overwriteButton = event.target.closest('[data-generation-preset-overwrite]');
+        if (overwriteButton) return overwriteGenerationPreset(overwriteButton.dataset.generationPresetOverwrite);
+        const deleteButton = event.target.closest('[data-generation-preset-delete]');
+        if (deleteButton) deleteGenerationPreset(deleteButton.dataset.generationPresetDelete);
+      });
+    }
+    renderGenerationPresets();
   }
 
   function loadAllSettings() {
@@ -1531,19 +1892,66 @@
 
   // ---------- Execution Console ----------
   let _consoleTimer = null;
+  var _shortThemes = [];
+
+  async function loadShortThemePicker() {
+    var select = $('short-theme-select');
+    var preview = $('short-theme-preview');
+    if (!select) return;
+    select.innerHTML = '<option value="">加载题材库中…</option>';
+    try {
+      var data = await api('/api/themes?limit=200');
+      _shortThemes = data.themes || [];
+      select.innerHTML = '<option value="">请选择题材</option>' + _shortThemes.map(function(t) {
+        var label = (t.hint_title || t.theme || ('题材 #' + t.id)).substring(0, 72);
+        var typeLabel = t.target_type === 'long' ? '长篇' : '短篇';
+        return '<option value="' + t.id + '">[' + typeLabel + '] ' + (t.is_consumed ? '已用 · ' : '') + escapeHtml(label) + '</option>';
+      }).join('');
+      if (!_shortThemes.length && preview) preview.textContent = '题材库暂无可用题材。';
+    } catch (err) {
+      select.innerHTML = '<option value="">题材加载失败</option>';
+      if (preview) preview.textContent = '题材库加载失败：' + err.message;
+    }
+  }
+
+  function renderSelectedShortTheme() {
+    var select = $('short-theme-select');
+    var preview = $('short-theme-preview');
+    if (!select || !preview) return;
+    var selected = _shortThemes.find(function(t) { return String(t.id) === String(select.value); });
+    if (!selected) {
+      preview.textContent = '请选择一个题材。';
+      return;
+    }
+    preview.innerHTML = '<strong>' + escapeHtml(selected.theme || '') + '</strong>'
+      + '<br>' + escapeHtml([selected.target_type === 'long' ? '长篇题材，将改编为短篇' : '短篇题材', selected.genre, selected.emotion, selected.platform].filter(Boolean).join(' · '))
+      + (selected.audience ? '<br>受众：' + escapeHtml(selected.audience) : '');
+  }
 
   function bindConsole() {
     const runBtn = $('btn-console-run');
     const cancelBtn = $('btn-console-cancel');
+    const themeSelect = $('short-theme-select');
+    const themeRefresh = $('btn-short-theme-refresh');
+    if (themeSelect) themeSelect.addEventListener('change', renderSelectedShortTheme);
+    if (themeRefresh) themeRefresh.addEventListener('click', loadShortThemePicker);
+    loadShortThemePicker();
     if (runBtn) {
       runBtn.addEventListener('click', async () => {
+        const themeId = themeSelect ? Number(themeSelect.value) : 0;
+        if (!themeId) {
+          toast('请先从题材库选择一个题材', 'warning');
+          if (themeSelect) themeSelect.focus();
+          return;
+        }
         const release = withBusy(runBtn, '启动中…');
         try {
-          const data = await api('/api/console/run-now', { method: 'POST', body: {} });
+          const data = await api('/api/console/run-now', { method: 'POST', body: {theme_id: themeId} });
           toast('已启动原子任务 #' + data.story_id, 'success');
           if (data.story_id != null) ensureProgressTracking(Number(data.story_id));
           loadConsoleStatus();
           loadInbox();
+          loadShortThemePicker();
           setTimeout(loadInbox, 1500);
         } catch (err) {
           toast('启动失败：' + err.message, 'error');
@@ -1600,14 +2008,17 @@
   let _progressLastState = null;
   let _progressIdleTicks = 0;
   const _PHASE_LABELS = {
-    phase_0: 'phase_0 选题',
-    phase_1: 'phase_1 框架/简介',
-    phase_2: 'phase_2 大纲',
-    phase_3: 'phase_3 逐节',
-    phase_4: 'phase_4 精修',
+    phase_0: 'phase_0 题材定位',
+    phase_1: 'phase_1 故事圣经',
+    phase_2: 'phase_2 节拍大纲',
+    phase_3: 'phase_3 分节初稿',
+    phase_4: 'phase_4 全文精修',
     phase_5: 'phase_5 去 AI 味',
+    phase_6: 'phase_6 分章成稿',
+    phase_7: 'phase_7 AI 审核/返修',
+    phase_8: 'phase_8 发布',
   };
-  const _PHASE_ORDER = ['phase_0','phase_1','phase_2','phase_3','phase_4','phase_5'];
+  const _PHASE_ORDER = ['phase_0','phase_1','phase_2','phase_3','phase_4','phase_5','phase_6','phase_7','phase_8'];
 
   function ensureProgressTracking(storyId) {
     if (storyId == null) return;
@@ -2022,8 +2433,6 @@
     rejected: '已拒绝',
     cancelled: '已取消',
     paused_login_required: '需处理',
-    paused_zhuque_anomaly: '朱雀检测异常',
-    rejected_ai: '朱雀检测拒绝',
   };
 
   function inboxStatusBadge(status) {
@@ -2119,6 +2528,65 @@
     }
   }
 
+  function _shortRenderOutputs(outputs) {
+    if (!outputs || !outputs.length) {
+      return '<div class="empty" style="padding:0.4rem">该阶段没有独立输出产物</div>';
+    }
+    return '<table class="ln-pipeline-table"><thead><tr><th>输出</th><th>状态</th><th>大小</th></tr></thead><tbody>'
+      + outputs.map(function(output) {
+        return '<tr><td><code>' + escapeHtml(output.path || '') + '</code></td>'
+          + '<td>' + (output.exists ? '已生成' : '尚未生成') + '</td>'
+          + '<td>' + _lnFormatBytes(output.size_bytes) + '</td></tr>';
+      }).join('')
+      + '</tbody></table>';
+  }
+
+  function _shortRenderPrompt(prompt) {
+    if (!prompt) {
+      return '<div class="empty" style="padding:0.4rem">该阶段不调用生成提示词</div>';
+    }
+    var variables = Array.isArray(prompt.variables) ? prompt.variables : [];
+    var variableHtml = variables.length
+      ? variables.map(function(name) { return '<code>${' + escapeHtml(name) + '}</code>'; }).join(' ')
+      : '<span class="empty">无模板变量</span>';
+    return '<div class="ln-pl-meta"><span><b>文件：</b><code>' + escapeHtml(prompt.filename || '') + '</code></span>'
+      + '<span><b>实际引用变量：</b>' + variables.length + ' 个</span></div>'
+      + '<div class="ln-pl-subhead">变量清单</div><div>' + variableHtml + '</div>'
+      + '<div class="ln-pl-subhead">模板全文</div>'
+      + '<pre class="ln-pl-pre">' + escapeHtml(prompt.content || '') + '</pre>';
+  }
+
+  function _shortRenderPhaseDetail(data) {
+    var flow = data.flow || {};
+    var params = data.call_parameters || {};
+    var usageMeta = data.call_is_actual ? '最近一次真实调用' : '当前默认配置，尚无真实调用记录';
+    if (data.call_is_actual) {
+      params.finish_reason = 'input=' + (params.input_tokens || 0)
+        + ' / cached=' + (params.cached_tokens || 0)
+        + ' / output=' + (params.output_tokens || 0)
+        + ' / cost=¥' + Number(params.cost_cny || 0).toFixed(4);
+    }
+    return ''
+      + _lnPipelineFold('说明', '<div class="ln-pl-text">' + escapeHtml(data.description || '') + '</div>')
+      + _lnPipelineFold('流程信息',
+        '<div class="ln-pl-meta">'
+          + '<span><b>所属阶段：</b>' + escapeHtml(flow.stage || '') + '</span>'
+          + '<span><b>顺序：</b>第 ' + escapeHtml(flow.order || '') + ' / ' + escapeHtml(flow.total || '') + ' 步</span>'
+          + '<span><b>下一步：</b>' + escapeHtml(flow.next || '链路结束') + '</span>'
+          + '<span><b>执行位置：</b><code>' + escapeHtml(flow.source || '') + '</code></span>'
+        + '</div>'
+      )
+      + _lnPipelineFold('输入', _lnRenderInputsTable(data.inputs || []), {
+        meta: (data.inputs || []).length + ' 项', className: 'is-inputs'
+      })
+      + _lnPipelineFold('调用参数', _lnRenderCallParameters(params), {meta: usageMeta})
+      + _lnPipelineFold('输出', _shortRenderOutputs(data.outputs || []), {className: 'is-output'})
+      + _lnPipelineFold('提示词模板', _shortRenderPrompt(data.prompt), {
+        meta: data.prompt ? ((data.prompt.variables || []).length + ' 个变量') : '不使用提示词',
+        className: 'is-prompts'
+      });
+  }
+
   async function openInboxDetail(storyId) {
     const modal = $('inbox-detail-modal');
     const titleEl = $('inbox-detail-title');
@@ -2176,7 +2644,7 @@
           '<button class="btn-ghost tiny" id="phase-preview-close">✕</button>' +
           '</div>' +
           '</div>' +
-          '<pre id="phase-preview-content" style="white-space:pre-wrap;font-size:0.8rem;margin:0"></pre>' +
+          '<div id="phase-preview-content"></div>' +
           '</div>';
       }
       // 产物文件链接（artifacts 是 {phase: [{name, exists, size_bytes}]} 字典）
@@ -2226,9 +2694,6 @@
           const status = chip.dataset.status;
           const label = (chip.querySelector('.phase-chip-label') || {}).textContent || phase;
           // artifactsMap 是 {phase: [{name, exists, size_bytes}]} 字典
-          const phaseFiles = artifactsMap[phase] || [];
-          const existingFile = phaseFiles.find(function(a) { return a.exists && a.name; });
-          const knownName = existingFile ? existingFile.name : (phaseFiles.length > 0 ? phaseFiles[0].name : null);
           const previewEl = $('phase-preview');
           const titleEl = $('phase-preview-title');
           const contentEl2 = $('phase-preview-content');
@@ -2239,22 +2704,16 @@
           chip.style.outline = '2px solid var(--primary)';
           // show rerun button
           var rerunBtn = $('phase-preview-rerun');
-          if (rerunBtn) rerunBtn.style.display = '';
+          if (rerunBtn) rerunBtn.style.display = /^phase_[0-6]$/.test(phase) ? '' : 'none';
           var promptBtn = $('phase-preview-prompt-btn');
           if (promptBtn) promptBtn.style.display = '';
 
-          if (!knownName) {
-            titleEl.textContent = escapeHtml(label) + '（' + escapeHtml(status) + '）';
-            contentEl2.textContent = '该步骤暂无产物文件（' + (status === 'pending' ? '尚未执行' : status === 'running' ? '正在执行中' : '未生成产物') + '）。';
-            return;
-          }
-          // 有产物文件 → 加载
-          const filename = knownName;
-          titleEl.textContent = '' + escapeHtml(filename) + (existingFile && existingFile.size_bytes != null ? '  (' + existingFile.size_bytes + ' bytes)' : '');
+          titleEl.textContent = label + ' · ' + status;
           contentEl2.textContent = '加载中…';
           try {
-            const fileData = await api('/api/stories/' + storyId + '/files/' + encodeURIComponent(filename));
-            contentEl2.textContent = (fileData.content || '').substring(0, 50000);
+            const detailData = await api('/api/stories/' + storyId + '/phases/' + encodeURIComponent(phase) + '/detail');
+            contentEl2.innerHTML = _shortRenderPhaseDetail(detailData);
+            if (promptBtn) promptBtn.style.display = detailData.prompt ? '' : 'none';
           } catch (err2) {
             contentEl2.textContent = '加载失败：' + err2.message;
           }
@@ -2285,7 +2744,7 @@
           toast('重跑失败：' + err2.message, 'error');
         } finally { release(); }
       });
-      // 提示词 → 独立弹窗编辑器
+      // 提示词 → 站内编辑器
       const promptBtn = $('phase-preview-prompt-btn');
       if (promptBtn) promptBtn.addEventListener('click', async function() {
         const activeChip = contentEl.querySelector('.phase-chip[style*="outline"]');
@@ -2300,83 +2759,77 @@
     }
   }
 
-  var _promptWindows = {};
+  var _shortPromptPhase = '';
 
-  function openPromptWindow(phase, label) {
-    if (_promptWindows[phase] && !_promptWindows[phase].closed) {
-      _promptWindows[phase].focus();
-      return;
-    }
-    var baseUrl = window.location.origin;
-    var w = window.open('about:blank', 'prompt-' + phase, 'width=900,height=700,resizable,scrollbars');
-    if (!w) { toast('弹窗被拦截，请允许弹窗后重试', 'warn'); return; }
-    _promptWindows[phase] = w;
-
-    // 先用 document.write 输出骨架，避免 blob URL 与 load 事件竞态
-    w.document.write(
-      '<!DOCTYPE html><html><head><meta charset="utf-8"><title>' + escapeHtml(label) + '</title><style>'
-      + 'body{margin:0;font-family:system-ui,sans-serif;background:#1e1e2e;color:#cdd6f4}'
-      + '.toolbar{display:flex;justify-content:space-between;align-items:center;padding:0.5rem 1rem;background:#181825}'
-      + 'button{padding:0.3rem 0.7rem;border-radius:4px;border:none;cursor:pointer;font-size:0.8rem}'
-      + '.btn-save{background:#a6e3a1;color:#1e1e2e}.btn-revert{background:#f9e2af;color:#1e1e2e}'
-      + '.btn-close{background:#45475a;color:#cdd6f4}'
-      + '.meta{padding:0.3rem 1rem;font-size:0.75rem;color:#6c7086}'
-      + 'textarea{width:calc(100% - 2rem);height:calc(100vh - 100px);margin:0.5rem 1rem;padding:0.75rem;background:#11111b;color:#cdd6f4;border:1px solid #313244;border-radius:4px;font-family:monospace;font-size:0.82rem;resize:none;box-sizing:border-box}'
-      + '</style></head><body>'
-      + '<div class="toolbar"><h3 style="margin:0;font-size:0.95rem">' + escapeHtml(label) + '</h3><div>'
-      + '<button class="btn-revert" id="revertBtn">恢复备份</button> '
-      + '<button class="btn-save" id="saveBtn">保存</button> '
-      + '<button class="btn-close" onclick="window.close()">关闭</button>'
-      + '</div></div><div class="meta" id="meta">加载中…</div><textarea id="editor"></textarea>'
-      + '</body></html>'
-    );
-    w.document.close();
-
-    // 绑定按钮事件并加载内容
-    var doc = w.document;
-    var meta = doc.getElementById('meta');
-    var editor = doc.getElementById('editor');
+  async function openPromptWindow(phase, label) {
+    var modal = $('short-prompt-modal');
+    var title = $('short-prompt-modal-title');
+    var meta = $('short-prompt-meta');
+    var editor = $('short-prompt-content');
+    if (!modal || !editor) return;
+    _shortPromptPhase = phase;
+    modal.style.display = 'flex';
+    title.textContent = label || phase;
+    meta.textContent = '加载中…';
     editor.value = '加载中…';
+    editor.disabled = true;
+    try {
+      var data = await api('/api/console/prompts/' + encodeURIComponent(phase));
+      editor.value = data.content || '';
+      meta.textContent = (data.filename || '') + ' · ' + (data.size_bytes || 0) + ' bytes';
+      editor.disabled = false;
+      editor.focus();
+    } catch (err) {
+      editor.value = '加载失败：' + err.message;
+      meta.textContent = '无法加载提示词';
+    }
+  }
 
-    var xhr = new XMLHttpRequest();
-    xhr.open('GET', baseUrl + '/api/console/prompts/' + encodeURIComponent(phase));
-    xhr.onload = function() {
-      if (xhr.status === 200) {
-        var d = JSON.parse(xhr.responseText);
-        editor.value = d.content || '';
-        meta.textContent = (d.filename || '') + ' (' + (d.size_bytes || 0) + ' bytes)';
-      } else { editor.value = '加载失败: ' + xhr.status; }
-    };
-    xhr.onerror = function() { editor.value = '网络错误，无法加载提示词'; };
-    xhr.send();
+  function closeShortPromptModal() {
+    var modal = $('short-prompt-modal');
+    if (modal) modal.style.display = 'none';
+    _shortPromptPhase = '';
+  }
 
-    doc.getElementById('saveBtn').onclick = function() {
-      var xhr2 = new XMLHttpRequest();
-      xhr2.open('POST', baseUrl + '/api/console/prompts/' + encodeURIComponent(phase));
-      xhr2.setRequestHeader('Content-Type', 'application/json');
-      xhr2.onload = function() {
-        if (xhr2.status === 200) { alert('已保存'); }
-        else { alert('保存失败: ' + xhr2.status); }
-      };
-      xhr2.onerror = function() { alert('网络错误'); };
-      xhr2.send(JSON.stringify({content: editor.value}));
-    };
-
-    doc.getElementById('revertBtn').onclick = function() {
-      showConfirm('确定恢复备份？', function() {
-      var xhr3 = new XMLHttpRequest();
-      xhr3.open('POST', baseUrl + '/api/console/prompts/' + encodeURIComponent(phase) + '/revert');
-      xhr3.onload = function() {
-        if (xhr3.status === 200) {
-          var d = JSON.parse(xhr3.responseText);
-          editor.value = d.content || '';
-          meta.textContent = (d.filename || '') + ' (已恢复)';
-        } else { alert('恢复失败: ' + xhr3.status); }
-      };
-      xhr3.onerror = function() { alert('网络错误'); };
-      xhr3.send();
+  function bindShortPromptModal() {
+    var modal = $('short-prompt-modal');
+    var closeBtn = $('short-prompt-close');
+    var saveBtn = $('short-prompt-save');
+    var revertBtn = $('short-prompt-revert');
+    var editor = $('short-prompt-content');
+    if (closeBtn) closeBtn.addEventListener('click', closeShortPromptModal);
+    if (modal) modal.addEventListener('click', function(e) {
+      if (e.target === modal) closeShortPromptModal();
     });
-  };
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape' && modal && modal.style.display === 'flex') closeShortPromptModal();
+    });
+    if (saveBtn) saveBtn.addEventListener('click', async function() {
+      if (!_shortPromptPhase || !editor || editor.disabled) return;
+      var release = withBusy(saveBtn, '保存中…');
+      try {
+        await api('/api/console/prompts/' + encodeURIComponent(_shortPromptPhase), {
+          method: 'POST',
+          body: {content: editor.value},
+        });
+        toast('提示词已保存', 'success');
+      } catch (err) {
+        toast('保存提示词失败：' + err.message, 'error');
+      } finally { release(); }
+    });
+    if (revertBtn) revertBtn.addEventListener('click', function() {
+      if (!_shortPromptPhase) return;
+      showConfirm('确定恢复备份？当前未保存内容会被覆盖。', async function() {
+        try {
+          var data = await api('/api/console/prompts/' + encodeURIComponent(_shortPromptPhase) + '/revert', {method: 'POST', body: {}});
+          editor.value = data.content || '';
+          $('short-prompt-meta').textContent = (data.filename || '') + ' · 已恢复备份';
+          toast('已恢复提示词备份', 'success');
+        } catch (err) {
+          toast('恢复提示词失败：' + err.message, 'error');
+        }
+      });
+    });
   }
 
   // ---------- 提示词面板（生成页直接访问）----------
@@ -2388,12 +2841,12 @@
     var chevron = $('prompts-chevron');
     if (!toggle || !body) return;
     toggle.addEventListener('click', function() {
-      if (body.style.display === 'none' || !body.style.display) {
-        body.style.display = '';
+      if (body.hidden) {
+        body.hidden = false;
         if (chevron) chevron.textContent = '收起 ⌃';
         if (!_promptsLoaded) loadPromptsList();
       } else {
-        body.style.display = 'none';
+        body.hidden = true;
         if (chevron) chevron.textContent = '展开 ⌵';
       }
     });
@@ -2458,7 +2911,6 @@
     setup: {el: 'ln-setup-panel', load: function(){loadSetupPanel();}},
     outline: {el: 'ln-outline-panel', load: function(){loadOutlinePanel();}},
     writing: {el: 'ln-writing-panel', load: function(){loadWritingWorkbench();}},
-    benchmark: {el: 'ln-benchmark-panel', load: function(){loadBenchmarkPanel();}},
     tracking: {el: 'ln-tracking-panel', load: function(){loadTrackingPanel();}},
     pipeline: {el: 'ln-pipeline-panel', load: function(){loadPipelinePanel();}},
   };
@@ -2507,8 +2959,6 @@
     if (extendBtn) extendBtn.addEventListener('click', _lnExtendChapters);
     var trackingRefreshBtn = $('ln-tracking-refresh');
     if (trackingRefreshBtn) trackingRefreshBtn.addEventListener('click', loadTrackingPanel);
-    var benchmarkRefreshBtn = $('ln-benchmark-refresh');
-    if (benchmarkRefreshBtn) benchmarkRefreshBtn.addEventListener('click', loadBenchmarkPanel);
 
     // Step-by-step writing buttons
 
@@ -2616,8 +3066,12 @@
       if (el) el.style.display = (k === 'setup') ? '' : 'none';
     });
     loadWritingWorkbench();
-    loadSetupPanel();
-    _lnRestoreAutopilotMonitor();
+    if (_lnGetGenerationMode()) {
+      loadSetupPanel();
+      _lnRestoreAutopilotMonitor();
+    } else {
+      _lnRestoreGenerationModeOrShowChoice();
+    }
     _startGlobalProgressPolling();
   }
 
@@ -2711,7 +3165,6 @@
         var title = b.title || ('未命名书籍 #' + b.id);
         var premise = (b.premise || '暂无题材简介。').trim();
         var genre = b.genre || '未分类';
-        var targetWords = Number(b.target_words_per_chapter || 3000);
         var chapterText = stats.done + '/' + stats.planned;
         var progressWidth = Math.max(1, stats.pct);
         var outlineCount = stats.outlined || Math.max(0, stats.planned - stats.done - stats.writing);
@@ -2726,7 +3179,6 @@
           + '<div class="ln-book-metrics">'
           + '<div><span>章节</span><strong>' + escapeHtml(chapterText) + '</strong></div>'
           + '<div><span>字数</span><strong>' + escapeHtml(fmtNum(stats.words || 0)) + '</strong></div>'
-          + '<div><span>目标</span><strong>' + escapeHtml(fmtNum(targetWords)) + '</strong></div>'
           + '</div>'
           + '<div class="ln-book-progress" aria-label="章节完成度">'
           + '<div class="ln-book-bar"><i style="width:' + progressWidth + '%"></i></div>'
@@ -2804,6 +3256,26 @@
   var _lnAutopilotTimer = null;
   var _lnAutopilotChapterCount = 0;
 
+  function _lnAutopilotModeKey(bookId) {
+    return 'anp-ln-generation-mode:' + bookId;
+  }
+
+  function _lnGetGenerationMode() {
+    if (!_lnActiveBookId) return '';
+    try { return localStorage.getItem(_lnAutopilotModeKey(_lnActiveBookId)) || ''; }
+    catch (_e) { return ''; }
+  }
+
+  function _lnSetGenerationMode(mode) {
+    if (!_lnActiveBookId) return;
+    try { localStorage.setItem(_lnAutopilotModeKey(_lnActiveBookId), mode || ''); }
+    catch (_e) {}
+  }
+
+  function _lnAutopilotUiEnabled() {
+    return _lnGetGenerationMode() === 'autopilot';
+  }
+
   function _lnAutopilotStageDefs() {
     // 9 setup stages + the optional writing confirmation/execution stage.
     return _lnAllSetupPhases().concat([{ id: 'finalize', label: '入库' }, { id: 'writing', label: '正文' }]);
@@ -2879,17 +3351,47 @@
     });
     var monitor = $('ln-autopilot-monitor');
     if (monitor) monitor.style.display = '';
-    _lnRenderAutopilotMonitor({ state: 'idle', detail: '先选择正文范围；全自动会完成前置内容，并在正文前等待确认。' });
-    _lnRefreshAutopilotRangeDefaults({ force: true });
+    _lnRenderAutopilotMonitor({
+      state: 'idle',
+      detail: '先选择要自动写作的正文范围，再启动 AI 全自动。已完成的章节不会重复生成。',
+    });
     var choice = $('ln-setup-choice');
     if (choice) choice.style.display = '';
     var autoBtn = $('ln-btn-autopilot');
     var manualBtn = $('ln-btn-manual-setup');
+    if (autoBtn) autoBtn.disabled = true;
+    _lnRefreshAutopilotRangeDefaults({ force: true }).finally(function() {
+      if (autoBtn) autoBtn.disabled = false;
+    });
     if (autoBtn) autoBtn.onclick = _lnStartAutopilotFromSetupChoice;
     if (manualBtn) manualBtn.onclick = _lnChooseManualSetup;
   }
 
+  async function _lnRestoreGenerationModeOrShowChoice() {
+    if (!_lnActiveBookId) return;
+    try {
+      var status = await api('/api/long-novel/books/' + _lnActiveBookId + '/autopilot/status');
+      var hasAutopilotHistory = status
+        && (
+          status.state !== 'idle'
+          || (Array.isArray(status.completed) && status.completed.length > 0)
+          || (status.writing && (status.writing.total || status.writing.done))
+        );
+      if (hasAutopilotHistory) {
+        _lnSetGenerationMode('autopilot');
+        loadSetupPanel();
+        _lnRestoreAutopilotMonitor();
+        _lnRefreshAutopilotRangeDefaults({ force: true });
+        return;
+      }
+    } catch (_err) {
+      // The choice remains usable even if the progress snapshot cannot be read.
+    }
+    _lnShowSetupChoice('');
+  }
+
   function _lnChooseManualSetup() {
+    _lnSetGenerationMode('manual');
     var choice = $('ln-setup-choice'); if (choice) choice.style.display = 'none';
     var monitor = $('ln-autopilot-monitor'); if (monitor) monitor.style.display = 'none';
     loadSetupPanel();  // 渲染逐 phase chip（带「运行」按钮）
@@ -2897,7 +3399,7 @@
   }
 
   function _lnAutopilotMaxRevisions() {
-    return 0;
+    return 2;
   }
 
   function _lnChapterHasAutopilotDraft(ch) {
@@ -2967,7 +3469,7 @@
       startEl.max = String(maxChapter);
       endEl.max = String(maxChapter);
       if (!earliest) {
-        _lnSetAutopilotRangeHint('所有章节已有正文；如需继续，请先在大纲里追加章节。', 'ok');
+        _lnSetAutopilotRangeHint('所有章节已有正文；可选择范围批量重写，或批量删除。', 'ok');
         if (btn) btn.disabled = true;
         return;
       }
@@ -3022,13 +3524,49 @@
     return { start: start, end: end, count: end - start + 1 };
   }
 
+  async function _lnReadWrittenChapterRange(options) {
+    options = options || {};
+    if (!_lnActiveBookId) throw new Error('请先选择一本书');
+    _lnNormalizeAutopilotRangeInputs();
+    var start = parseInt(($('ln-autopilot-start-chapter') || {}).value, 10);
+    var end = parseInt(($('ln-autopilot-end-chapter') || {}).value, 10);
+    if (!Number.isFinite(start) || start < 1) throw new Error('正文起始章必须大于 0');
+    if (!Number.isFinite(end) || end < start) throw new Error('正文结束章不能小于起始章');
+    var data = await api('/api/long-novel/books/' + _lnActiveBookId);
+    var chapters = Array.isArray((data.book || {}).chapters) ? data.book.chapters : [];
+    var byNumber = {};
+    chapters.forEach(function(ch) { byNumber[Number(ch.chapter_number || 0)] = ch; });
+    for (var n = start; n <= end; n++) {
+      if (!byNumber[n]) throw new Error('章节队列缺少第' + n + '章，请先生成章节细纲并入库。');
+      if (!options.allowMissingDraft && !_lnChapterHasAutopilotDraft(byNumber[n])) throw new Error('第' + n + '章还没有可用正文，不能执行该批量操作。');
+    }
+    if (options.requirePrefixWritten) {
+      for (var prefix = 1; prefix < start; prefix++) {
+        if (byNumber[prefix] && !_lnChapterHasAutopilotDraft(byNumber[prefix])) {
+          throw new Error('第' + prefix + '章尚未写完。批量删除必须从最早未写章节开始，避免上下文断层。');
+        }
+      }
+    }
+    return { start: start, end: end, count: end - start + 1 };
+  }
+
   function _lnBindAutopilotWritingControls() {
     var btn = $('ln-btn-autopilot-write-range');
+    var rewriteBtn = $('ln-btn-autopilot-rewrite-range');
+    var regenerateBtn = $('ln-btn-autopilot-regenerate-range');
     var startEl = $('ln-autopilot-start-chapter');
     var endEl = $('ln-autopilot-end-chapter');
     if (btn && btn.dataset.bound !== '1') {
       btn.dataset.bound = '1';
       btn.addEventListener('click', _lnStartAutopilotWritingRange);
+    }
+    if (rewriteBtn && rewriteBtn.dataset.bound !== '1') {
+      rewriteBtn.dataset.bound = '1';
+      rewriteBtn.addEventListener('click', _lnBatchRewriteRange);
+    }
+    if (regenerateBtn && regenerateBtn.dataset.bound !== '1') {
+      regenerateBtn.dataset.bound = '1';
+      regenerateBtn.addEventListener('click', _lnBatchRegenerateRange);
     }
     [startEl, endEl].forEach(function(el) {
       if (!el || el.dataset.bound === '1') return;
@@ -3059,6 +3597,50 @@
           ? '已启动全自动：完成前置内容后会停在正文确认'
           : '已启动全自动写正文 ' + _lnRangeLabel(range),
       });
+    } catch (err) {
+      _lnSetAutopilotRangeHint(err.message, 'error');
+      toast(err.message, 'error');
+    }
+  }
+
+  async function _lnBatchRewriteRange() {
+    try {
+      var range = await _lnReadWrittenChapterRange({ allowMissingDraft: true });
+      if (!await showConfirmAsync('批量重写 ' + _lnRangeLabel(range) + '？每章都会保留旧稿备份，并在全自动窗口显示进度。')) return;
+      var monitor = $('ln-autopilot-monitor'); if (monitor) monitor.style.display = '';
+      _lnRenderAutopilotMonitor({
+        state: 'running',
+        operation: 'batch_rewrite',
+        operation_label: '批量重写',
+        phase: 'batch_rewrite',
+        stage: 'writing',
+        detail: '正在启动批量重写 ' + _lnRangeLabel(range) + '...',
+        writing: { total: range.count, done: 0, current: 0, results: [] },
+      });
+      await api('/api/long-novel/books/' + _lnActiveBookId + '/rewrite-chapters', {
+        method: 'POST',
+        body: { chapter_start: range.start, chapter_end: range.end },
+      });
+      toast('已开始批量重写 ' + _lnRangeLabel(range), 'info');
+      _lnStartAutopilotPolling();
+    } catch (err) {
+      _lnSetAutopilotRangeHint(err.message, 'error');
+      toast(err.message, 'error');
+    }
+  }
+
+  async function _lnBatchRegenerateRange() {
+    try {
+      var range = await _lnReadWrittenChapterRange();
+      if (!await showConfirmAsync('批量删除 ' + _lnRangeLabel(range) + '？旧正文和中间产物会先归档清空，不会自动重写。')) return;
+      var result = await api('/api/long-novel/books/' + _lnActiveBookId + '/reset-chapters', {
+        method: 'POST',
+        body: { chapter_start: range.start, chapter_end: range.end },
+      });
+      if (typeof loadWritingWorkbench === 'function') { try { await loadWritingWorkbench(); } catch (_e) {} }
+      await _lnRefreshAutopilotRangeDefaults({ force: true });
+      if (typeof _lnRestoreAutopilotMonitor === 'function') { try { await _lnRestoreAutopilotMonitor(); } catch (_e) {} }
+      toast(result.message || ('已删除 ' + _lnRangeLabel(range)), 'success');
     } catch (err) {
       _lnSetAutopilotRangeHint(err.message, 'error');
       toast(err.message, 'error');
@@ -3102,13 +3684,17 @@
     } else if (requestChapterCount > 0) {
       _lnSetAutopilotPendingChapters(0);
     }
+    _lnSetGenerationMode('autopilot');
     var choice = $('ln-setup-choice'); if (choice) choice.style.display = 'none';
     var monitor = $('ln-autopilot-monitor'); if (monitor) monitor.style.display = '';
     var cancelBtn = $('ln-btn-autopilot-cancel');
     if (cancelBtn) cancelBtn.onclick = _lnCancelAutopilot;
     _lnRenderAutopilotMonitor({ state: 'running', detail: options.detail || '启动中…' });
     try {
-      var body = { chapter_count: requestChapterCount };
+      var body = {
+        chapter_count: requestChapterCount,
+        max_revisions: options.maxRevisions != null ? Number(options.maxRevisions) : _lnAutopilotMaxRevisions(),
+      };
       if (!pauseBeforeWriting && hasRange && requestChapterCount > 0) {
         body.chapter_start = chapterStart;
         body.chapter_end = chapterEnd;
@@ -3175,8 +3761,11 @@
 
   var _lnAutopilotWorkbenchRefreshAt = 0;
   function _lnRefreshWritingWorkbenchDuringAutopilot(data) {
-    if (!data || data.state !== 'running' || data.phase !== 'writing') return;
+    if (!data || data.state !== 'running' || ['writing', 'batch_rewrite'].indexOf(data.phase) < 0) return;
     if (!document.getElementById('ln-chapter-list')) return;
+    // Avoid re-rendering the expanded writing workbench while the user is
+    // reading/editing a chapter. The monitor already shows live progress.
+    if (document.querySelector('.ln-chapter-expand')) return;
     var now = Date.now();
     if (now - _lnAutopilotWorkbenchRefreshAt < 2500) return;
     _lnAutopilotWorkbenchRefreshAt = now;
@@ -3196,10 +3785,13 @@
         _lnStopAutopilotPolling();
         if (data.state === 'done') {
           var w = data.writing;
-          if (w && w.total) {
+          if (data.operation === 'batch_rewrite') {
+            toast(data.detail || '批量重写完成', 'success');
+          } else if (w && w.total) {
             _lnSetAutopilotPendingChapters(0);
             var msg = '全自动完成！正文已写 ' + w.total + ' 章';
-            msg += '，审核分数仅供参考';
+            if ((w.needs_human || []).length) msg += '，其中 ' + w.needs_human.length + ' 章自动修改后仍需人工复核';
+            else msg += '，审查问题已自动修改并复审';
             toast(msg, 'success');
           } else if (_lnGetAutopilotPendingChapters() > 0) {
             toast('前置内容已生成完成，请确认后再开始全自动写正文。', 'success');
@@ -3219,6 +3811,12 @@
 
   async function _lnRestoreAutopilotMonitor() {
     if (!_lnActiveBookId) return;
+    if (!_lnAutopilotUiEnabled()) {
+      var hiddenMonitor = $('ln-autopilot-monitor');
+      if (hiddenMonitor) hiddenMonitor.style.display = 'none';
+      _lnStopAutopilotPolling();
+      return;
+    }
     try {
       var data = await api('/api/long-novel/books/' + _lnActiveBookId + '/autopilot/status');
       if (!data || data.state === 'idle') {
@@ -3255,7 +3853,8 @@
     var current = awaitingWritingConfirm ? 'writing' : (data.stage || '');
     var failedAt = data.failed_at || '';
     if (titleEl) {
-      titleEl.textContent = awaitingWritingConfirm ? '等待确认正文写作'
+      titleEl.textContent = data.operation_label ? (data.operation_label + (data.state === 'done' ? '完成' : data.state === 'error' ? '失败' : data.state === 'cancelled' ? '已暂停' : '中'))
+        : awaitingWritingConfirm ? '等待确认正文写作'
         : data.state === 'done' ? '全自动生成完成'
         : data.state === 'error' ? '全自动生成失败'
         : data.state === 'cancelled' ? '全自动生成已暂停'
@@ -3280,10 +3879,14 @@
       }
     }
     var rangeBtn = $('ln-btn-autopilot-write-range');
+    var rewriteRangeBtn = $('ln-btn-autopilot-rewrite-range');
+    var regenerateRangeBtn = $('ln-btn-autopilot-regenerate-range');
     var startEl = $('ln-autopilot-start-chapter');
     var endEl = $('ln-autopilot-end-chapter');
     var rangeBusy = data.state === 'running';
     if (rangeBtn) rangeBtn.disabled = rangeBusy;
+    if (rewriteRangeBtn) rewriteRangeBtn.disabled = rangeBusy;
+    if (regenerateRangeBtn) regenerateRangeBtn.disabled = rangeBusy;
     if (startEl) startEl.disabled = rangeBusy;
     if (endEl) endEl.disabled = rangeBusy;
     if (data.state !== 'running') _lnRefreshAutopilotRangeDefaults({ force: false });
@@ -3292,7 +3895,7 @@
         var state = '待处理', color = 'var(--muted)';
         if (completed.indexOf(s.id) >= 0) { state = '完成'; color = 'var(--success)'; }
         if (s.id === 'writing' && data.writing && data.writing.total && data.state === 'done') { state = '完成'; color = 'var(--success)'; }
-        if (s.id === 'writing' && data.phase === 'writing' && data.state === 'running') { state = '进行中'; color = 'var(--primary)'; }
+        if (s.id === 'writing' && ['writing', 'batch_rewrite'].indexOf(data.phase) >= 0 && data.state === 'running') { state = '进行中'; color = 'var(--primary)'; }
         if (s.id === 'writing' && awaitingWritingConfirm) { state = '待确认'; color = 'var(--warning)'; }
         if (s.id === failedAt) { state = '失败'; color = 'var(--danger)'; }
         else if (s.id === current && data.state === 'running') { state = '进行中'; color = 'var(--primary)'; }
@@ -3300,7 +3903,7 @@
         return '<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:0.75rem;color:' + color + ';border:1px solid ' + color + '">' + escapeHtml(s.label) + ' · ' + state + '</span>';
       }).join('');
     }
-    _lnRenderAutopilotWriting(data.writing, data.state, data.detail);
+    _lnRenderAutopilotWriting(data.writing, data.state, data.detail, data.operation);
     if (detailEl) {
       var head = data.state === 'done' ? '全部完成'
         : data.state === 'error' ? '失败'
@@ -3343,11 +3946,12 @@
   }
 
   var _LN_WRITE_STATUS_LABEL = {
-    writing: '写作中', drafting: '初稿/扩写/润色/去AI', reviewing: '审核中',
-    revising: '保存中', passed: '已成稿', needs_human: '已成稿', error: '出错',
+    writing: '写作中', drafting: '生成初稿', expanding: '扩写判断', polishing: '润色',
+    deslopping: '去 AI', reviewing: '审查', revising: '按建议修改', finalizing: '保存成稿',
+    rewriting: '重写中', passed: '已成稿', rewritten: '已重写', needs_human: '需人工复核', error: '出错',
   };
 
-  function _lnRenderAutopilotWriting(writing, state, detail) {
+  function _lnRenderAutopilotWriting(writing, state, detail, operation) {
     var el = $('ln-autopilot-writing');
     if (!el) return;
     if (!writing || !writing.total) { el.style.display = 'none'; el.innerHTML = ''; return; }
@@ -3359,7 +3963,7 @@
     var curStatus = _LN_WRITE_STATUS_LABEL[writing.current_status] || writing.current_status || '';
     var currentDetail = writing.current_detail || {};
 
-    var header = '正文进度：' + done + ' / ' + total + ' 章（' + pct + '%）';
+    var header = (operation === 'batch_rewrite' ? '批量改写进度：' : '正文进度：') + done + ' / ' + total + ' 章（' + pct + '%）';
     if (state === 'running' && cur) {
       header += ' · 第' + cur + '章 ' + escapeHtml(curStatus);
     }
@@ -3368,26 +3972,43 @@
       + '<div style="height:100%;width:' + pct + '%;background:var(--primary)"></div></div>';
 
     var chips = (writing.results || []).map(function(r) {
-      var color = 'var(--success)';
+      var needsHuman = r.status === 'needs_human';
+      var color = needsHuman ? 'var(--warning)' : 'var(--success)';
       var label = '第' + r.chapter + '章';
       if (r.score) label += ' ' + r.score + '分';
-      var title = '已保存成稿；审核分数仅供参考';
-      return '<span title="' + escapeHtml(title) + '" style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:0.72rem;color:' + color + ';border:1px solid ' + color + '">' + escapeHtml(label) + ' · 已成稿</span>';
+      if (r.revisions) label += ' 改' + r.revisions + '次';
+      var rewritten = r.status === 'rewritten';
+      var title = needsHuman ? ('自动修改后仍需人工复核：' + (r.reason || '审查未通过')) : (rewritten ? '已完成重写' : '每一步已保存，审查已通过');
+      return '<span title="' + escapeHtml(title) + '" style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:0.72rem;color:' + color + ';border:1px solid ' + color + '">' + escapeHtml(label) + ' · ' + (needsHuman ? '需复核' : (rewritten ? '已改写' : '已成稿')) + '</span>';
+    }).join('');
+    var chapterStepLines = (writing.results || []).map(function(r) {
+      var trail = (r.steps || []).map(function(step) {
+        var suffix = step.status === 'skipped' ? '跳过' : (step.status === 'needs_revision' ? '待修' : '完成');
+        return (step.label || step.step) + ' ' + suffix;
+      }).join(' → ');
+      if (!trail) return '';
+      return '<div style="font-size:0.74rem;color:var(--muted);line-height:1.55">第' + escapeHtml(r.chapter) + '章：' + escapeHtml(trail) + '</div>';
     }).join('');
 
     var liveLine = '';
     if (state === 'running') {
       var reason = currentDetail.reason || '';
-      var text = reason ? ('审核参考：' + reason) : (detail || '');
+      var trail = (currentDetail.steps || []).map(function(step) {
+        var suffix = step.status === 'skipped' ? '跳过' : (step.status === 'needs_revision' ? '待修' : '完成');
+        return (step.label || step.step) + ' ' + suffix;
+      }).join(' → ');
+      var text = reason ? ('待修问题：' + reason) : (detail || '');
+      if (trail) text = trail + (text ? ('\n' + text) : '');
       if (text) {
-        liveLine = '<div style="font-size:0.78rem;color:var(--muted);line-height:1.6;margin-top:0.15rem">' + escapeHtml(text) + '</div>';
+        liveLine = '<div style="font-size:0.78rem;color:var(--muted);line-height:1.6;margin-top:0.15rem;white-space:pre-wrap">' + escapeHtml(text) + '</div>';
       }
     }
 
     el.innerHTML = '<div style="font-size:0.82rem;font-weight:600;margin-bottom:0.2rem">' + escapeHtml(header) + '</div>'
       + bar
       + liveLine
-      + (chips ? '<div style="display:flex;flex-wrap:wrap;gap:0.35rem;margin-top:0.35rem">' + chips + '</div>' : '');
+      + (chips ? '<div style="display:flex;flex-wrap:wrap;gap:0.35rem;margin-top:0.35rem">' + chips + '</div>' : '')
+      + (chapterStepLines ? '<div style="margin-top:0.35rem">' + chapterStepLines + '</div>' : '');
   }
 
   // ── 创作准备 ──
@@ -4027,7 +4648,7 @@
     if (row) {
       _lnRenderSavedStepOutput(row, stepName, result || {});
     }
-    _lnSetStepStatus(stepName, result && result.skipped ? 'skipped' : 'done', result && result.skipped ? '已自动跳过' : null);
+    _lnSetStepStatus(stepName, result && result.skipped ? 'skipped' : 'done', result && result.skipped ? '已自动跳过' : null, result && (result.batch_count || result.run_count));
     var idx = _lnWritingStepOrder.indexOf(stepName);
     for (var i = 0; i < idx; i++) {
       var prevRow = _lnFindStepRow(_lnWritingStepOrder[i]);
@@ -4066,6 +4687,48 @@
     }
   }
 
+  async function _lnHandleChapterStepReviseCompletion(chNum, stepName, statusData) {
+    var row = _lnFindStepRow(stepName);
+    var result = await api('/api/long-novel/books/' + _lnActiveBookId + '/write-chapter/' + chNum + '/step/' + stepName);
+    if (row) _lnRenderSavedStepOutput(row, stepName, result || {});
+    var passed = stepName !== 'review' || !!(result && result.review && result.review.passed);
+    _lnSetStepStatus(stepName, passed ? 'done' : 'error',
+      passed ? null : '⚠ 需继续修改',
+      result && (result.batch_count || result.run_count));
+    if (statusData && statusData.detail) toast(statusData.detail, passed ? 'success' : 'warning');
+  }
+
+  async function _lnPollChapterStepRevise(chNum, stepName, silent) {
+    if (!_lnActiveBookId || !chNum) return;
+    var data = await api('/api/long-novel/books/' + _lnActiveBookId + '/write-chapter/' + chNum + '/step/' + stepName + '/revise/status');
+    var status = String(data.status || 'pending');
+    if (status === 'starting' || status === 'running') {
+      _lnSetStepStatus(stepName, 'running', '按建议修改中');
+      return;
+    }
+    _lnStopChapterStepPolling(chNum, stepName + ':revise');
+    if (status === 'done') {
+      await _lnHandleChapterStepReviseCompletion(chNum, stepName, data);
+      return;
+    }
+    if (status === 'error' || status === 'cancelled') {
+      _lnSetStepStatus(stepName, 'error', '✕ ' + String(data.detail || '失败').slice(0, 40));
+      if (!silent) toast('按建议修改失败：' + (data.detail || '任务中断'), 'error');
+    }
+  }
+
+  function _lnStartChapterStepRevisePolling(chNum, stepName, options) {
+    if (!_lnActiveBookId || !chNum) return;
+    options = options || {};
+    var keyStep = stepName + ':revise';
+    var key = _lnStepPollKey(chNum, keyStep);
+    if (_lnRunningStepPollers[key]) return;
+    _lnRunningStepPollers[key] = setInterval(function() {
+      _lnPollChapterStepRevise(chNum, stepName, true).catch(function() {});
+    }, options.interval || 2000);
+    _lnPollChapterStepRevise(chNum, stepName, !!options.silent).catch(function() {});
+  }
+
   function _lnStartChapterStepPolling(chNum, stepName, options) {
     if (!_lnActiveBookId || !chNum) return;
     options = options || {};
@@ -4085,7 +4748,8 @@
       + '<div class="ln-writing-topbar">'
       + '  <div><h4>正文工作台</h4><p>章节数量跟随章节细纲；点开任意章节卡片可手动分步。全自动正文范围在「全自动生成」里选择。</p></div>'
       + '  <div class="ln-writing-actions">'
-      + '    <button class="btn-warning tiny" id="ln-btn-rewrite">重写当前章</button>'
+      + '    <button class="btn-warning tiny" id="ln-btn-rewrite" title="自动重写本章所有正文步骤：初稿、润色、去 AI、成稿都会重新生成，并进入下一轮。">重写</button>'
+      + '    <button class="btn-danger tiny" id="ln-btn-regenerate" title="删除本章全部正文内容：会先归档，再清空初稿、扩写、润色、去 AI、审查和成稿；不会自动重写。">删除</button>'
       + '    <button class="ghost tiny" id="ln-btn-prev-chapter">◀ 上一章</button>'
       + '    <button class="ghost tiny" id="ln-btn-next-chapter">下一章 ▶</button>'
       + '  </div>'
@@ -4094,10 +4758,14 @@
 
     // Bind action buttons (they didn't exist at bindLongNovel time)
     var bRewrite   = document.getElementById('ln-btn-rewrite');
+    var bRegenerate = document.getElementById('ln-btn-regenerate');
     var bPrev      = document.getElementById('ln-btn-prev-chapter');
     var bNext      = document.getElementById('ln-btn-next-chapter');
     if (bRewrite)   bRewrite.addEventListener('click', function() {
       if (typeof rewriteCurrentChapter === 'function') rewriteCurrentChapter();
+    });
+    if (bRegenerate) bRegenerate.addEventListener('click', function() {
+      if (typeof regenerateCurrentChapter === 'function') regenerateCurrentChapter();
     });
     if (bPrev) bPrev.addEventListener('click', function() { navigateChapter(-1); });
     if (bNext) bNext.addEventListener('click', function() { navigateChapter(1); });
@@ -4217,6 +4885,29 @@
       + '</button>';
   }
 
+  function _lnStepRunBadge(runCount) {
+    runCount = Number(runCount || 0);
+    return runCount > 0 ? '<span class="ln-step-run-count" data-step-run-count>第 ' + runCount + ' 轮</span>' : '<span class="ln-step-run-count" data-step-run-count style="display:none"></span>';
+  }
+
+  function _lnStepRunText(result) {
+    var runCount = Number((result || {}).batch_count || (result || {}).run_count || 0);
+    return runCount > 0 ? '第 ' + runCount + ' 轮 · ' : '';
+  }
+
+  function _lnReviewRevisedContentHtml(result) {
+    result = result || {};
+    var revised = String(result.revised_content || '');
+    if (!revised.trim()) return '';
+    var words = Number(result.revised_word_count || 0) || ((revised.match(/[\u4e00-\u9fff]/g) || []).length);
+    var hasAutoReview = !!(result.review && result.review.revision_audit);
+    var title = hasAutoReview ? '按建议修改后 · 已自动复审' : '当前审查正文';
+    return '<details class="ln-review-revised" open>'
+      + '<summary>' + escapeHtml(title + ' · ' + words + '字') + '</summary>'
+      + '<div class="ln-step-output-preview">' + renderMarkdown(revised) + '</div>'
+      + '</details>';
+  }
+
   function _lnStepRowHtml(step, status) {
     var stCls = status === 'done' ? ' status-done' : (status === 'running' ? ' status-running' : (status === 'error' ? ' status-error' : ''));
     var stLabel = status === 'done' ? '✓ 已完成' : (status === 'running' ? '进行中' : (status === 'error' ? '✕ 失败' : '待办'));
@@ -4245,10 +4936,15 @@
   }
 
   function _lnStepRowBodyHtml(step) {
+    var contentToolbar = '<div class="ln-deslop-toolbar">'
+      + '<button class="ghost tiny" data-step-edit-all>编辑</button>'
+      + '<button class="ghost tiny" data-step-copy-all>复制全文</button>'
+      + '</div>';
     if (step.id === 'draft') {
       // manifest 面板已移到「链路」tab，写作流程不再加载（避免卡 WebUI）
       return ''
         + '<details data-step-section="output"><summary>初稿预览</summary>'
+        + contentToolbar
         + '  <div class="ln-step-output-preview" data-step-output><div class="empty" style="padding:0.5rem">运行后显示初稿内容</div></div>'
         + '</details>';
     }
@@ -4260,10 +4956,7 @@
     }
     if (step.id === 'deslop') {
       return ''
-        + '<div class="ln-deslop-toolbar">'
-        + '  <button class="ghost tiny" data-step-copy-all>复制全文</button>'
-        + '  <span class="inbox-meta" style="font-size:0.75rem">如需第三方 AI 味检测，可复制后到外部网页粘贴</span>'
-        + '</div>'
+        + contentToolbar
         + '<details data-step-section="diff"><summary>原文 / 去 AI 后 对比</summary>'
         + '  <div data-step-diff><div class="empty" style="padding:0.5rem">运行后显示对比</div></div>'
         + '</details>'
@@ -4275,6 +4968,7 @@
     if (step.id === 'finalize') {
       return ''
         + '<details data-step-section="output"><summary>✓ 成稿结果</summary>'
+        + contentToolbar
         + '  <div data-step-output><div class="empty" style="padding:0.5rem">运行后：正文存档到「正文/」，并更新追踪长期记忆</div></div>'
         + '</details>';
     }
@@ -4286,6 +4980,7 @@
         + '  <div data-step-diff><div class="empty" style="padding:0.5rem">运行后显示对比</div></div>'
         + '</details>'
         + '<details data-step-section="output"><summary>' + escapeHtml(step.label) + '预览</summary>'
+        + contentToolbar
         + '  <div class="ln-step-output-preview" data-step-output><div class="empty" style="padding:0.5rem">运行后显示内容</div></div>'
         + '</details>'
         + '<details data-step-section="history"><summary>历史版本（每次重做都会归档）</summary>'
@@ -4295,6 +4990,7 @@
     if (step.id === 'draft') {
       return ''
         + '<details data-step-section="output"><summary>初稿预览</summary>'
+        + contentToolbar
         + '  <div class="ln-step-output-preview" data-step-output><div class="empty" style="padding:0.5rem">运行后显示初稿内容</div></div>'
         + '</details>'
         + '<details data-step-section="history"><summary>历史版本（每次重做都会归档）</summary>'
@@ -4313,7 +5009,7 @@
     return expand.querySelector('[data-step-row="' + stepId + '"]');
   }
 
-  _lnStepRowHtml = function(step, status) {
+  _lnStepRowHtml = function(step, status, runCount) {
     var stCls = status === 'done' ? ' status-done' : (status === 'skipped' ? ' status-skipped' : (status === 'running' ? ' status-running' : (status === 'error' ? ' status-error' : '')));
     var stLabel = status === 'done' ? '✓ 已完成' : (status === 'skipped' ? '已跳过' : (status === 'running' ? '进行中' : (status === 'error' ? '✕ 失败' : 'Ⅱ 待办')));
     var idx = _lnWritingStepOrder.indexOf(step.id);
@@ -4331,6 +5027,7 @@
       + '      <span class="ln-step-row-desc">' + escapeHtml(step.desc) + '</span>'
       + '    </div>'
       + '    <div class="ln-step-row-head-side">'
+      +        _lnStepRunBadge(runCount)
       + '      <span class="ln-step-row-status" data-step-status>' + stLabel + '</span>'
       + '      <span class="ln-step-row-actions">'
       + promptBtn
@@ -4376,7 +5073,7 @@
     else row.classList.remove('expanded');
   }
 
-  _lnSetStepStatus = function(stepId, status, labelOverride) {
+  _lnSetStepStatus = function(stepId, status, labelOverride, runCount) {
     var row = _lnFindStepRow(stepId);
     if (!row) return;
     row.classList.remove('status-done', 'status-skipped', 'status-running', 'status-error');
@@ -4391,6 +5088,12 @@
         : status === 'running' ? '进行中'
         : status === 'error' ? '✕ 失败'
         : 'Ⅱ 待办');
+    }
+    var badge = row.querySelector('[data-step-run-count]');
+    if (badge && runCount !== undefined && runCount !== null) {
+      runCount = Number(runCount || 0);
+      badge.textContent = runCount > 0 ? ('第 ' + runCount + ' 轮') : '';
+      badge.style.display = runCount > 0 ? '' : 'none';
     }
     var runBtn = row.querySelector('[data-step-run]');
     if (runBtn) {
@@ -4430,6 +5133,27 @@
     if (toggleBtn) toggleBtn.textContent = open ? '收起' : '展开';
   };
 
+  function _lnClearStepPreview(stepId) {
+    var row = _lnFindStepRow(stepId);
+    if (!row) return;
+    _lnSetStepStatus(stepId, 'pending', null, 0);
+    row.querySelectorAll('[data-step-output], [data-step-diff]').forEach(function(el) {
+      el.innerHTML = '<div class="empty" style="padding:0.5rem">重新运行后显示内容</div>';
+    });
+    var historyEl = row.querySelector('[data-step-history]');
+    if (historyEl) {
+      historyEl.innerHTML = '<div class="empty" style="padding:0.5rem">点击展开后加载</div>';
+    }
+  }
+
+  function _lnInvalidateDownstreamStepRows(stepName) {
+    var idx = _lnWritingStepOrder.indexOf(stepName);
+    if (idx < 0) return;
+    for (var i = idx + 1; i < _lnWritingStepOrder.length; i++) {
+      _lnClearStepPreview(_lnWritingStepOrder[i]);
+    }
+  }
+
   async function _lnLoadDraftManifestInto(chNum) {
     var row = _lnFindStepRow('draft');
     if (!row) return;
@@ -4444,26 +5168,37 @@
     }
   }
 
+  function _lnDiffKey(text) {
+    return String(text || '')
+      .replace(/[\u201c\u201d\u301d\u301e]/g, '"')
+      .replace(/[\u2018\u2019]/g, "'")
+      .replace(/[\u2014\u2015]/g, '—')
+      .replace(/\s+/g, '')
+      .trim();
+  }
+
   function _lnDiffOps(a, b) {
     // 段落级 LCS diff，返回 [{op:'eq'|'del'|'add', value: ''}, ...]
     var m = a.length, n = b.length;
     if (!m && !n) return [];
     if (!m) return b.map(function(p) { return {op: 'add', value: p}; });
     if (!n) return a.map(function(p) { return {op: 'del', value: p}; });
+    var aKeys = a.map(_lnDiffKey);
+    var bKeys = b.map(_lnDiffKey);
     var dp = [];
     for (var i = 0; i <= m; i++) {
       dp.push(new Array(n + 1).fill(0));
     }
     for (var i = 1; i <= m; i++) {
       for (var j = 1; j <= n; j++) {
-        if (a[i - 1] === b[j - 1]) dp[i][j] = dp[i - 1][j - 1] + 1;
+        if (aKeys[i - 1] === bKeys[j - 1]) dp[i][j] = dp[i - 1][j - 1] + 1;
         else dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
       }
     }
     var ops = [];
     var ai = m, bj = n;
     while (ai > 0 && bj > 0) {
-      if (a[ai - 1] === b[bj - 1]) {
+      if (aKeys[ai - 1] === bKeys[bj - 1]) {
         ops.unshift({op: 'eq', value: a[ai - 1]});
         ai--; bj--;
       } else if (dp[ai - 1][bj] >= dp[ai][bj - 1]) {
@@ -4501,7 +5236,8 @@
       classes.push('ln-diff-change');
       classes.push(opts.kind === 'del' ? 'ln-diff-change-del' : 'ln-diff-change-add');
       attrs += ' data-change-idx="' + Number(opts.changeIdx) + '"';
-      marker = '<button type="button" class="ln-diff-change-index" data-change-idx="' + Number(opts.changeIdx) + '" title="定位到第 ' + Number(opts.changeIdx) + ' 处修改">' + Number(opts.changeIdx) + '</button>';
+      var markerLabel = String(opts.markerLabel || Number(opts.changeIdx));
+      marker = '<button type="button" class="ln-diff-change-index" data-change-idx="' + Number(opts.changeIdx) + '" title="定位到第 ' + Number(opts.changeIdx) + ' 处修改">' + escapeHtml(markerLabel) + '</button>';
     }
     return '<p class="' + classes.join(' ') + '"' + attrs + '>' + marker + '<span class="ln-diff-paragraph-text">' + escapeHtml(text) + '</span></p>';
   }
@@ -4560,15 +5296,20 @@
     });
   }
 
-  function _lnRenderDiffView(before, after, labels) {
+  function _lnCjkWordCount(text) {
+    return (String(text || '').match(/[\u4e00-\u9fff]/g) || []).length;
+  }
+
+  function _lnRenderDiffView(before, after, labels, counts) {
     before = String(before || '');
     after = String(after || '');
     labels = labels || _lnDiffLabels('');
+    counts = counts || {};
     if (!before && !after) {
       return '<div class="empty" style="padding:0.5rem">没有内容可对比</div>';
     }
-    var beforeWords = (before.match(/[一-龥]/g) || []).length;
-    var afterWords = (after.match(/[一-龥]/g) || []).length;
+    var beforeWords = Number(counts.before_words || 0) || _lnCjkWordCount(before);
+    var afterWords = Number(counts.after_words || 0) || _lnCjkWordCount(after);
     var diff = afterWords - beforeWords;
     var deltaText = (diff >= 0 ? '+' : '') + diff + '字';
     var paraBefore = before.split(/\n+/).map(function(s) { return s.trim(); }).filter(function(s) { return s.length > 0; });
@@ -4589,10 +5330,26 @@
         continue;
       }
       changeCount += 1;
+      var delOrdinal = 0;
+      var addOrdinal = 0;
       while (opIndex < ops.length && ops[opIndex].op !== 'eq') {
         var chunk = ops[opIndex];
-        if (chunk.op === 'del') originalParts.push(_lnDiffParagraphHtml(chunk.value, {changeIdx: changeCount, kind: 'del'}));
-        if (chunk.op === 'add') revisedParts.push(_lnDiffParagraphHtml(chunk.value, {changeIdx: changeCount, kind: 'add'}));
+        if (chunk.op === 'del') {
+          delOrdinal += 1;
+          originalParts.push(_lnDiffParagraphHtml(chunk.value, {
+            changeIdx: changeCount,
+            kind: 'del',
+            markerLabel: String(changeCount) + 'a' + (delOrdinal > 1 ? delOrdinal : ''),
+          }));
+        }
+        if (chunk.op === 'add') {
+          addOrdinal += 1;
+          revisedParts.push(_lnDiffParagraphHtml(chunk.value, {
+            changeIdx: changeCount,
+            kind: 'add',
+            markerLabel: String(changeCount) + 'b' + (addOrdinal > 1 ? addOrdinal : ''),
+          }));
+        }
         opIndex += 1;
       }
     }
@@ -4629,7 +5386,10 @@
     var diffEl = row.querySelector('[data-step-diff]');
     if (!diffEl) return;
     var stepName = (result && result.step) || row.dataset.stepRow || '';
-    diffEl.innerHTML = _lnRenderDiffView(result.source_before, result.content, _lnDiffLabels(stepName));
+    diffEl.innerHTML = _lnRenderDiffView(result.source_before, result.content, _lnDiffLabels(stepName), {
+      before_words: result.source_word_count,
+      after_words: result.word_count || result.final_words,
+    });
     _lnBindDiffNavigator(diffEl);
     _lnSetDiffActiveChange(diffEl.querySelector('[data-diff-view]'), 1, {scroll: false});
   }
@@ -4637,40 +5397,30 @@
   function _lnRenderSavedStepOutput(row, stepName, result) {
     var outEl = row ? row.querySelector('[data-step-output]') : null;
     if (!outEl) return;
-    var editableSteps = ['draft', 'expand', 'polish', 'deslop'];
-    var isEditable = editableSteps.indexOf(stepName) >= 0 && result.content;
-    var editBtn = isEditable ? ' <button class="ln-step-edit-btn" data-step-edit="' + stepName + '">编辑</button>' : '';
+    var runText = _lnStepRunText(result);
 
     if (stepName === 'review') {
-      outEl.innerHTML = _lnRenderReviewResult(result.review || {}, result.force_pass || {});
+      outEl.innerHTML = (runText ? '<div style="margin-bottom:0.4rem"><strong>' + escapeHtml(runText + '审查') + '</strong></div>' : '') + _lnRenderReviewResult(result.review || {}, result.force_pass || {});
+      outEl.innerHTML += _lnReviewRevisedContentHtml(result || {});
     } else if (stepName === 'deslop') {
       outEl.innerHTML = '';
     } else if (stepName === 'finalize') {
-      outEl.innerHTML = '<div style="margin-bottom:0.5rem"><strong>✓ 已成稿 · ' + (result.final_words || result.word_count || 0) + '字</strong>'
+      outEl.innerHTML = '<div style="margin-bottom:0.5rem"><strong>' + escapeHtml(runText) + '✓ 已成稿 · ' + (result.final_words || result.word_count || 0) + '字</strong>'
         + '<br><span class="inbox-meta">' + escapeHtml(result.draft_path || '') + '</span></div>'
         + (result.content ? '<div class="ln-step-output-preview">' + renderMarkdown(result.content || '') + '</div>' : '');
     } else if (result.skipped && stepName === 'expand') {
-      outEl.innerHTML = '<div style="margin-bottom:0.4rem"><strong>已自动跳过扩写 · 初稿 ' + (result.word_count || 0) + '字</strong>'
+      outEl.innerHTML = '<div style="margin-bottom:0.4rem"><strong>' + escapeHtml(runText) + '已自动跳过扩写 · 初稿 ' + (result.word_count || 0) + '字</strong>'
         + '<br><span class="inbox-meta">' + escapeHtml(result.message || '初稿已达到 3000 字，无需扩写。') + '</span></div>'
         + '<div class="ln-step-output-preview">' + renderMarkdown(result.content || '') + '</div>';
     } else if (stepName === 'draft') {
-      outEl.innerHTML = '<div style="margin-bottom:0.4rem"><strong>初稿 · ' + (result.word_count || 0) + '字 / 目标 ' + (result.target_words || 0) + '字</strong>' + editBtn + '</div>'
+      outEl.innerHTML = '<div style="margin-bottom:0.4rem"><strong>' + escapeHtml(runText) + '初稿 · ' + (result.word_count || 0) + '字 / 目标 ' + (result.target_words || 0) + '字</strong></div>'
         + '<div class="ln-step-output-preview">' + renderMarkdown(result.content || '') + '</div>';
     } else {
-      outEl.innerHTML = '<div style="margin-bottom:0.4rem"><strong>' + escapeHtml(_lnWritingStepLabels[stepName] || stepName) + ' · ' + (result.word_count || 0) + '字</strong>' + editBtn + '</div>'
+      outEl.innerHTML = '<div style="margin-bottom:0.4rem"><strong>' + escapeHtml(runText + (_lnWritingStepLabels[stepName] || stepName)) + ' · ' + (result.word_count || 0) + '字</strong></div>'
         + '<div class="ln-step-output-preview">' + renderMarkdown(result.content || '') + '</div>';
     }
     if (stepName === 'expand' || stepName === 'polish' || stepName === 'deslop') {
       _lnPopulateDiffSection(row, result);
-    }
-    // Bind edit button
-    if (isEditable && row) {
-      var editBtnEl = outEl.querySelector('[data-step-edit]');
-      if (editBtnEl) {
-        editBtnEl.addEventListener('click', function() {
-          _lnEnterStepEditMode(row, stepName, result.content || '');
-        });
-      }
     }
     _lnBindGateActions(row, _lnViewChapter || 0, stepName);
   }
@@ -4828,24 +5578,23 @@
 
   async function _lnReviseChapterStep(chNum, stepName) {
     if (!_lnActiveBookId || !chNum) return;
-    var extra = prompt('补充修改要求（可留空）：') || '';
-    _lnSetStepStatus(stepName, 'running', '修改中');
+    var extra = await showTextPromptAsync({
+      kicker: stepName === 'review' ? 'REVIEW FIX' : 'DE-AI FIX',
+      title: '补充修改要求',
+      description: '可留空。系统会按当前建议修改正文；审查步骤修改完成后会自动复审。',
+      placeholder: '例如：保留现有剧情，只加强情绪承接和因果解释',
+      value: '',
+      confirmText: '开始修改',
+      allowEmpty: true,
+      cancelValue: null,
+      maxlength: 240
+    });
+    if (extra === null) return;
+    _lnSetStepStatus(stepName, 'running', '按建议修改中');
     try {
-      var result = await api('/api/long-novel/books/' + _lnActiveBookId + '/write-chapter/' + chNum + '/step/' + stepName + '/revise', { method: 'POST', body: { prompt: extra } });
-      toast(result.message || '已按建议修改', 'success');
-      if (stepName === 'review') {
-        var reviewRow = _lnFindStepRow(stepName);
-        _lnRenderSavedStepOutput(reviewRow, stepName, result || {});
-        _lnSetStepStatus(stepName, result && result.review && result.review.passed ? 'done' : 'error',
-          result && result.review && result.review.passed ? '✓ 已通过' : '⚠ 需继续修');
-      } else {
-        var row = _lnFindStepRow(stepName);
-        _lnRenderSavedStepOutput(row, stepName, result || {});
-        if (stepName === 'expand' || stepName === 'polish' || stepName === 'deslop') {
-          _lnPopulateDiffSection(row, result || {});
-        }
-        _lnSetStepStatus(stepName, 'done');
-      }
+      var startResp = await api('/api/long-novel/books/' + _lnActiveBookId + '/write-chapter/' + chNum + '/step/' + stepName + '/revise/start', { method: 'POST', body: { prompt: extra || '' } });
+      if (!startResp.already_running) toast(startResp.detail || '按建议修改任务已启动', 'info');
+      _lnStartChapterStepRevisePolling(chNum, stepName, { silent: true });
     } catch (err) {
       _lnSetStepStatus(stepName, 'error', '✕ ' + (err.message || '失败').slice(0, 40));
       toast('按建议修改失败：' + err.message, 'error');
@@ -4866,13 +5615,11 @@
       var outEl = row ? row.querySelector('[data-step-output]') : null;
       if (outEl) {
         if (stepName === 'review') {
-          outEl.innerHTML = _lnRenderReviewResult(result.review || {}, result.force_pass || {});
+          _lnRenderSavedStepOutput(row, stepName, result || {});
         } else if (stepName === 'deslop') {
           outEl.innerHTML = '';
         } else if (stepName === 'finalize') {
-          outEl.innerHTML = '<div style="margin-bottom:0.5rem"><strong>✓ 已成稿 · ' + (result.final_words || 0) + '字</strong>'
-            + '<br><span class="inbox-meta">' + escapeHtml(result.draft_path || '') + '</span></div>'
-            + (result.content ? '<div class="ln-step-output-preview">' + renderMarkdown(result.content || '') + '</div>' : '');
+          _lnRenderSavedStepOutput(row, stepName, result || {});
           toast('第' + chNum + '章已成稿，共' + (result.final_words || 0) + '字。', 'success');
         } else if (stepName === 'draft') {
           // refresh manifest with actually-sent data if returned
@@ -4927,6 +5674,7 @@
     options = options || {};
     _lnSetStepStatus(stepName, 'running');
     _lnSetStepBodyExpanded(stepName, true);
+    _lnInvalidateDownstreamStepRows(stepName);
     try {
       var startResp = await api('/api/long-novel/books/' + _lnActiveBookId + '/write-chapter/' + chNum + '/step/' + stepName + '/start', {
         method: 'POST',
@@ -4968,6 +5716,7 @@
     var available = [];
     var skipped = [];
     var progressRows = [];
+    var runCounts = {};
     try {
       var chData = await api('/api/long-novel/books/' + _lnActiveBookId + '/chapters/' + chNum);
       ch = chData.chapter || {};
@@ -4977,8 +5726,12 @@
       (sd.steps_available || []).forEach(function(st) {
         if (st && st.step) available.push(st.step);
         if (st && st.step && st.skipped) skipped.push(st.step);
+        if (st && st.step && (st.batch_count || st.run_count)) runCounts[st.step] = Number(st.batch_count || st.run_count || 0);
       });
       progressRows = sd.steps_progress || [];
+      progressRows.forEach(function(st) {
+        if (st && st.step && (st.batch_count || st.run_count)) runCounts[st.step] = Math.max(Number(runCounts[st.step] || 0), Number(st.batch_count || st.run_count || 0));
+      });
       if (sd.chapter_status === 'draft' && available.indexOf('finalize') < 0) available.push('finalize');
     } catch (_e) {}
 
@@ -4987,7 +5740,7 @@
     var reviewBadge = ch.review_status ? ' · 审查：<strong>' + escapeHtml(ch.review_status) + '</strong>' : '';
     var rowsHtml = _lnWritingSteps.map(function(step) {
       var rowStatus = statusMap[step.id] || 'pending';
-      return _lnStepRowHtml(step, rowStatus);
+      return _lnStepRowHtml(step, rowStatus, runCounts[step.id] || 0);
     }).join('');
 
     var safeTitle = escapeHtml(ch.title || '未命名');
@@ -5050,11 +5803,23 @@
         _lnSetStepBodyExpanded(stepId, willOpen);
         if (willOpen && (row.classList.contains('status-done') || row.classList.contains('status-skipped'))) _lnLoadChapterStepOutput(chNum, stepId);
       });
-      // 复制全文（仅 deslop 行有）
+      // 复制全文（去 AI / 成稿行使用）
       var copyBtn = row.querySelector('[data-step-copy-all]');
       if (copyBtn) copyBtn.addEventListener('click', function(e) {
         e.stopPropagation();
         _lnCopyStepContent(chNum, stepId, copyBtn);
+      });
+      var editAllBtn = row.querySelector('[data-step-edit-all]');
+      if (editAllBtn) editAllBtn.addEventListener('click', async function(e) {
+        e.stopPropagation();
+        try {
+          var result = await api('/api/long-novel/books/' + _lnActiveBookId + '/write-chapter/' + chNum + '/step/' + stepId);
+          var content = String((result && result.content) || '');
+          if (!content) { toast('没有可编辑的内容', 'error'); return; }
+          _lnEnterStepEditMode(row, stepId, content);
+        } catch (err) {
+          toast('读取内容失败：' + (err.message || err), 'error');
+        }
       });
       // 历史版本 details 展开时按需拉取（首次展开才请求）
       var historyDetails = row.querySelector('details[data-step-section="history"]');
@@ -5078,6 +5843,19 @@
         _lnSetStepStatus(item.step, 'skipped');
       }
     });
+
+    for (var rp = 0; rp < 2; rp++) {
+      var reviseStep = rp === 0 ? 'review' : 'deslop';
+      try {
+        var reviseStatus = await api('/api/long-novel/books/' + _lnActiveBookId + '/write-chapter/' + chNum + '/step/' + reviseStep + '/revise/status');
+        if (reviseStatus.status === 'starting' || reviseStatus.status === 'running') {
+          _lnSetStepStatus(reviseStep, 'running', '按建议修改中');
+          _lnStartChapterStepRevisePolling(chNum, reviseStep, { silent: true });
+        } else if (reviseStatus.status === 'error' || reviseStatus.status === 'cancelled') {
+          _lnSetStepStatus(reviseStep, 'error', '✕ ' + String(reviseStatus.detail || '失败').slice(0, 40));
+        }
+      } catch (_reviseErr) {}
+    }
 
     expand.scrollIntoView({behavior: 'smooth', block: 'nearest'});
   }
@@ -5144,6 +5922,7 @@
           + '<div class="ln-history-head" style="padding:0.4rem 0.6rem;display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;background:rgba(255,255,255,0.04);color:var(--text,inherit);flex-shrink:0">'
           +   '<span style="font-family:monospace;font-size:0.78rem;color:var(--text,inherit);font-weight:600">' + escapeHtml(v.id) + '</span>'
           +   tag
+          +   '<button class="ghost tiny" data-history-delete="' + escapeHtml(v.id) + '" style="margin-left:auto;color:var(--danger,#ff6b6b);border-color:rgba(255,107,107,0.45)">删除源文件</button>'
           +   '<span style="font-size:0.72rem;color:var(--muted,#9aa0a6);width:100%;display:block">' + escapeHtml(String(v.mtime || '')) + ' · ' + sizeKb + ' KB</span>'
           + '</div>'
           + '<div style="padding:0.5rem 0.75rem;flex:1;display:flex;flex-direction:column;overflow:hidden">' + bodyHtml + '</div>'
@@ -5152,6 +5931,28 @@
       html += '</div>';
       holder.innerHTML = html;
       detailsEl.dataset.loaded = '1';
+      holder.querySelectorAll('[data-history-delete]').forEach(function(btn) {
+        btn.addEventListener('click', async function(e) {
+          e.preventDefault();
+          e.stopPropagation();
+          var versionId = btn.dataset.historyDelete || '';
+          if (!versionId) return;
+          if (!window.confirm('确定删除这个历史版本源文件吗？\\n' + versionId)) return;
+          btn.disabled = true;
+          var oldText = btn.textContent;
+          btn.textContent = '删除中...';
+          try {
+            await api('/api/long-novel/books/' + _lnActiveBookId + '/write-chapter/' + chNum + '/step/' + stepName + '/history/' + encodeURIComponent(versionId), { method: 'DELETE' });
+            toast('历史版本已删除', 'success');
+            detailsEl.dataset.loaded = '0';
+            await _lnLoadStepHistory(chNum, stepName, detailsEl);
+          } catch (err) {
+            btn.disabled = false;
+            btn.textContent = oldText;
+            toast('删除历史版本失败：' + (err.message || err), 'error');
+          }
+        });
+      });
     } catch (err) {
       holder.innerHTML = '<div class="empty" style="padding:0.5rem;color:var(--danger,#c00)">加载失败：' + escapeHtml(String(err.message || err)) + '</div>';
     }
@@ -5211,6 +6012,7 @@
   function _lnEnterStepEditMode(row, stepName, content) {
     var outEl = row.querySelector('[data-step-output]');
     if (!outEl) return;
+    outEl.style.display = '';
 
     // Check if edit area already exists - prevent duplicates
     var existingEditArea = outEl.querySelector('.ln-step-edit-area');
@@ -5220,7 +6022,12 @@
     }
 
     var previewEl = outEl.querySelector('.ln-step-output-preview');
-    if (!previewEl) return;
+    if (!previewEl) {
+      previewEl = document.createElement('div');
+      previewEl.className = 'ln-step-output-preview';
+      previewEl.innerHTML = renderMarkdown(content || '');
+      outEl.appendChild(previewEl);
+    }
 
     // Hide preview, show textarea
     previewEl.style.display = 'none';
@@ -5255,12 +6062,12 @@
       }
 
       try {
-        await api('/api/long-novel/books/' + _lnActiveBookId + '/write-chapter/' + chNum + '/step/' + stepName + '/content', {
+        var saved = await api('/api/long-novel/books/' + _lnActiveBookId + '/write-chapter/' + chNum + '/step/' + stepName + '/content', {
           method: 'PUT',
           body: { content: newContent }
         });
         // Update preview
-        previewEl.innerHTML = renderMarkdown(newContent);
+        previewEl.innerHTML = renderMarkdown((saved && saved.content) || newContent);
         previewEl.style.display = '';
         editArea.remove();
         toast('内容已保存', 'success');
@@ -5281,7 +6088,7 @@
     var btn = document.querySelector('.ln-chapter-expand[data-ln-ch-expand="' + chNum + '"] [data-ch-title-ai]');
     if (btn) { btn.disabled = true; btn.dataset.oldText = btn.textContent; btn.textContent = 'AI 生成中…'; }
     try {
-      var data = await api('/api/long-novel/books/' + _lnActiveBookId + '/chapters/' + chNum + '/generate-title', { method: 'POST' });
+      var data = await apiWithTimeout('/api/long-novel/books/' + _lnActiveBookId + '/chapters/' + chNum + '/generate-title', { method: 'POST' }, 60000);
       var suggested = String(data && data.title || '').trim();
       if (!suggested) { toast('AI 没返回有效标题，请稍后重试', 'error'); return; }
       if (!await showConfirmAsync('AI 建议标题：「' + suggested + '」\n\n是否采用？（取消则不改）')) return;
@@ -5498,9 +6305,11 @@
     var titleEl = document.getElementById('ln-setup-preview-title');
     var contentEl = document.getElementById('ln-setup-preview-content');
     if (previewEl) previewEl.style.display = '';
-    _lnSetSetupPreviewAction('');
     if (titleEl) titleEl.textContent = '' + label;
-    if (contentEl) contentEl.textContent = '加载中…';
+    if (contentEl) {
+      contentEl.dataset.lnLoadingPhase = phaseId;
+      contentEl.setAttribute('aria-busy', 'true');
+    }
 
     var st = 'pending', detail = '';
     try {
@@ -5544,7 +6353,9 @@
       return;
     }
 
+    if (contentEl && contentEl.dataset.lnLoadingPhase !== phaseId) return;
     _lnRenderSetupChipFiles(phaseId, label, files, st);
+    if (contentEl) contentEl.removeAttribute('aria-busy');
   }
 
   async function _lnShowOutlineChipPreview(phaseId) {
@@ -5558,7 +6369,6 @@
     var label = info[1];
     var titleEl = document.getElementById('ln-outline-preview-title');
     var contentEl = document.getElementById('ln-outline-preview-content');
-    _lnSetOutlinePreviewAction('');
     var st = 'pending', detail = '';
     try {
       var sResp = await api('/api/long-novel/books/' + _lnActiveBookId + '/setup-phase/' + phaseId + '/status');
@@ -5573,7 +6383,6 @@
     } catch (_e2) {}
     if (files.length) {
       if (titleEl) titleEl.textContent = '' + label;
-      if (contentEl) contentEl.textContent = '加载中…';
       _lnRenderOutlineChipFiles(phaseId, label, files, st);
     } else if (st === 'error') {
       if (titleEl) titleEl.textContent = '✕ ' + label + ' — 生成失败';
@@ -5650,11 +6459,14 @@
   async function _lnLoadChipFileInto(relPath, container) {
     if (!container) return;
     container.classList.remove('is-editing');
-    container.innerHTML = '<div class="empty" style="padding:0.5rem">加载中…</div>';
+    var requestId = String(Date.now()) + ':' + Math.random();
+    container.dataset.lnLoadRequest = requestId;
+    container.setAttribute('aria-busy', 'true');
     try {
       var resp = await fetch('/api/long-novel/books/' + _lnActiveBookId + '/artifact?path=' + encodeURIComponent(relPath));
       if (!resp.ok) throw new Error('HTTP ' + resp.status);
       var data = await resp.json();
+      if (container.dataset.lnLoadRequest !== requestId) return;
       var rawContent = data.content || '';
       var html = '<div class="ln-chip-filepath"><code>' + escapeHtml(relPath) + '</code></div>'
         + '<div class="ln-chip-file-rendered">' + renderMarkdown(rawContent.substring(0, 30000)) + '</div>';
@@ -5662,7 +6474,10 @@
       container.dataset.lnCurrentRelPath = relPath;
       container.dataset.lnCurrentContent = rawContent;
     } catch (err) {
+      if (container.dataset.lnLoadRequest !== requestId) return;
       container.innerHTML = '<div class="empty">加载失败：' + escapeHtml(err.message || String(err)) + '</div>';
+    } finally {
+      if (container.dataset.lnLoadRequest === requestId) container.removeAttribute('aria-busy');
     }
   }
 
@@ -6039,6 +6854,28 @@
     finally { release(); }
   }
 
+  async function regenerateCurrentChapter() {
+    if (!_lnActiveBookId || !_lnViewChapter) { toast('请先选择章节', 'error'); return; }
+    var chapterNum = _lnViewChapter;
+    var confirmed = await showConfirmAsync(
+      '确定删除第' + chapterNum + '章现有正文？\n\n'
+      + '当前正文、初稿、扩写、润色、去 AI 和审查结果会从工作台移除，并归档到历史目录。'
+      + '删除后不会自动重写，需要时可再点“运行”或“全自动写正文”。'
+    );
+    if (!confirmed) return;
+    var release = withBusy($('ln-btn-regenerate'), '清理中…');
+    try {
+      var result = await api('/api/long-novel/books/' + _lnActiveBookId + '/reset-chapter/' + chapterNum, { method: 'POST' });
+      toast(result.message || ('第' + chapterNum + '章旧正文已删除'), (result.later_written_chapters || []).length ? 'warning' : 'success');
+      await loadWritingWorkbench();
+      if (typeof _lnRestoreAutopilotMonitor === 'function') { try { await _lnRestoreAutopilotMonitor(); } catch (_e) {} }
+    } catch (err) {
+      toast('删除失败：' + err.message, 'error');
+    } finally {
+      release();
+    }
+  }
+
   // ── Global progress polling ──
   var _lnProgressTimer = null;
 
@@ -6162,6 +6999,35 @@
   var _promptModalPhase = '';
   var _promptModalPlaceholders = [];
 
+  function _lnPromptPlaceholderDescription(name) {
+    var descriptions = {
+      title: '当前书名',
+      genre: '当前作品题材',
+      premise: '作品核心梗概',
+      chapter_number: '当前章节序号，例如 12',
+      chapter_title: '当前章节标题',
+      target_words: '本章目标字数',
+      context_sections: '系统整理的前情、设定、角色、伏笔等上下文材料',
+      draft: '当前步骤接收到的正文草稿',
+      current_words: '当前草稿字数',
+      shortfall: '距离目标字数还差多少字',
+      outline: '当前章节对应的章节细纲',
+      source: '本次修改所依据的原正文',
+      suggestions: '审查或检测步骤给出的修改建议',
+      extra_prompt: '用户额外填写的修改要求',
+      book_outline: '已生成的全书大纲',
+      volume_outline: '已生成的卷纲',
+      target_chapters: '全书计划章节数',
+      words_per_chapter: '每章目标字数',
+      chapter_text: '当前章节正文',
+      previous_chapter: '上一章正文或结尾片段',
+      tracking_context: '长期记忆与追踪文件内容',
+      character_profiles: '角色档案与当前角色状态',
+      hit_text: '正文中命中的 AI 高频词或待处理特征',
+    };
+    return descriptions[name] || '运行时由系统自动填入的内容';
+  }
+
   function _missingPromptPlaceholders(text, placeholders) {
     var content = String(text || '');
     return (placeholders || []).filter(function(p) {
@@ -6171,10 +7037,32 @@
 
   function _renderPromptPlaceholderHint(placeholders, editable) {
     var list = placeholders || [];
-    if (!list.length) return editable ? '该模板没有登记变量。' : '该 user prompt 暂由源码动态拼装，当前仅可查看。';
-    return '必须保留这些变量，保存时会检查：' + list.map(function(p) { return '{' + p + '}'; }).join(' · ')
-      + '。它们运行时会自动替换成真实章节信息，不用手动改。';
+    if (!list.length) {
+      return '<div class="prompt-placeholder-label">' + (editable ? '该模板没有登记变量' : '该用户提示词暂由源码动态拼装，当前仅可查看') + '</div>';
+    }
+    return '<div class="prompt-placeholder-label">必须保留这些变量</div>'
+      + '<div class="prompt-placeholder-chips">'
+      + list.map(function(p) {
+          var description = _lnPromptPlaceholderDescription(p);
+          return '<button type="button" class="prompt-placeholder-chip" data-insert-placeholder="' + escapeHtml(p) + '"'
+            + ' title="' + escapeHtml(description + (editable ? '；点击可插入到当前光标位置' : '')) + '"'
+            + ' data-tooltip="' + escapeHtml(description) + '"'
+            + (editable ? '' : ' aria-disabled="true"')
+            + '>{' + escapeHtml(p) + '}</button>';
+        }).join('')
+      + '</div>';
   }
+
+  function _insertPromptPlaceholder(textarea, placeholder) {
+    if (!textarea || textarea.disabled) return;
+    var token = '{' + placeholder + '}';
+    var start = typeof textarea.selectionStart === 'number' ? textarea.selectionStart : textarea.value.length;
+    var end = typeof textarea.selectionEnd === 'number' ? textarea.selectionEnd : start;
+    textarea.setRangeText(token, start, end, 'end');
+    textarea.focus();
+    textarea.dispatchEvent(new Event('input', {bubbles: true}));
+  }
+
   async function _showPromptModal(phaseId) {
     var modal = document.getElementById('prompt-modal');
     var titleEl = document.getElementById('prompt-modal-title');
@@ -6202,13 +7090,18 @@
       userEl.disabled = !data.editable_user;
       _promptModalPlaceholders = data.placeholders || [];
       if (hintEl) {
-        var hintText = _renderPromptPlaceholderHint(_promptModalPlaceholders, data.editable_user);
         var related = data.related_prompts || [];
-        hintEl.innerHTML = escapeHtml(hintText) + (related.length
+        hintEl.innerHTML = _renderPromptPlaceholderHint(_promptModalPlaceholders, data.editable_user) + (related.length
           ? '<div class="prompt-related">相关子模板：' + related.map(function(id) {
               return '<button class="ghost tiny" data-related-prompt="' + escapeHtml(id) + '">' + escapeHtml(id) + '</button>';
             }).join(' ') + '</div>'
           : '');
+        hintEl.querySelectorAll('[data-insert-placeholder]').forEach(function(btn) {
+          btn.addEventListener('mousedown', function(e) { e.preventDefault(); });
+          btn.addEventListener('click', function() {
+            _insertPromptPlaceholder(userEl, btn.dataset.insertPlaceholder || '');
+          });
+        });
         hintEl.querySelectorAll('[data-related-prompt]').forEach(function(btn) {
           btn.addEventListener('click', function() { _showPromptModal(btn.dataset.relatedPrompt || ''); });
         });
@@ -6477,30 +7370,6 @@
     } catch (_e) { if (contentEl) contentEl.textContent = '加载失败'; }
   }
 
-  async function loadBenchmarkPanel() {
-    if (!_lnActiveBookId) return;
-    try {
-      var html = '';
-      try {
-        var resp = await fetch('/api/long-novel/books/' + _lnActiveBookId + '/artifact?path=' + encodeURIComponent('对标'));
-        if (resp.ok) {
-          var data = await resp.json();
-          if (data.is_dir && data.files && data.files.length > 0) {
-            html = data.files.map(function(f){return '<div style="cursor:pointer;color:var(--primary);text-decoration:underline;margin-bottom:0.3rem" data-ln-bench-file="'+escapeHtml('对标/'+f.name)+'">'+escapeHtml(f.name)+' ('+f.size+' bytes)</div>';}).join('');
-          } else if (data.content) {
-            html = renderMarkdown(data.content.substring(0, 15000));
-          }
-        }
-      } catch (_e) {}
-      $('ln-benchmark-content').innerHTML = html || '<span class="inbox-meta">暂无对标分析。创建书籍时可导入对标作品进行拆解。</span>';
-      var benchEl = document.getElementById('ln-benchmark-content');
-      if (benchEl) benchEl.addEventListener('click', function(e) {
-        var el = e.target.closest('[data-ln-bench-file]');
-        if (el) _lnLoadOutlineFile(el.dataset.lnBenchFile);
-      });
-    } catch (err) { toast('加载对标面板失败：' + err.message, 'error'); }
-  }
-
   async function loadTrackingPanel() {
     if (!_lnActiveBookId) return;
     var grid = $('ln-tracking-cards');
@@ -6642,6 +7511,7 @@
     var html = '<ul style="list-style:none;padding-left:' + (depth > 0 ? '1rem' : '0') + ';margin:0">';
 
     children.forEach(function(node) {
+      if (node.name === '对标') return;
 
       if (node.is_dir) {
 
@@ -6649,7 +7519,7 @@
 
           '设定': '', '世界观': '', '角色': '', '势力': '',
 
-          '大纲': '', '正文': '', '追踪': '', '对标': '',
+          '大纲': '', '正文': '', '追踪': '',
 
           '原文': '', '剧情': '',
 
@@ -7039,16 +7909,16 @@
   //   outline  — 全书大纲 → 卷纲 → 章节细纲                       (一次性, 有 trace)
   //   chapter  — 初稿 → 扩写 → 润色 → 去AI → 连续性 → 定稿         (每章循环, 静态模板)
   var _lnPipelineSetupPhases = [
-    {id: 'premise',     label: '题材定位', icon: ''},
-    {id: 'world',       label: '世界观',   icon: ''},
-    {id: 'characters',  label: '角色设计', icon: ''},
-    {id: 'factions',    label: '势力',     icon: ''},
-    {id: 'relations',   label: '关系',     icon: ''}
+    {id: 'premise', label: '题材定位', icon: '', desc: '确定作品题材、核心卖点、目标读者和差异化方向。', source: 'l0_book_setup.py:run_premise'},
+    {id: 'world', label: '世界观', icon: '', desc: '基于题材定位生成背景、规则、地理与力量体系。', source: 'l0_book_setup.py:run_world'},
+    {id: 'characters', label: '角色设计', icon: '', desc: '生成核心角色清单，并按角色补齐详细档案。', source: 'l0_book_setup.py:run_characters'},
+    {id: 'factions', label: '势力', icon: '', desc: '生成主要势力清单，并按势力补齐详细档案。', source: 'l0_book_setup.py:run_factions'},
+    {id: 'relations', label: '关系', icon: '', desc: '汇总人物、势力及其关系演化。', source: 'l0_book_setup.py:run_relations'}
   ];
   var _lnPipelineOutlinePhases = [
-    {id: 'outline',           label: '全书大纲',   icon: ''},
-    {id: 'volume_outline',    label: '卷纲',       icon: ''},
-    {id: 'chapter_outlines',  label: '章节细纲',   icon: ''}
+    {id: 'outline', label: '全书大纲', icon: '', desc: '基于完整设定规划全书主线、人物线、冲突和伏笔。', source: 'l0_book_setup.py:run_outline'},
+    {id: 'volume_outline', label: '卷纲', icon: '', desc: '把全书大纲拆分为各卷的章节范围、事件与人物线。', source: 'l0_book_setup.py:run_volume_outline'},
+    {id: 'chapter_outlines', label: '章节细纲', icon: '', desc: '把卷纲细化为逐章事件、冲突、爽点、角色和伏笔。', source: 'l0_book_setup.py:run_chapter_outlines'}
   ];
   var _lnPipelineChapterSteps = [
     {id: 'draft',      label: '初稿',     icon: '', desc: '根据章纲、上下文、设定生成本章初稿。', source: 'l2_chapter_write.py:run_draft'},
@@ -7148,6 +8018,74 @@
     return (n / 1048576).toFixed(2) + ' MB';
   }
 
+  function _lnInputParamDescription(name, value) {
+    var rawName = String(name || '');
+    var key = rawName.replace(/\s*\(.*/, '');
+    var descriptions = {
+      title: '当前书名',
+      genre: '当前作品题材',
+      premise: '创建作品时填写的一句话梗概',
+      genre_note: '系统根据题材补充的创作侧重点',
+      subtopic: '本批次正在生成的世界观分区',
+      stage: '多阶段生成任务当前执行到哪一步',
+      fallback: '主流程解析失败后，是否正在使用备用生成方案',
+      character_name: '当前正在补充详细档案的角色名',
+      character_role: '当前角色在故事中的定位或阵营',
+      character_brief: '角色清单阶段生成的简要设定，作为详细档案的输入',
+      faction_name: '当前正在补充详细档案的势力名',
+      faction_type: '当前势力的类型或阵营定位',
+      faction_brief: '势力清单阶段生成的简要设定，作为详细档案的输入',
+      char_count: '本次关系生成读取到的角色数量',
+      faction_count: '本次关系生成读取到的势力数量',
+      target_chapters: '全书计划章节数',
+      words_per_chapter: '每章目标字数',
+      vol_num: '当前卷序号',
+      ch_start: '当前卷或批次的起始章节号',
+      ch_end: '当前卷或批次的结束章节号',
+      batch_start: '本批章节细纲的起始章节号',
+      batch_end: '本批章节细纲的结束章节号',
+      all_settings: '传入模型的完整设定内容长度；名称括号会说明截断上限',
+      prev_outline: '传入模型的上一批或上一章细纲长度；名称括号会说明截取范围',
+      old_target_chapters: '追加章节前的计划章节总数',
+      new_target_chapters: '追加章节后的计划章节总数',
+      recent_outline_count: '追加规划时读取的近期章节细纲数量',
+      recent_draft_excerpt_count: '追加规划时读取的近期正文片段数量',
+      '注意：以上拼接后整体再被截断到 9000 字字符': '所有上游内容拼接后，最终实际传入模型的字符数'
+    };
+    var desc = descriptions[rawName] || descriptions[key] || '运行时传入该步骤的参数';
+    if (key === 'stage') {
+      var stages = {
+        '1/2 roster': '第 1 阶段：先生成角色或势力清单',
+        '2/2 detail': '第 2 阶段：根据清单逐项生成详细档案'
+      };
+      desc = stages[String(value || '')] || desc;
+    }
+    return desc;
+  }
+
+  function _lnInputFileDescription(path, label) {
+    var filePath = String(path || '');
+    var fileLabel = String(label || '');
+    if (fileLabel && fileLabel !== filePath) return fileLabel;
+    var descriptions = [
+      ['设定/题材定位.md', '题材定位，用于约束当前步骤的创作方向、读者定位和卖点'],
+      ['设定/世界观/背景设定.md', '世界背景设定，用于约束时代、地理和基础规则'],
+      ['设定/世界观/力量体系.md', '力量体系设定，用于约束能力规则、等级和限制'],
+      ['设定/角色/_角色索引.md', '角色索引，用于读取已有角色清单'],
+      ['设定/势力/_势力索引.md', '势力索引，用于读取已有势力清单'],
+      ['设定/关系.md', '人物与势力关系，用于保持互动和阵营一致'],
+      ['大纲/全书大纲.md', '全书大纲，用于约束主线、人物线和核心冲突'],
+      ['大纲/卷纲', '当前卷纲，用于约束本卷事件范围和节奏'],
+      ['大纲/章节细纲.md', '章节细纲，用于确定每章事件、冲突、角色和伏笔'],
+      ['追踪/', '长期追踪内容，用于保持前后文、角色状态和伏笔连续'],
+      ['正文/', '上一阶段生成的正文内容，作为当前步骤的处理对象']
+    ];
+    for (var i = 0; i < descriptions.length; i++) {
+      if (filePath.indexOf(descriptions[i][0]) === 0) return descriptions[i][1];
+    }
+    return '该步骤读取的上游文件内容';
+  }
+
   function _lnRenderInputsTable(inputs) {
     if (!inputs || !inputs.length) return '<div class="empty" style="padding:0.4rem">无输入元数据</div>';
     var rows = inputs.map(function(it) {
@@ -7156,20 +8094,25 @@
         return '<tr>'
           + '<td>文件</td>'
           + '<td><code>' + escapeHtml(it.path || '') + '</code></td>'
-          + '<td>' + escapeHtml(it.label || '') + '</td>'
+          + '<td>' + escapeHtml(_lnInputFileDescription(it.path, it.label)) + '</td>'
+          + '<td><span class="ln-pl-input-file-value">读取文件内容</span></td>'
           + '<td>' + _lnFormatBytes(it.bytes_used) + ' / ' + _lnFormatBytes(it.bytes_total) + '</td>'
           + '<td>' + existIcon + '</td>'
           + '</tr>';
       }
+      var value = it.value === undefined || it.value === null ? '' : String(it.value);
       return '<tr>'
         + '<td>参数</td>'
         + '<td><code>' + escapeHtml(it.name || '') + '</code></td>'
-        + '<td colspan="2"><pre style="margin:0;white-space:pre-wrap;max-height:80px;overflow:auto">' + escapeHtml(String(it.value || '').slice(0, 500)) + '</pre></td>'
+        + '<td>' + escapeHtml(_lnInputParamDescription(it.name, value)) + '</td>'
+        + '<td><pre class="ln-pl-input-value">' + escapeHtml(value.slice(0, 500)) + '</pre></td>'
         + '<td>' + _lnFormatBytes(it.bytes_used) + '</td>'
+        + '<td>已传入</td>'
         + '</tr>';
     });
-    return '<table class="ln-pipeline-table">'
-      + '<thead><tr><th>类型</th><th>路径/名</th><th>说明</th><th>用量/全量</th><th>状态</th></tr></thead>'
+    return '<div class="ln-pl-input-help">参数是运行时直接传给该步骤的文本或数字；文件是该步骤读取的上游产物。下表将“含义说明”和“本次实际值”分开显示。</div>'
+      + '<table class="ln-pipeline-table ln-pl-input-table">'
+      + '<thead><tr><th>类型</th><th>输入名称</th><th>含义说明</th><th>本次实际值</th><th>用量 / 文件全量</th><th>状态</th></tr></thead>'
       + '<tbody>' + rows.join('') + '</tbody>'
       + '</table>';
   }
@@ -7182,6 +8125,30 @@
       + '<summary><span>' + escapeHtml(title) + '</span>' + meta + '<b>展开</b></summary>'
       + '<div class="ln-pl-fold-body">' + (bodyHtml || '') + '</div>'
       + '</details>';
+  }
+
+  function _lnDisplayParam(value) {
+    return value === undefined || value === null || value === '' ? '?' : String(value);
+  }
+
+  function _lnRenderCallParameters(params) {
+    params = params || {};
+    var fields = [
+      ['model', params.model],
+      ['thinking_mode', typeof params.thinking_mode === 'boolean' ? (params.thinking_mode ? '✓' : '✕') : params.thinking_mode],
+      ['temperature', params.temperature],
+      ['max_output_tokens', params.max_output_tokens],
+      ['timeout_seconds', params.timeout_seconds != null ? params.timeout_seconds + 's' : null],
+      ['max_retries', params.max_retries],
+      ['finish_reason', params.finish_reason],
+      ['cached', typeof params.cached === 'boolean' ? (params.cached ? '✓' : '✕') : params.cached],
+      ['duration', params.duration_seconds != null ? params.duration_seconds + 's' : null],
+      ['started', params.started_at]
+    ].filter(function(item) { return item[1] !== undefined && item[1] !== null && item[1] !== ''; });
+    if (!fields.length) return '<div class="empty" style="padding:0.4rem">暂无调用参数</div>';
+    return '<div class="ln-pl-meta">' + fields.map(function(item) {
+      return '<span><b>' + escapeHtml(item[0]) + ':</b> ' + escapeHtml(_lnDisplayParam(item[1])) + '</span>';
+    }).join('') + '</div>';
   }
 
   function _lnRenderTraceBlock(trace, fallbackPrompt) {
@@ -7227,15 +8194,7 @@
         meta: (trace.inputs || []).length ? (trace.inputs.length + ' 项') : '未记录'
       })
       + _lnPipelineFold('调用参数',
-        '<div class="ln-pl-meta">'
-          + '<span><b>model:</b> ' + escapeHtml(trace.model || '?') + '</span>'
-          + '<span><b>thinking_mode:</b> ' + (trace.thinking_mode ? '✓' : '✕') + '</span>'
-          + '<span><b>temperature:</b> ' + escapeHtml(String(trace.temperature || '?')) + '</span>'
-          + '<span><b>finish_reason:</b> ' + escapeHtml(trace.finish_reason || '?') + '</span>'
-          + '<span><b>cached:</b> ' + (trace.cached ? '✓' : '✕') + '</span>'
-          + '<span><b>duration:</b> ' + escapeHtml(String(trace.duration_seconds || '?')) + 's</span>'
-          + '<span><b>started:</b> ' + escapeHtml(trace.started_at || '') + '</span>'
-        + '</div>'
+        _lnRenderCallParameters(trace)
       )
       + _lnPipelineFold('完整提示词',
         '<div class="ln-pl-subhead">System prompt</div>'
@@ -7291,15 +8250,45 @@
       }
     } catch (_e) {}
 
-    var fallbackPrompt = null;
-    if (!trace && !subTraces.length) {
-      try { fallbackPrompt = await api('/api/long-novel/prompts/' + phaseId); } catch (_e) {}
-    }
+    var promptData = null;
+    try { promptData = await api('/api/long-novel/prompts/' + phaseId); } catch (_e) {}
 
-    var html = '';
-    if (trace) html = _lnRenderTraceBlock(trace, null);
-    else if (subTraces.length) html = '<div class="empty" style="padding:0.5rem;color:var(--muted)">主 trace 缺失，但找到 ' + subTraces.length + ' 个补齐批次 trace（见下方）</div>';
-    else html = _lnRenderTraceBlock(null, fallbackPrompt);
+    var allPhases = _lnPipelineSetupPhases.concat(_lnPipelineOutlinePhases);
+    var idx = allPhases.indexOf(phase);
+    var nextPhase = allPhases[idx + 1];
+    var isSetupStage = idx < _lnPipelineSetupPhases.length;
+    var stage = isSetupStage ? '设定阶段' : '大纲阶段';
+    var stagePhases = isSetupStage ? _lnPipelineSetupPhases : _lnPipelineOutlinePhases;
+    var stageIdx = stagePhases.indexOf(phase);
+    var inputs = trace ? (trace.inputs || []) : [];
+    var usage = (trace && trace.usage) || {};
+    var usageLine = 'input=' + (usage.input_tokens || 0) + ' · cached=' + (usage.cached_tokens || 0) + ' · output=' + (usage.output_tokens || 0);
+    var outputBody = trace
+      ? '<div class="ln-pl-meta"><span><b>token usage:</b> ' + escapeHtml(usageLine) + '</span></div>'
+        + '<div class="ln-pl-subhead">写入文件</div>'
+        + '<div>' + (trace.outputs && trace.outputs.length ? trace.outputs.map(function(o){ return '<code>' + escapeHtml(o) + '</code>'; }).join(' · ') : '<span class="empty">（未记录）</span>') + '</div>'
+        + '<div class="ln-pl-subhead">LLM 完整返回</div>'
+        + '<pre class="ln-pl-pre">' + escapeHtml(trace.output_text || '') + '</pre>'
+      : '<div class="empty" style="padding:0.4rem">尚无运行输出</div>';
+    var html = ''
+      + _lnPipelineFold('说明', '<div class="ln-pl-text">' + escapeHtml(phase.desc || '') + '</div>')
+      + _lnPipelineFold('流程信息',
+        '<div class="ln-pl-meta">'
+          + '<span><b>所属阶段：</b>' + escapeHtml(stage) + '</span>'
+          + '<span><b>顺序：</b>第 ' + (stageIdx + 1) + ' / ' + stagePhases.length + ' 步</span>'
+          + '<span><b>下一步：</b>' + escapeHtml(nextPhase ? nextPhase.label : '进入正文阶段') + '</span>'
+          + '<span><b>执行位置：</b><code>generator/long_novel/' + escapeHtml(phase.source || 'l0_book_setup.py') + '</code></span>'
+        + '</div>'
+      )
+      + _lnPipelineFold('输入', _lnRenderInputsTable(inputs), {
+        meta: inputs.length ? (inputs.length + ' 项') : '尚无运行数据',
+        className: 'is-inputs'
+      })
+      + _lnPipelineFold('调用参数', _lnRenderCallParameters(trace || (promptData && promptData.call_parameters)), {
+        meta: trace ? '最近一次真实运行' : '当前默认配置'
+      })
+      + _lnPipelineFold('输出', outputBody, {className: 'is-output'})
+      + _lnPipelineFold('提示词模板', _lnRenderChapterPromptBlock(promptData), {className: 'is-prompts'});
 
     if (subTraces.length) {
       html += '<div class="ln-pipeline-section">'
@@ -7320,16 +8309,14 @@
       +   '<h4>' + escapeHtml(phase.icon + ' ' + phase.label) + '</h4>'
       +   _lnPipelineStatusBadge(state.status || 'pending')
       +   (state.updated_at ? '<small style="color:var(--muted)">' + escapeHtml(state.updated_at) + '</small>' : '')
-      +   '<button class="btn-primary tiny" data-ln-prompt-view="' + escapeHtml(phaseId) + '">编辑提示词</button>'
       + '</div>'
       + html;
-    var promptBtn = detail.querySelector('[data-ln-prompt-view]');
-    if (promptBtn) {
+    detail.querySelectorAll('[data-ln-prompt-view]').forEach(function(promptBtn) {
       promptBtn.addEventListener('click', function(e) {
         e.stopPropagation();
         _showPromptModal(promptBtn.dataset.lnPromptView);
       });
-    }
+    });
   }
 
   // 每个章节 step 的输入/输出文件清单（用于链路 tab 的可折叠展示）
@@ -7461,6 +8448,10 @@
           + '<div class="ln-pl-subhead">提示：以上为该步骤依赖的上游产物清单；具体每章传入的截断后内容受 token 预算控制，详情请见源代码。</div>',
         { meta: (io.inputs || []).length + ' 项', className: 'is-inputs' }
       )
+      + _lnPipelineFold('调用参数',
+        '<div data-chstep-call-params><div class="empty" style="padding:0.5rem">加载调用参数...</div></div>',
+        { className: 'is-call-params' }
+      )
       + _lnPipelineFold('输出',
         '<div class="ln-pl-meta"><span><b>产物路径：</b><code>' + escapeHtml(io.output) + '</code></span></div>'
           + '<div data-chstep-output style="margin-top:0.5rem"><div class="empty" style="padding:0.5rem">加载最近一次运行结果...</div></div>',
@@ -7481,10 +8472,60 @@
 
   function _lnPromptVariableDescriptions(placeholders) {
     var desc = {
+      title: '当前书名',
+      genre: '当前作品题材',
+      genre_note: '题材方向的补充说明',
+      premise: '创建作品时填写的一句话梗概',
+      section_name: '当前要生成的世界观分区名称',
+      section_focus: '当前世界观分区需要重点覆盖的内容',
+      premise_text: '已生成的题材定位内容',
+      context_text: '当前步骤汇总后的上游设定内容',
+      char_list: '已生成的角色文件或角色名称列表',
+      faction_list: '已生成的势力文件或势力名称列表',
+      target_chapters: '全书计划章节数',
+      words_per_chapter: '每章目标字数',
+      all_settings: '题材、世界观、角色、势力和关系等完整设定',
+      volume_name: '当前卷名称',
+      vol_num: '当前卷序号',
+      ch_start: '当前卷起始章节号',
+      ch_end: '当前卷结束章节号',
+      chapter_count: '当前卷包含的章节数',
+      volume_words: '当前卷计划总字数',
+      plan_title: '当前卷或章节规划标题',
+      book_outline: '已生成的全书大纲',
+      volume_outline: '已生成的卷纲',
+      full_plan_brief: '全书规划的精简摘要',
+      outline_context: '生成章节细纲所需的大纲与设定上下文',
+      name: '当前角色或势力名称',
+      role: '当前角色在故事中的定位',
+      brief: '当前角色或势力的简要描述',
+      ftype: '当前势力的类型',
+      batch_start: '本批章节细纲的起始章节号',
+      batch_end: '本批章节细纲的结束章节号',
+      prev_outline: '上一批已生成的章节细纲',
+      start_ch: '追加规划的起始章节号',
+      end_ch: '追加规划的结束章节号',
+      old_target_chapters: '追加前的计划章节数',
+      new_target_chapters: '追加后的计划章节数',
+      extension_context: '追加章节规划使用的既有剧情和设定',
       chapter_number: '当前章节序号，例如 12',
       chapter_title: '当前章节标题',
       target_words: '本章目标字数',
-      context_sections: '系统整理后的上下文材料，例如前情、设定、角色、伏笔等'
+      context_sections: '系统整理后的上下文材料，例如前情、设定、角色、伏笔等',
+      draft: '当前步骤接收到的正文草稿',
+      current_words: '当前草稿字数',
+      shortfall: '距离目标字数还差多少字',
+      hit_text: '正文中命中的 AI 高频词或待处理特征',
+      outline: '当前章节对应的章节细纲',
+      context: '审查时使用的前文与设定上下文',
+      chapter_text: '当前章节正文',
+      continuity_rule: '连续性审查规则',
+      tracking_context: '长期记忆提取使用的追踪文件内容',
+      previous_chapter: '上一章正文或结尾片段',
+      character_profiles: '角色档案与当前角色状态',
+      suggestions: '审查或检测步骤给出的修改建议',
+      extra_prompt: '用户额外填写的修改要求',
+      source: '本次修改所依据的原正文',
     };
     var list = placeholders || [];
     if (!list.length) return '';
@@ -7499,7 +8540,10 @@
 
   function _lnRenderChapterPromptBlock(data) {
     if (!data || !data.ok) return '<div class="empty" style="padding:0.4rem">暂无提示词模板</div>';
-    var vars = (data.placeholders || []).map(function(p) { return '<code>{' + escapeHtml(p) + '}</code>'; }).join(' · ');
+    var vars = (data.placeholders || []).map(function(p) {
+      var description = _lnPromptPlaceholderDescription(p);
+      return '<code class="ln-prompt-variable" title="' + escapeHtml(description) + '" data-tooltip="' + escapeHtml(description) + '">{' + escapeHtml(p) + '}</code>';
+    }).join(' · ');
     return ''
       + '<div class="ln-pl-meta" style="margin-bottom:0.5rem">'
       +   '<span><b>System 提示词文件：</b><code>' + escapeHtml(data.system_file || '无') + '</code></span>'
@@ -7524,6 +8568,8 @@
     try {
       var data = await api('/api/long-novel/prompts/' + encodeURIComponent(stepId));
       holder.innerHTML = _lnRenderChapterPromptBlock(data);
+      var callParamsHolder = detail.querySelector('[data-chstep-call-params]');
+      if (callParamsHolder) callParamsHolder.innerHTML = _lnRenderCallParameters(data.call_parameters);
       holder.querySelectorAll('[data-ln-prompt-view]').forEach(function(btn) {
         btn.addEventListener('click', function(e) {
           e.stopPropagation();
@@ -7532,6 +8578,8 @@
       });
     } catch (err) {
       holder.innerHTML = '<div class="empty" style="padding:0.5rem">加载提示词失败：' + escapeHtml(err.message || String(err)) + '</div>';
+      var callParamsHolder = detail.querySelector('[data-chstep-call-params]');
+      if (callParamsHolder) callParamsHolder.innerHTML = '<div class="empty" style="padding:0.5rem">加载调用参数失败</div>';
     }
   }
 
@@ -7549,7 +8597,10 @@
         + '<table class="ln-pipeline-table" style="margin-top:0.4rem"><thead><tr><th>维度</th><th>判定</th><th>评语</th></tr></thead><tbody>' + dimRows + '</tbody></table>';
     }
     if (outputStepName === 'expand' || outputStepName === 'polish' || outputStepName === 'deslop') {
-      return _lnRenderDiffView(d.source_before || '', d.content || '', _lnDiffLabels(outputStepName));
+      return _lnRenderDiffView(d.source_before || '', d.content || '', _lnDiffLabels(outputStepName), {
+        before_words: d.source_word_count,
+        after_words: d.word_count || d.final_words,
+      });
     }
     var content = String(d.content || '');
     var words = d.word_count || d.final_words || 0;
@@ -7667,6 +8718,7 @@
     bindMonitor();
     bindOverviewExtras();
     bindPromptsPanel();
+    bindShortPromptModal();
     bindLongNovel();
     _lnBindPipelineToolbar();
     bindThemePoolPage();
@@ -8226,3 +9278,4 @@
 
   document.addEventListener('DOMContentLoaded', init);
 })();
+
