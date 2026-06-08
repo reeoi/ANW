@@ -163,13 +163,3 @@ python -m py_compile (Get-ChildItem generator,review_queue,cli -Recurse -Filter 
 ```bash
 rg -n "需要审计的关键词"
 ```
-
-## 发布材料
-
-项目发布视频稿位于：
-
-```text
-docs/project_release_video_script.html
-```
-
-它按“分镜 / 口播 / 屏幕提示”三栏组织，可直接在浏览器中打开，用于录制项目发布视频或整理发布文案。
