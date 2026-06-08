@@ -97,11 +97,11 @@ def test_write_env_field_appends_unknown_key(env_file: Path) -> None:
 
 
 def test_write_env_field_quotes_when_value_has_spaces(env_file: Path) -> None:
-    write_env_field(env_file, "ANP_NOTE", "hello world #with hash")
+    write_env_field(env_file, "ANW_NOTE", "hello world #with hash")
     text = env_file.read_text(encoding="utf-8")
-    assert 'ANP_NOTE="hello world #with hash"' in text
+    assert 'ANW_NOTE="hello world #with hash"' in text
     # 读回时应能解析回原值
-    assert read_env(env_file)["ANP_NOTE"] == "hello world #with hash"
+    assert read_env(env_file)["ANW_NOTE"] == "hello world #with hash"
 
 
 def test_write_env_field_quotes_empty_string(env_file: Path) -> None:

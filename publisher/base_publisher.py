@@ -145,7 +145,7 @@ class BasePublisher:
         else:
             # Keep a deterministic artifact even before a page exists (e.g. missing login state).
             path.write_bytes(
-                b"ANP safe pause evidence placeholder. No browser page was available for screenshot.\n"
+                b"ANW safe pause evidence placeholder. No browser page was available for screenshot.\n"
             )
         self.logger.info("screenshot_saved platform=%s story_id=%s path=%s", self.platform_name, story_id, path)
         return str(path)
@@ -226,9 +226,9 @@ class BasePublisher:
         self.logger.warning("publisher_notification platform=%s message=%s", self.platform_name, message)
 
     def _build_logger(self) -> logging.Logger:
-        logger = logging.getLogger(f"anp.publisher.{self.platform_name}")
+        logger = logging.getLogger(f"anw.publisher.{self.platform_name}")
         logger.setLevel(getattr(logging, str(self.config.data.get("logging", {}).get("level", "INFO")).upper(), logging.INFO))
-        log_path = Path(str(self.config.data.get("logging", {}).get("file", "logs/anp.log")))
+        log_path = Path(str(self.config.data.get("logging", {}).get("file", "logs/anw.log")))
         log_path.parent.mkdir(parents=True, exist_ok=True)
         if not any(isinstance(handler, logging.FileHandler) and Path(handler.baseFilename) == log_path.resolve() for handler in logger.handlers):
             handler = logging.FileHandler(log_path, encoding="utf-8")

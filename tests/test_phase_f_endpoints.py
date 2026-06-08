@@ -88,7 +88,7 @@ def env(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> dict[str, Path]:
     cfg_path = tmp_path / "config.yaml"
-    db_path = tmp_path / "anp.sqlite3"
+    db_path = tmp_path / "anw.sqlite3"
     cfg_path.write_text(
         f"""
 deepseek:
@@ -110,14 +110,14 @@ scheduler:
 database:
   sqlite_path: "{str(db_path).replace('\\', '/')}"
 logging:
-  file: "{str(tmp_path / 'anp.log').replace('\\', '/')}"
+  file: "{str(tmp_path / 'anw.log').replace('\\', '/')}"
 cost_limits:
   monthly_budget_cny: 100
 """.strip(),
         encoding="utf-8",
     )
-    monkeypatch.setenv("ANP_CONFIG", str(cfg_path))
-    monkeypatch.setenv("ANP_SQLITE_PATH", str(db_path))
+    monkeypatch.setenv("ANW_CONFIG", str(cfg_path))
+    monkeypatch.setenv("ANW_SQLITE_PATH", str(db_path))
     return {"cfg": cfg_path, "db": db_path, "tmp": tmp_path}
 
 

@@ -1,4 +1,4 @@
-"""ANP 系统托盘主程序 (Phase 2)。
+"""ANW 系统托盘主程序 (Phase 2)。
 
 职责：
 
@@ -12,7 +12,7 @@
 CLI:
 
     python tray_app.py        # 调试模式 (主进程留在前台)
-    pythonw tray_app.py       # 生产模式 (无控制台,被 start_anp.bat 调用)
+    pythonw tray_app.py       # 生产模式 (无控制台,被 start_anw.bat 调用)
 """
 
 from __future__ import annotations
@@ -32,9 +32,11 @@ import webbrowser
 from pathlib import Path
 from typing import Any, Callable
 
+from config_loader import get_env
+
 PROJECT_ROOT = Path(__file__).resolve().parent
 DEFAULT_HOST = "127.0.0.1"
-DEFAULT_PORT = int(os.environ.get("ANP_REVIEW_PORT", "18000") or 18000)
+DEFAULT_PORT = int(get_env("ANW_REVIEW_PORT", "18000") or 18000)
 
 logger = logging.getLogger(__name__)
 
@@ -53,8 +55,8 @@ def _setup_tray_log_file() -> Path:
     handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s [%(name)s] %(message)s"))
     handler.setLevel(logging.DEBUG)
     root = logging.getLogger()
-    if not any(getattr(h, "_anp_tray", False) for h in root.handlers):
-        handler._anp_tray = True  # type: ignore[attr-defined]
+    if not any(getattr(h, "_anw_tray", False) for h in root.handlers):
+        handler._anw_tray = True  # type: ignore[attr-defined]
         root.addHandler(handler)
         root.setLevel(logging.DEBUG)
     return tray_log
@@ -120,10 +122,10 @@ def launch_uvicorn(host: str, port: int, project_root: Path | None = None) -> su
     ]
     # Hot reload: 默认关闭。watchfiles 子进程在 socket inheritance 下
     # 容易残留孤儿(父挂掉但子还监听端口),让托盘重启失败。
-    # 需要时显式设置 ANP_HOT_RELOAD=1。
-    if os.getenv("ANP_HOT_RELOAD", "0").strip().lower() in ("1", "true", "yes"):
+    # 需要时显式设置 ANW_HOT_RELOAD=1。
+    if get_env("ANW_HOT_RELOAD", "0").strip().lower() in ("1", "true", "yes"):
         args.append("--reload")
-        logger.info("ANP_HOT_RELOAD enabled: uvicorn --reload is active")
+        logger.info("ANW_HOT_RELOAD enabled: uvicorn --reload is active")
     creation = 0
     if sys.platform == "win32":
         creation = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -234,7 +236,7 @@ class HealthClient:
         self._thread: threading.Thread | None = None
 
     def start(self) -> None:
-        self._thread = threading.Thread(target=self._loop, daemon=True, name="anp-health")
+        self._thread = threading.Thread(target=self._loop, daemon=True, name="anw-health")
         self._thread.start()
 
     def stop(self) -> None:
@@ -265,7 +267,7 @@ class NotificationStreamClient:
         self._thread: threading.Thread | None = None
 
     def start(self) -> None:
-        self._thread = threading.Thread(target=self._loop, daemon=True, name="anp-sse")
+        self._thread = threading.Thread(target=self._loop, daemon=True, name="anw-sse")
         self._thread.start()
 
     def stop(self) -> None:
@@ -342,11 +344,11 @@ class TrayApp:
             webbrowser.open(self.base_url)
         except Exception as exc:
             logger.warning("webbrowser.open failed: %s", exc)
-        # 后台异步拉起 Chrome CDP 端口（A1：anp 启动即确保 Chrome 在线）
+        # 后台异步拉起 Chrome CDP 端口（A1：anw 启动即确保 Chrome 在线）
         threading.Thread(
             target=self._ensure_chrome_background,
             daemon=True,
-            name="anp-chrome-launcher",
+            name="anw-chrome-launcher",
         ).start()
         logger.info("entering icon.run loop")
         self.icon.run()
@@ -373,9 +375,9 @@ class TrayApp:
             pystray.MenuItem("🚪 退出", lambda: self._quit()),
         )
         self.icon = pystray.Icon(
-            "ANP",
+            "ANW",
             icon=make_icon("gray"),
-            title="ANP（启动中…）",
+            title="ANW（启动中…）",
             menu=menu,
         )
 
@@ -418,7 +420,7 @@ class TrayApp:
             if not _force_release_port(self.host, self.port, timeout=10.0):
                 logger.error("Port %s could not be released; aborting restart", self.port)
                 try:
-                    self.icon.notify("端口无法释放，重启失败", "ANP")
+                    self.icon.notify("端口无法释放，重启失败", "ANW")
                 except Exception:
                     pass
                 return
@@ -430,7 +432,7 @@ class TrayApp:
                         self.uvicorn_proc = proc
                         logger.info("Uvicorn relaunched (attempt %d, pid=%s)", attempt, self.uvicorn_proc.pid)
                         try:
-                            self.icon.notify("服务已重启", "ANP")
+                            self.icon.notify("服务已重启", "ANW")
                         except Exception:
                             pass
                         return
@@ -478,7 +480,7 @@ class TrayApp:
                 pass
             os._exit(0)
 
-        threading.Thread(target=_shutdown, daemon=True, name="anp-shutdown").start()
+        threading.Thread(target=_shutdown, daemon=True, name="anw-shutdown").start()
 
         if self.icon is not None:
             try:
@@ -496,7 +498,7 @@ class TrayApp:
             logger.warning("Quit watchdog: forcing os._exit(0)")
             os._exit(0)
 
-        threading.Thread(target=_hard_exit, daemon=True, name="anp-quit-watchdog").start()
+        threading.Thread(target=_hard_exit, daemon=True, name="anw-quit-watchdog").start()
 
     # -- callbacks --
 
@@ -505,13 +507,13 @@ class TrayApp:
 
         status = str(payload.get("status") or "").lower()
         if status == "ok":
-            color, title = "green", "ANP（运行中）"
+            color, title = "green", "ANW（运行中）"
         elif status == "degraded":
-            color, title = "yellow", "ANP（运行中，有警告）"
+            color, title = "yellow", "ANW（运行中，有警告）"
         elif status in {"down", "unreachable"}:
-            color, title = "red", "ANP（连接断开）"
+            color, title = "red", "ANW（连接断开）"
         else:
-            color, title = "gray", "ANP（启动中…）"
+            color, title = "gray", "ANW（启动中…）"
         if self.icon is not None:
             self.icon.icon = make_icon(color)
             self.icon.title = title
@@ -524,7 +526,7 @@ class TrayApp:
             return
         if self.icon is not None:
             try:
-                self.icon.notify(payload.get("message") or "", payload.get("title") or "ANP")
+                self.icon.notify(payload.get("message") or "", payload.get("title") or "ANW")
             except Exception:  # pragma: no cover - GUI dependent
                 pass
         # 处理重启请求
@@ -533,7 +535,7 @@ class TrayApp:
 
 
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="ANP 托盘程序")
+    parser = argparse.ArgumentParser(description="ANW 托盘程序")
     parser.add_argument("--host", default=DEFAULT_HOST)
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     return parser.parse_args()

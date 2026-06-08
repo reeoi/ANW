@@ -36,7 +36,7 @@ class FansqAutoPublisher:
 
     def __init__(self, headless: bool = True) -> None:
         self.headless = headless
-        self.logger = logging.getLogger("anp.publisher.fansq_auto")
+        self.logger = logging.getLogger("anw.publisher.fansq_auto")
 
         # Browser / page references — populated by start_browser
         self.browser: Any | None = None

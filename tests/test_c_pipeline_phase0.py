@@ -82,7 +82,7 @@ def _config(tmp_path: Path) -> LoadedConfig:
                 "thinking_mode": True,
                 "mock": True,
             },
-            "database": {"sqlite_path": str(tmp_path / "anp.sqlite3")},
+            "database": {"sqlite_path": str(tmp_path / "anw.sqlite3")},
         },
         path=Path("config.yaml"),
     )

@@ -1,4 +1,4 @@
-"""ANP 通知总线 (Phase 2)。
+"""ANW 通知总线 (Phase 2)。
 
 scheduler / publisher / cost_limits 等模块通过 :func:`bus.publish` 发出事件,
 Web UI 通过 SSE (``/api/notifications/stream``) 订阅,托盘程序通过 SSE 客户端

@@ -1,19 +1,20 @@
-"""Static assets for the ANP Local Studio dashboard.
+"""Static assets for the ANW dashboard.
 
 Assets are stored in separate files under templates/ and static/ directories.
 By default, files are **re-read from disk on every access** so you can edit
 CSS/HTML/JS and see changes immediately — just refresh the browser.
 
-Set ``ANP_HOT_RELOAD=0`` to disable and cache at import time (production mode).
+Set ``ANW_HOT_RELOAD=0`` to disable and cache at import time (production mode).
 """
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
+from config_loader import get_env
+
 _HERE = Path(__file__).resolve().parent
-_HOT_RELOAD = os.getenv("ANP_HOT_RELOAD", "1").strip().lower() not in ("0", "false", "no")
+_HOT_RELOAD = get_env("ANW_HOT_RELOAD", "1").strip().lower() not in ("0", "false", "no")
 
 
 def _read_asset(rel_path: str) -> str:

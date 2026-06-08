@@ -228,7 +228,7 @@ def import_fanqie_trends(date_str: str | None = None) -> dict[str, Any]:
     for url in [raw_url, gh_pages_url]:
         try:
             import urllib.request
-            req = urllib.request.Request(url, headers={"User-Agent": "ANP/1.0"})
+            req = urllib.request.Request(url, headers={"User-Agent": "ANW/1.0"})
             with urllib.request.urlopen(req, timeout=30) as resp:
                 data = _json.loads(resp.read().decode("utf-8"))
             # Cache locally
@@ -307,7 +307,7 @@ def get_fanqie_dates() -> list[str]:
         import json as _json
         import urllib.request
         url = "https://raw.githubusercontent.com/reeoi/FanqieRankTracker/main/data/dates.json"
-        req = urllib.request.Request(url, headers={"User-Agent": "ANP/1.0"})
+        req = urllib.request.Request(url, headers={"User-Agent": "ANW/1.0"})
         with urllib.request.urlopen(req, timeout=15) as resp:
             dates_data = _json.loads(resp.read().decode())
         return dates_data.get("dates", [])
@@ -345,7 +345,7 @@ def get_category_trend_analysis() -> list[dict[str, Any]]:
     import sqlite3
     from pathlib import Path as _Path
 
-    db_path = _Path(__file__).resolve().parents[2] / "data" / "anp.sqlite3"
+    db_path = _Path(__file__).resolve().parents[2] / "data" / "anw.sqlite3"
     if not db_path.exists():
         return []
 

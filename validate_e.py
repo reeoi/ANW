@@ -1,6 +1,6 @@
 
 # 字数统计
-final_path = "D:\\Development_alma\\anp\\data\\works\\1\\5_最终稿.md"
+final_path = "D:\\Development_alma\\anw\\data\\works\\1\\5_最终稿.md"
 text = open(final_path, encoding="utf-8").read()
 
 # 中文字符数

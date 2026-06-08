@@ -1,6 +1,6 @@
 # 番茄小说发布工作流（Sprint 7）
 
-本文档描述 ANP 通过 Playwright 发布到番茄小说（Fanqie Novel）的本地 MVP 工作流、人工登录态准备、dry-run 验证、风险暂停策略和禁止绕过原则。策略与 README 的“番茄验证码/滑块/登录态缺失策略”保持一致。
+本文档描述 ANW 通过 Playwright 发布到番茄小说（Fanqie Novel）的本地 MVP 工作流、人工登录态准备、dry-run 验证、风险暂停策略和禁止绕过原则。策略与 README 的“番茄验证码/滑块/登录态缺失策略”保持一致。
 
 ## 1. 前置条件
 
@@ -22,7 +22,7 @@
        draft_url: "https://fanqienovel.com/"
        pause_on_risk_control: true
    logging:
-     file: "logs/anp.log"
+     file: "logs/anw.log"
      screenshot_dir: "logs/screenshots"
    ```
 
@@ -30,7 +30,7 @@
 
 ## 2. 人工登录 / 会话准备
 
-番茄小说可能要求短信、扫码、验证码、滑块或其他安全验证。ANP 不保存明文密码，不自动登录，也不尝试绕过验证。推荐由人工先准备 Playwright storage state：
+番茄小说可能要求短信、扫码、验证码、滑块或其他安全验证。ANW 不保存明文密码，不自动登录，也不尝试绕过验证。推荐由人工先准备 Playwright storage state：
 
 ```bash
 python -m playwright codegen https://fanqienovel.com/ --save-storage=data/browser/fansq_state.json
@@ -95,7 +95,7 @@ python -m cli.publish --dry-run --dry-run-outcome paused --commit-dry-run
 
 1. 立即停止后续自动点击、填充或提交。
 2. 保存截图或占位证据到 `logs/screenshots`（或配置的 `logging.screenshot_dir`）。
-3. 写入 `logs/anp.log`（或配置的 `logging.file`），包含平台、story_id、原因、截图路径。
+3. 写入 `logs/anw.log`（或配置的 `logging.file`），包含平台、story_id、原因、截图路径。
 4. 在 CLI 输出通知，说明需要人工处理；当前 MVP 未接入 Telegram/飞书等外部通知，外部通知列为后续范围。
 5. 保持队列为 `publish_paused`（真实模式）或在 dry-run 默认保留状态，等待人工完成登录/验证/页面复核后再重试。
 
@@ -117,9 +117,9 @@ python -m cli.publish --dry-run --dry-run-outcome paused --commit-dry-run
 
 ## 7. 排障位置
 
-- 日志：`logs/anp.log`
+- 日志：`logs/anw.log`
 - 截图：`logs/screenshots/`
-- 配置：`config.yaml` 或 `ANP_CONFIG`
+- 配置：`config.yaml` 或 `ANW_CONFIG`
 - 队列状态：SQLite `stories.status`
 
 如果截图显示验证码、滑块或登录页，人工处理后重新运行发布命令；不要修改代码去绕过风控。

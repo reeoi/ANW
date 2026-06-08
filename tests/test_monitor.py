@@ -105,7 +105,7 @@ def test_log_cost_endpoint_uses_general_api_usage(tmp_path: Path, monkeypatch) -
         cached_tokens=300,
         cost_cny=0.0028,
     )
-    monkeypatch.setenv("ANP_SQLITE_PATH", str(db_path))
+    monkeypatch.setenv("ANW_SQLITE_PATH", str(db_path))
 
     response = _request("GET", "/api/logs/costs")
 
@@ -130,7 +130,7 @@ def test_monitor_endpoint_returns_aggregates(tmp_path: Path, monkeypatch) -> Non
         cost_cny=0.001,
     )
     record_pipeline_event(db_path, kind="generate", status="success", story_id=1)
-    monkeypatch.setenv("ANP_SQLITE_PATH", str(db_path))
+    monkeypatch.setenv("ANW_SQLITE_PATH", str(db_path))
 
     response = _request("GET", "/api/monitor")
 
@@ -145,7 +145,7 @@ def test_monitor_endpoint_returns_aggregates(tmp_path: Path, monkeypatch) -> Non
 
 def test_health_endpoint(tmp_path: Path, monkeypatch) -> None:
     db_path = _prepare_db(tmp_path)
-    monkeypatch.setenv("ANP_SQLITE_PATH", str(db_path))
+    monkeypatch.setenv("ANW_SQLITE_PATH", str(db_path))
     response = _request("GET", "/api/health")
     assert response["status"] == 200
     body = json.loads(response["body"])

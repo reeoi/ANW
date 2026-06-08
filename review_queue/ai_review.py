@@ -20,7 +20,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from config_loader import LoadedConfig, load_from_environment
+from config_loader import LoadedConfig, get_env, load_from_environment
 from generator.api_client import DeepSeekClient, provider_defaults
 from review_queue.db import (
     get_story,
@@ -145,19 +145,19 @@ def load_ai_review_settings(config: LoadedConfig | None = None) -> AIReviewSetti
         db_path = None
 
     return AIReviewSettings(
-        approval_threshold=_env_int("ANP_AI_REVIEW_THRESHOLD", int(audit.get("approval_threshold") or 90)),
-        max_rewrite_attempts=max(0, _env_int("ANP_MAX_REWRITE_ATTEMPTS", int(audit.get("max_rewrite_attempts") or 3))),
+        approval_threshold=_env_int("ANW_AI_REVIEW_THRESHOLD", int(audit.get("approval_threshold") or 90)),
+        max_rewrite_attempts=max(0, _env_int("ANW_MAX_REWRITE_ATTEMPTS", int(audit.get("max_rewrite_attempts") or 3))),
         rewrite_strategy=str(
-            os.getenv("ANP_AI_REVIEW_REWRITE_STRATEGY")
+            get_env("ANW_AI_REVIEW_REWRITE_STRATEGY")
             or audit.get("rewrite_strategy")
             or "phase_4_5_only"
         ),
         provider=provider,
         protocol=str(deepseek.get("protocol") or defaults["protocol"]),
-        model=os.getenv("ANP_AI_REVIEW_MODEL") or str(audit.get("model") or deepseek.get("model") or defaults["model"]),
-        temperature=_env_float("ANP_AI_REVIEW_TEMPERATURE", float(audit.get("temperature") or 0.3)),
+        model=get_env("ANW_AI_REVIEW_MODEL") or str(audit.get("model") or deepseek.get("model") or defaults["model"]),
+        temperature=_env_float("ANW_AI_REVIEW_TEMPERATURE", float(audit.get("temperature") or 0.3)),
         timeout_seconds=_env_int(
-            "ANP_AI_REVIEW_TIMEOUT_SECONDS",
+            "ANW_AI_REVIEW_TIMEOUT_SECONDS",
             int(audit.get("timeout_seconds") or deepseek.get("timeout_seconds") or 120),
         ),
         api_key=api_key,
@@ -452,7 +452,7 @@ def _call_deepseek(prompt: str, settings: AIReviewSettings) -> str:
                         "max_retries": 1,
                         "mock": False,
                     },
-                    "database": {"sqlite_path": settings.metrics_db_path or "data/anp.sqlite3"},
+                    "database": {"sqlite_path": settings.metrics_db_path or "data/anw.sqlite3"},
                 },
                 path=Path("ai-review-runtime"),
             )
@@ -526,7 +526,7 @@ def _config_with_threshold(config: LoadedConfig, threshold: int) -> LoadedConfig
 
 
 def _env_int(name: str, default: int) -> int:
-    value = os.getenv(name)
+    value = get_env(name)
     if value in (None, ""):
         return default
     try:
@@ -536,7 +536,7 @@ def _env_int(name: str, default: int) -> int:
 
 
 def _env_float(name: str, default: float) -> float:
-    value = os.getenv(name)
+    value = get_env(name)
     if value in (None, ""):
         return default
     try:

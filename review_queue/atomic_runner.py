@@ -338,7 +338,7 @@ def kick_off_async(
         except Exception:
             logger.exception("Async atomic task crashed")
 
-    thread = threading.Thread(target=_target, daemon=True, name="anp-atomic-runner")
+    thread = threading.Thread(target=_target, daemon=True, name="anw-atomic-runner")
     thread.start()
     return story_id
 

@@ -137,7 +137,7 @@ def _migrate_add_cost_log_story_title(connection: sqlite3.Connection) -> None:
 def get_database_path(config: LoadedConfig) -> Path:
     """Return the configured SQLite path."""
 
-    return Path(str(config.data.get("database", {}).get("sqlite_path", "data/anp.sqlite3")))
+    return Path(str(config.data.get("database", {}).get("sqlite_path", "data/anw.sqlite3")))
 
 
 def insert_story(db_path: str | Path, story: Story) -> int:

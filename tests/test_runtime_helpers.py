@@ -26,7 +26,7 @@ def _config(tmp_path: Path) -> LoadedConfig:
             "runtime": {"dry_run": True, "project_root": str(tmp_path)},
             "deepseek": {"api_key": "", "mock": True},
             "database": {
-                "sqlite_path": str(tmp_path / "anp.sqlite3"),
+                "sqlite_path": str(tmp_path / "anw.sqlite3"),
                 "backup_dir": str(tmp_path / "backups"),
             },
             "publisher": {
@@ -36,7 +36,7 @@ def _config(tmp_path: Path) -> LoadedConfig:
                 },
             },
             "cost_limits": {"monthly_budget_cny": 500},
-            "logging": {"level": "INFO", "file": str(tmp_path / "anp.log")},
+            "logging": {"level": "INFO", "file": str(tmp_path / "anw.log")},
         },
         path=Path("config.yaml"),
     )
@@ -48,7 +48,7 @@ def _config(tmp_path: Path) -> LoadedConfig:
 def test_configure_logging_creates_file(tmp_path: Path) -> None:
     config = _config(tmp_path)
     log_file = runtime_helpers.configure_logging(config)
-    assert log_file == Path(str(tmp_path / "anp.log"))
+    assert log_file == Path(str(tmp_path / "anw.log"))
     assert log_file.parent.exists()
 
 
@@ -115,12 +115,12 @@ def test_recent_log_lines_empty_when_file_missing(tmp_path: Path) -> None:
     config = _config(tmp_path)
     log_file, lines = runtime_helpers.recent_log_lines(config)
     assert lines == []
-    assert log_file == Path(str(tmp_path / "anp.log"))
+    assert log_file == Path(str(tmp_path / "anw.log"))
 
 
 def test_recent_log_lines_tail(tmp_path: Path) -> None:
     config = _config(tmp_path)
-    log_file = Path(str(tmp_path / "anp.log"))
+    log_file = Path(str(tmp_path / "anw.log"))
     log_file.write_text("a\nb\nc\nd\ne\n", encoding="utf-8")
     _, lines = runtime_helpers.recent_log_lines(config, max_lines=3)
     assert lines == ["c", "d", "e"]
@@ -128,7 +128,7 @@ def test_recent_log_lines_tail(tmp_path: Path) -> None:
 
 def test_recent_log_lines_returns_timestamped_blocks_newest_first(tmp_path: Path) -> None:
     config = _config(tmp_path)
-    log_file = Path(str(tmp_path / "anp.log"))
+    log_file = Path(str(tmp_path / "anw.log"))
     log_file.write_text(
         "2026-06-01 10:00:00,000 INFO first\n"
         "2026-06-01 10:00:01,000 ERROR second\n"

@@ -35,7 +35,7 @@ router = APIRouter(prefix="/api/themes", tags=["themes"])
 
 def _db_path() -> Path:
     config = load_from_environment()
-    return initialize_database(config) or Path("data/anp.sqlite3")
+    return initialize_database(config) or Path("data/anw.sqlite3")
 
 
 async def _json_payload(request: Request) -> dict[str, Any]:

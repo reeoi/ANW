@@ -3,156 +3,222 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>ANP 项目发布视频解说稿</title>
+  <title>ANW（Auto Novel Writer）项目发布视频解说稿</title>
   <style>
     :root {
-      --bg: #f6f3ec;
-      --ink: #1f2428;
-      --muted: #687079;
-      --line: #d9d2c4;
+      --bg: #f7f5f0;
+      --ink: #202428;
+      --muted: #66717c;
+      --line: #d8d2c6;
       --paper: #fffdf8;
-      --accent: #236b5a;
-      --accent-2: #a64f3c;
-      --dark: #171b1f;
+      --green: #1f6b57;
+      --red: #a84d3d;
+      --blue: #315f8c;
+      --dark: #161a1d;
     }
+
     * { box-sizing: border-box; }
+
     body {
       margin: 0;
       background: var(--bg);
       color: var(--ink);
-      font-family: "Microsoft YaHei", "Noto Sans SC", sans-serif;
-      line-height: 1.65;
+      font-family: "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+      line-height: 1.72;
     }
+
     header {
-      min-height: 72vh;
+      min-height: 68vh;
       display: grid;
       align-items: end;
-      padding: 8vw 6vw;
-      background:
-        linear-gradient(135deg, rgba(35,107,90,.92), rgba(31,36,40,.78)),
-        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1200' height='800'%3E%3Crect width='1200' height='800' fill='%23236b5a'/%3E%3Cg fill='none' stroke='%23fff' stroke-opacity='.18'%3E%3Cpath d='M120 120h960v560H120z'/%3E%3Cpath d='M200 220h420M200 300h700M200 380h520M200 460h780M200 540h360'/%3E%3Cpath d='M760 210h230v260H760zM800 520h190'/%3E%3C/g%3E%3C/svg%3E");
-      background-size: cover;
+      padding: 8vw 6vw 6vw;
       color: #fffdf8;
+      background:
+        linear-gradient(90deg, rgba(22, 26, 29, .86), rgba(31, 107, 87, .74)),
+        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1400' height='820' viewBox='0 0 1400 820'%3E%3Crect width='1400' height='820' fill='%23202428'/%3E%3Cg fill='none' stroke='%23fffdf8' stroke-opacity='.22'%3E%3Cpath d='M120 135h620v84H120zM120 255h620v84H120zM120 375h620v84H120zM120 495h620v84H120zM850 135h360v444H850z'/%3E%3Cpath d='M165 177h390M165 297h500M165 417h455M165 537h330M895 190h240M895 260h190M895 330h270M895 400h160'/%3E%3C/g%3E%3C/svg%3E");
+      background-size: cover;
+      background-position: center;
     }
+
     .hero {
       max-width: 980px;
     }
+
     .eyebrow {
+      color: #f0c96a;
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: 0;
       text-transform: uppercase;
-      letter-spacing: .18em;
-      font-size: 13px;
-      opacity: .78;
     }
+
+    h1, h2, h3, p {
+      margin-top: 0;
+    }
+
     h1 {
-      margin: 18px 0;
-      font-size: clamp(42px, 7vw, 92px);
-      line-height: 1;
+      margin-bottom: 18px;
+      font-size: clamp(42px, 7vw, 84px);
+      line-height: 1.02;
       letter-spacing: 0;
     }
+
     .lead {
       max-width: 760px;
-      font-size: clamp(18px, 2vw, 25px);
-      color: rgba(255,253,248,.9);
+      margin-bottom: 0;
+      color: rgba(255, 253, 248, .88);
+      font-size: clamp(18px, 2.2vw, 26px);
     }
+
     main {
-      max-width: 1180px;
+      width: min(1180px, calc(100% - 32px));
       margin: 0 auto;
-      padding: 56px 24px 80px;
+      padding: 40px 0 72px;
     }
+
     .meta-grid {
       display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 1px;
-      background: var(--line);
-      border: 1px solid var(--line);
-      margin: -96px 0 48px;
-      position: relative;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+      margin-bottom: 46px;
     }
+
     .meta-card {
+      min-height: 118px;
+      padding: 18px;
       background: var(--paper);
-      padding: 24px;
-      min-height: 132px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
     }
+
     .meta-card b {
       display: block;
-      font-size: 28px;
-      color: var(--accent);
       margin-bottom: 8px;
+      color: var(--green);
+      font-size: 20px;
     }
+
+    .meta-card span {
+      color: var(--muted);
+      font-size: 14px;
+    }
+
     .section-title {
       display: flex;
       align-items: end;
       justify-content: space-between;
-      gap: 24px;
-      border-bottom: 1px solid var(--line);
-      padding-bottom: 18px;
-      margin: 56px 0 24px;
+      gap: 18px;
+      margin-bottom: 16px;
+      border-bottom: 2px solid var(--dark);
     }
-    h2 {
-      margin: 0;
-      font-size: clamp(28px, 4vw, 48px);
-      line-height: 1.08;
+
+    .section-title h2 {
+      margin-bottom: 10px;
+      font-size: clamp(28px, 3vw, 42px);
       letter-spacing: 0;
     }
+
     .runtime {
-      color: var(--accent-2);
-      font-family: Consolas, "Microsoft YaHei", monospace;
+      margin-bottom: 14px;
+      color: var(--muted);
+      font-size: 14px;
       white-space: nowrap;
     }
+
     .script {
       display: grid;
-      gap: 16px;
+      gap: 14px;
     }
+
     .scene {
       display: grid;
-      grid-template-columns: 120px 1.2fr 1fr;
-      gap: 1px;
-      background: var(--line);
-      border: 1px solid var(--line);
-    }
-    .scene > div {
+      grid-template-columns: 120px minmax(0, 1fr) minmax(0, 1fr);
+      gap: 14px;
+      padding: 16px;
       background: var(--paper);
-      padding: 20px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
     }
+
     .time {
-      font-family: Consolas, monospace;
-      color: var(--accent);
-      font-weight: 700;
+      color: var(--red);
+      font-weight: 800;
+      font-variant-numeric: tabular-nums;
     }
-    .voice {
-      font-size: 18px;
-    }
+
+    .voice,
     .screen {
-      color: var(--muted);
-      font-size: 15px;
+      min-width: 0;
+      color: #2d3338;
+      overflow-wrap: anywhere;
     }
+
     .shot-label {
       display: inline-block;
-      margin-bottom: 8px;
-      color: var(--accent-2);
-      font-size: 12px;
-      letter-spacing: .12em;
-      text-transform: uppercase;
+      margin-bottom: 6px;
+      color: var(--blue);
+      font-size: 13px;
+      font-weight: 800;
     }
+
     .closing {
-      margin-top: 56px;
-      padding: 36px;
-      background: var(--dark);
+      margin-top: 34px;
+      padding: 28px;
       color: #fffdf8;
+      background: var(--dark);
+      border-radius: 8px;
     }
-    .closing h2 { color: #fffdf8; }
-    .closing p { max-width: 760px; color: rgba(255,253,248,.82); }
-    @media (max-width: 820px) {
-      header { min-height: 58vh; }
-      .meta-grid { grid-template-columns: 1fr 1fr; margin-top: -64px; }
-      .scene { grid-template-columns: 1fr; }
-      .scene > div { padding: 18px; }
+
+    .closing h2 {
+      margin-bottom: 10px;
+      font-size: 28px;
     }
-    @media (max-width: 520px) {
-      main { padding-inline: 16px; }
-      .meta-grid { grid-template-columns: 1fr; }
-      .section-title { display: block; }
-      .runtime { display: block; margin-top: 8px; }
+
+    .closing p {
+      max-width: 900px;
+      margin-bottom: 0;
+      color: rgba(255, 253, 248, .86);
+      font-size: 18px;
+    }
+
+    @media (max-width: 900px) {
+      header {
+        min-height: 58vh;
+      }
+
+      .meta-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .section-title {
+        display: block;
+      }
+
+      .runtime {
+        display: block;
+        margin-bottom: 12px;
+        white-space: normal;
+      }
+
+      .scene {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 560px) {
+      main {
+        width: min(100% - 20px, 1180px);
+      }
+
+      .meta-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .scene,
+      .meta-card,
+      .closing {
+        padding: 14px;
+      }
     }
   </style>
 </head>
@@ -160,8 +226,8 @@
   <header>
     <div class="hero">
       <div class="eyebrow">Product Release Script</div>
-      <h1>ANP 本地小说生产系统</h1>
-      <p class="lead">一条从题材、生成、审查到成稿管理的本地流水线，让短篇和长篇创作都能被看见、被追踪、被持续优化。</p>
+      <h1>ANW · Auto Novel Writer</h1>
+      <p class="lead">本地优先的小说创作、审核与管理工作台，让短篇和长篇流程都能被看见、被追踪、被持续优化。</p>
     </div>
   </header>
 
@@ -178,17 +244,18 @@
         <h2>视频解说稿</h2>
         <span class="runtime">建议语速：每分钟 220-260 字</span>
       </div>
+
       <div class="script">
         <article class="scene">
           <div class="time">00:00-00:20</div>
-          <div class="voice"><span class="shot-label">口播</span><br>大家好，这是 ANP，一个本地优先的小说创作与审核工作台。它不是单次生成工具，而是一套可以长期运行的创作流水线：从题材池，到短篇生成，到长篇项目管理，再到审查、日志和成本控制。</div>
-          <div class="screen"><span class="shot-label">画面</span><br>打开 ANP Local Studio 首页，扫过监控数据、短篇小说、长篇小说和题材库导航。</div>
+          <div class="voice"><span class="shot-label">口播</span><br>大家好，这是 ANW，Auto Novel Writer，一个本地优先的小说创作与审核工作台。它不是单次生成工具，而是一套可以长期运行的创作流水线：从题材池，到短篇生成，到长篇项目管理，再到审查、日志和成本控制。</div>
+          <div class="screen"><span class="shot-label">画面</span><br>打开 ANW 首页，扫过监控数据、短篇小说、长篇小说和题材库导航。</div>
         </article>
 
         <article class="scene">
           <div class="time">00:20-00:50</div>
-          <div class="voice"><span class="shot-label">口播</span><br>很多 AI 写作工具的问题，是过程不可控。你只看到一个结果，却看不到选题依据、阶段产物、审查意见、失败原因和成本变化。ANP 把这些都拆开，让每一步都能保存、查看和继续优化。</div>
-          <div class="screen"><span class="shot-label">画面</span><br>展示监控面板中的任务、预算、Token、最近作品时间轴和日志区域。</div>
+          <div class="voice"><span class="shot-label">口播</span><br>很多 AI 写作工具的问题，是过程不可控。你只看到一个结果，却看不到选题依据、阶段产物、审查意见、失败原因和成本变化。ANW 把这些都拆开，让每一步都能保存、查看和继续优化。</div>
+          <div class="screen"><span class="shot-label">画面</span><br>展示监控面板中的任务、预算、Token、最近作品时间线和日志区域。</div>
         </article>
 
         <article class="scene">
@@ -199,7 +266,7 @@
 
         <article class="scene">
           <div class="time">01:30-02:10</div>
-          <div class="voice"><span class="shot-label">口播</span><br>长篇小说更适合持续管理。ANP 支持创建长篇项目，生成题材定位、世界观、角色、势力、关系、大纲、卷纲和章节细纲。写正文时，每章都会保留草稿、润色、审查、修改和长期记忆。</div>
+          <div class="voice"><span class="shot-label">口播</span><br>长篇小说更适合持续管理。ANW 支持创建长篇项目，生成题材定位、世界观、角色、势力、关系、大纲、卷纲和章节细纲。写正文时，每章都会保留草稿、润色、审查、修改和长期记忆。</div>
           <div class="screen"><span class="shot-label">画面</span><br>进入“长篇小说”，展示新建长篇、设定阶段、大纲预览、章节范围选择和追踪记忆。</div>
         </article>
 
@@ -211,13 +278,13 @@
 
         <article class="scene">
           <div class="time">02:45-03:15</div>
-          <div class="voice"><span class="shot-label">口播</span><br>ANP 的另一个重点是本地优先。数据库、日志、提示词和中间稿都保存在本机。API Key 通过配置或环境变量注入，界面不会展示敏感信息，也不托管第三方账号流程。</div>
+          <div class="voice"><span class="shot-label">口播</span><br>ANW 的另一个重点是本地优先。数据库、日志、提示词和中间稿都保存在本机。API Key 通过配置或环境变量注入，界面不会展示敏感信息，也不托管第三方账号流程。</div>
           <div class="screen"><span class="shot-label">画面</span><br>切到设置页，展示模型供应商、Base URL、模型识别、预算配置和日志路径说明。</div>
         </article>
 
         <article class="scene">
           <div class="time">03:15-03:45</div>
-          <div class="voice"><span class="shot-label">口播</span><br>如果你想把 AI 写作从“一次性生成”变成“可追踪的生产系统”，ANP 就是这个方向的尝试。它让创作过程更清楚，让审核更落地，也让短篇和长篇项目都能持续迭代。</div>
+          <div class="voice"><span class="shot-label">口播</span><br>如果你想把 AI 写作从“一次性生成”变成“可追踪的生产系统”，ANW 就是这个方向的尝试。它让创作过程更清楚，让审核更落地，也让短篇和长篇项目都能持续迭代。</div>
           <div class="screen"><span class="shot-label">画面</span><br>回到首页，展示短篇小说、长篇小说、题材库和日志的快速切换，最后停在项目名称。</div>
         </article>
       </div>
@@ -225,7 +292,7 @@
 
     <section class="closing">
       <h2>结尾口播</h2>
-      <p>这就是 ANP，本地小说创作与审核工作台。欢迎查看项目、运行本地界面，也欢迎继续提出你想要的创作流程。</p>
+      <p>这就是 ANW，Auto Novel Writer，本地小说创作与审核工作台。欢迎查看项目、运行本地界面，也欢迎继续提出你想要的创作流程。</p>
     </section>
   </main>
 </body>

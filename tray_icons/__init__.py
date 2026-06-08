@@ -1,4 +1,4 @@
-"""ANP 托盘图标生成器 (Phase 2)。"""
+"""ANW 托盘图标生成器 (Phase 2)。"""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ PALETTE: dict[str, str] = {
 
 
 def make_icon(color: ColorName | str = "gray", badge: int = 0, size: int = 64) -> Image.Image:
-    """生成 ``size x size`` 的圆形纯色 ANP 图标。
+    """生成 ``size x size`` 的圆形纯色 ANW 图标。
 
     参数:
         color: ``green`` / ``yellow`` / ``red`` / ``gray``。其他值回退到灰色。

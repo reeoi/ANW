@@ -127,13 +127,13 @@ def isolated_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, P
     cfg.write_text(
         "deepseek:\n  api_key: \"\"\n"
         "runtime:\n  mode: \"semi-auto\"\n  dry_run: true\n"
-        "database:\n  sqlite_path: \"" + str(tmp_path / "anp.sqlite3").replace("\\", "/") + "\"\n"
+        "database:\n  sqlite_path: \"" + str(tmp_path / "anw.sqlite3").replace("\\", "/") + "\"\n"
         "cost_limits:\n  monthly_budget_cny: 100\n",
         encoding="utf-8",
     )
-    monkeypatch.setenv("ANP_CONFIG", str(cfg))
-    monkeypatch.setenv("ANP_SQLITE_PATH", str(tmp_path / "anp.sqlite3"))
-    return {"cfg": cfg, "db": tmp_path / "anp.sqlite3"}
+    monkeypatch.setenv("ANW_CONFIG", str(cfg))
+    monkeypatch.setenv("ANW_SQLITE_PATH", str(tmp_path / "anw.sqlite3"))
+    return {"cfg": cfg, "db": tmp_path / "anw.sqlite3"}
 
 
 def test_monitor_cards_endpoint_returns_4_cards(isolated_env: dict[str, Path]) -> None:

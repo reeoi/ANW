@@ -93,7 +93,7 @@ def _autopilot_job_mark(book_id: int, active: bool) -> None:
 
 def _db_path() -> Path:
     config = load_from_environment()
-    return initialize_database(config) or Path("data/anp.sqlite3")
+    return initialize_database(config) or Path("data/anw.sqlite3")
 
 
 def _project_root() -> Path:

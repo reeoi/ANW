@@ -1,4 +1,4 @@
-# ANP c_pipeline configuration template
+# ANW c_pipeline configuration template
 # Sensitive values may be left empty here and supplied via environment variables.
 # Spec: docs/c_pipeline_plan.md §5.1
 
@@ -14,11 +14,11 @@ deepseek:
   max_output_tokens: 16384                       # required by Anthropic Messages; env: LLM_MAX_OUTPUT_TOKENS
   timeout_seconds: 120                           # long setup/rewrite calls can exceed 60s
   max_retries: 3
-  mock: false                                    # env: ANP_MOCK_DEEPSEEK
+  mock: false                                    # env: ANW_MOCK_DEEPSEEK
 
 runtime:
-  mode: "semi-auto"                              # auto | semi-auto; env: ANP_MODE
-  dry_run: false                                 # env: ANP_DRY_RUN
+  mode: "semi-auto"                              # auto | semi-auto; env: ANW_MODE
+  dry_run: false                                 # env: ANW_DRY_RUN
   project_root: "."
 
 audit:
@@ -97,12 +97,12 @@ cost_limits:
     - "weekly_scan"
 
 logging:
-  level: "INFO"                                  # env: ANP_LOG_LEVEL
-  file: "logs/anp.log"
+  level: "INFO"                                  # env: ANW_LOG_LEVEL
+  file: "logs/anw.log"
   json: false
   screenshot_dir: "logs/screenshots"
 
 database:
-  sqlite_path: "data/anp.sqlite3"                # env: ANP_SQLITE_PATH
+  sqlite_path: "data/anw.sqlite3"                # env: ANW_SQLITE_PATH
   backup_dir: "data/backups"
   daily_backup: true

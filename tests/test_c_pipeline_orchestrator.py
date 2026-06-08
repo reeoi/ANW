@@ -93,7 +93,7 @@ def _config(tmp_path: Path) -> LoadedConfig:
                 "thinking_mode": True,
                 "mock": True,
             },
-            "database": {"sqlite_path": str(tmp_path / "anp.sqlite3")},
+            "database": {"sqlite_path": str(tmp_path / "anw.sqlite3")},
             "cost_limits": {
                 "monthly_budget_cny": 100.0,
                 "degrade_phases": ["phase_3", "phase_5"],

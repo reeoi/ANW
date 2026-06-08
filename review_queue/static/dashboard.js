@@ -1,4 +1,4 @@
-﻿(() => {
+(() => {
 
 
   const $ = (id) => document.getElementById(id);
@@ -11,12 +11,12 @@
     theme = theme === 'dark' ? 'dark' : 'light';
     document.documentElement.setAttribute('data-theme', theme);
     document.body.classList.toggle('light', theme === 'light');
-    localStorage.setItem('anp-theme', theme);
+    localStorage.setItem('anw-theme', theme);
     updateThemeUI(theme);
   }
 
   function initTheme() {
-    const savedTheme = localStorage.getItem('anp-theme') || 'light';
+    const savedTheme = localStorage.getItem('anw-theme') || 'light';
     applyTheme(savedTheme);
   }
 
@@ -38,7 +38,7 @@
     document.documentElement.setAttribute('data-font-size', size);
     document.body.classList.remove('font-normal', 'font-large', 'font-xlarge');
     document.body.classList.add('font-' + size);
-    localStorage.setItem('anp-font-size', size);
+    localStorage.setItem('anw-font-size', size);
     const sel = document.getElementById('font-size-select');
     if (sel) sel.value = size;
   }
@@ -46,7 +46,7 @@
   function applyDensity(density) {
     density = density === 'dense' ? 'dense' : 'default';
     document.body.classList.toggle('dense', density === 'dense');
-    localStorage.setItem('anp-density', density);
+    localStorage.setItem('anw-density', density);
     const sel = document.getElementById('density-select');
     if (sel) sel.value = density;
   }
@@ -56,7 +56,7 @@
     applyFontSize('xlarge');
     applyDensity('default');
     if (!btn) return;
-    updateThemeUI(document.documentElement.getAttribute('data-theme') || localStorage.getItem('anp-theme') || 'light');
+    updateThemeUI(document.documentElement.getAttribute('data-theme') || localStorage.getItem('anw-theme') || 'light');
     btn.addEventListener('click', function(ev) {
       ev.stopPropagation();
       var current = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
@@ -68,12 +68,12 @@
     var sidebar = document.querySelector('.sidebar');
     var toggle = document.getElementById('sidebar-toggle');
     if (!sidebar || !toggle) return;
-    var stored = localStorage.getItem('anp-sidebar-collapsed') === '1';
+    var stored = localStorage.getItem('anw-sidebar-collapsed') === '1';
     if (stored) sidebar.classList.add('collapsed');
     toggle.setAttribute('aria-label', sidebar.classList.contains('collapsed') ? '展开侧边栏' : '收起侧边栏');
     toggle.addEventListener('click', function() {
       sidebar.classList.toggle('collapsed');
-      localStorage.setItem('anp-sidebar-collapsed', sidebar.classList.contains('collapsed') ? '1' : '0');
+      localStorage.setItem('anw-sidebar-collapsed', sidebar.classList.contains('collapsed') ? '1' : '0');
       toggle.setAttribute('aria-label', sidebar.classList.contains('collapsed') ? '展开侧边栏' : '收起侧边栏');
     });
   }
@@ -725,7 +725,7 @@
     }
   }
 
-  const GENERATION_PRESETS_KEY = 'anp-generation-channel-presets:v1';
+  const GENERATION_PRESETS_KEY = 'anw-generation-channel-presets:v1';
 
   function readGenerationPresets() {
     try {
@@ -3257,7 +3257,7 @@
   var _lnAutopilotChapterCount = 0;
 
   function _lnAutopilotModeKey(bookId) {
-    return 'anp-ln-generation-mode:' + bookId;
+    return 'anw-ln-generation-mode:' + bookId;
   }
 
   function _lnGetGenerationMode() {
@@ -3282,11 +3282,11 @@
   }
 
   function _lnAutopilotPendingKey(bookId) {
-    return 'anp-ln-autopilot-pending-chapters:' + bookId;
+    return 'anw-ln-autopilot-pending-chapters:' + bookId;
   }
 
   function _lnAutopilotPendingRangeKey(bookId) {
-    return 'anp-ln-autopilot-pending-range:' + bookId;
+    return 'anw-ln-autopilot-pending-range:' + bookId;
   }
 
   function _lnSetAutopilotPendingChapters(count) {
@@ -4069,16 +4069,16 @@
   // ── 写作工作台 ──
   var _lnViewChapter = 0;
   function _lnWorkspaceChapterKey(bookId) {
-    return 'anp-ln-view-chapter:' + bookId;
+    return 'anw-ln-view-chapter:' + bookId;
   }
   function _lnPersistWorkspaceState() {
     try {
       if (_lnActiveBookId) {
-        localStorage.setItem('anp-ln-active-book', String(_lnActiveBookId));
+        localStorage.setItem('anw-ln-active-book', String(_lnActiveBookId));
         if (_lnViewChapter) localStorage.setItem(_lnWorkspaceChapterKey(_lnActiveBookId), String(_lnViewChapter));
         else localStorage.removeItem(_lnWorkspaceChapterKey(_lnActiveBookId));
       } else {
-        localStorage.removeItem('anp-ln-active-book');
+        localStorage.removeItem('anw-ln-active-book');
       }
     } catch (_) {}
   }

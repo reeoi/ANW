@@ -39,10 +39,10 @@ publisher:
 
 logging:
   level: "INFO"
-  file: "logs/anp.log"
+  file: "logs/anw.log"
 
 database:
-  sqlite_path: "data/anp.sqlite3"
+  sqlite_path: "data/anw.sqlite3"
   backup_dir: "data/backups"
 """
 
@@ -53,9 +53,9 @@ def env_setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path
     cfg.write_text(SAMPLE_CONFIG, encoding="utf-8")
     env = tmp_path / ".env"
     env.write_text("", encoding="utf-8")
-    monkeypatch.setenv("ANP_CONFIG", str(cfg))
-    monkeypatch.setenv("ANP_DOTENV", str(env))
-    monkeypatch.setenv("ANP_SQLITE_PATH", str(tmp_path / "anp.sqlite3"))
+    monkeypatch.setenv("ANW_CONFIG", str(cfg))
+    monkeypatch.setenv("ANW_DOTENV", str(env))
+    monkeypatch.setenv("ANW_SQLITE_PATH", str(tmp_path / "anw.sqlite3"))
 
     while atomic_runner.state.is_busy():
         atomic_runner.state.release()

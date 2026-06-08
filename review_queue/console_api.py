@@ -9,7 +9,7 @@ Endpoints:
 
 The frontend polls every 5 seconds. The scheduler-related fields
 (``scheduler_running``, ``today.next_slot_iso``, today's planned/published
-counts, the ``/auto`` toggle) were removed when ANP switched to
+counts, the ``/auto`` toggle) were removed when ANW switched to
 manual-only execution.
 """
 
@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
+from config_loader import get_env
 
 from config_loader import load_from_environment
 from review_queue.atomic_runner import kick_off_async
@@ -473,7 +474,7 @@ async def generate_step(request: Request) -> dict[str, Any]:
         config = load_from_environment()
         client = DeepSeekClient(config)
         messages = [
-            {"role": "system", "content": "你是 ANP 流水线步骤设计专家。只输出 JSON。"},
+            {"role": "system", "content": "你是 ANW 流水线步骤设计专家。只输出 JSON。"},
             {"role": "user", "content": user_prompt},
         ]
         completion = client.chat_completion(messages, thinking_mode=False, purpose="step_generate")
@@ -509,9 +510,8 @@ async def generate_step(request: Request) -> dict[str, Any]:
 
 
 def _config_path() -> Path:
-    import os
     from pathlib import Path
-    raw = os.getenv("ANP_CONFIG")
+    raw = get_env("ANW_CONFIG")
     return Path(raw) if raw else Path("config.yaml")
 
 

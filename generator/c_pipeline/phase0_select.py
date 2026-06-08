@@ -87,7 +87,7 @@ def select_theme(
     """Pick a theme, micro-tune via LLM, write 0_选题.json.
 
     Args:
-        config: loaded ANP config (provides DeepSeek settings + project_root).
+        config: loaded ANW config (provides DeepSeek settings + project_root).
         work_dir: per-story directory ``data/works/{story_id}/``.
         theme_pool_path: defaults to ``data/theme_pool.json`` under project root.
         seeds_path: defaults to ``data/scan_seeds.yaml``.

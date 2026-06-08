@@ -1,21 +1,21 @@
-# ANP 本地小说创作与审核工作台
+# ANW（Auto Novel Writer）本地小说创作与审核工作台
 
-ANP 是一个本地优先的小说创作、审核和管理工具，面向短篇小说与长篇小说的持续生产流程。项目提供 ANP Local Studio 本地 Web 界面，支持题材管理、多阶段生成、AI 审查、人工复核、日志查看、预算控制、SQLite 队列和 Windows 一键启动。
+ANW 是 Auto Novel Writer 的缩写，是一个本地优先的小说创作、审核和管理工作台。它面向短篇小说与长篇小说的持续生产流程，提供本地 Web 界面、题材管理、多阶段生成、AI 审查、人工复核、日志查看、预算控制和 SQLite 队列。
 
-> 当前范围：本地生成、本地审核、本地管理。本项目不托管平台账号，不处理第三方网页登录态，也不内置外部检测服务。
+当前范围：本地生成、本地审核、本地管理。项目不托管平台账号，不处理第三方网页登录态，也不内置外部检测服务。
 
-## 1. 快速启动
+## 快速启动
 
 Windows 双击或在命令行运行：
 
 ```bat
-start_anp.bat
+start_anw.bat
 ```
 
 PowerShell 也可以运行：
 
 ```powershell
-.\start_anp.ps1
+.\start_anw.ps1
 ```
 
 启动脚本会检查并创建 `.venv`，安装 `requirements.txt`，初始化 `data/`、`logs/` 和 SQLite 数据库，然后启动本地管理界面。
@@ -29,8 +29,8 @@ http://127.0.0.1:8000
 如果端口被占用：
 
 ```bat
-set ANP_REVIEW_PORT=18000
-start_anp.bat
+set ANW_REVIEW_PORT=18000
+start_anw.bat
 ```
 
 也可以直接启动 Web 服务：
@@ -40,7 +40,7 @@ python -m review_queue.human_review
 python -m review_queue.human_review --port 18000
 ```
 
-## 2. 本地开发环境
+## 本地开发
 
 建议使用 Python 3.11+。
 
@@ -50,17 +50,17 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-没有真实模型 API key 时，ANP 会走 mock / dry-run 路径，方便在本地验证流程、界面和数据库写入。
+没有真实模型 API key 时，ANW 会走 mock / dry-run 路径，方便在本地验证流程、界面和数据库写入。
 
-## 3. 配置
+## 配置
 
-默认读取 `config.yaml`，也可以用 `ANP_CONFIG` 指向私有配置文件：
+默认读取 `config.yaml`，也可以用 `ANW_CONFIG` 指向私有配置文件：
 
 ```bash
-set ANP_CONFIG=D:\secure\anp-config.yaml
+set ANW_CONFIG=D:\secure\anw-config.yaml
 ```
 
-敏感字段建议来自私有配置文件或环境变量，不要写入仓库：
+敏感字段建议来自私有配置文件或环境变量，不要提交到仓库：
 
 ```bash
 set DEEPSEEK_API_KEY=your_api_key
@@ -75,25 +75,25 @@ deepseek:
 runtime:
   dry_run: true
 database:
-  sqlite_path: "data/anp.sqlite3"
+  sqlite_path: "data/anw.sqlite3"
   backup_dir: "data/backups"
 logging:
-  file: "logs/anp.log"
+  file: "logs/anw.log"
 ```
 
-常用环境变量包括：
+常用环境变量：
 
-- `ANP_REVIEW_PORT`：本地 Web 服务端口。
-- `ANP_CONFIG`：配置文件路径。
-- `ANP_SQLITE_PATH`：SQLite 数据库路径。
-- `ANP_DRY_RUN`：强制 dry-run。
-- `ANP_MOCK_DEEPSEEK`：强制 mock 模型调用。
-- `ANP_AI_REVIEW_THRESHOLD`：AI 审查通过阈值。
-- `ANP_MAX_REWRITE_ATTEMPTS`：自动重写次数上限。
-- `ANP_MONTHLY_BUDGET_CNY`：月度预算上限。
-- `ANP_DAILY_TOKEN_LIMIT`：每日 token 上限。
+- `ANW_REVIEW_PORT`：本地 Web 服务端口。
+- `ANW_CONFIG`：配置文件路径。
+- `ANW_SQLITE_PATH`：SQLite 数据库路径。
+- `ANW_DRY_RUN`：强制 dry-run。
+- `ANW_MOCK_DEEPSEEK`：强制 mock 模型调用。
+- `ANW_AI_REVIEW_THRESHOLD`：AI 审查通过阈值。
+- `ANW_MAX_REWRITE_ATTEMPTS`：自动重写次数上限。
+- `ANW_MONTHLY_BUDGET_CNY`：月度预算上限。
+- `ANW_DAILY_TOKEN_LIMIT`：每日 token 上限。
 
-## 4. 功能流程
+## 功能流程
 
 ### 短篇小说
 
@@ -102,94 +102,74 @@ logging:
 命令行生成单篇：
 
 ```bash
-python -m cli.generate --theme 雨夜归人 --word-count 3000 --style 现实温情
+python -m cli.generate
 ```
 
-批量生成：
-
-```bash
-python -m cli.batch_generate --count 5 --theme 海边旧书店 --word-count 1200 --style 悬疑温情 --dry-run --print-ids
-```
+本地界面中可以查看阶段产物、失败原因、重试记录、审查意见和最终稿。
 
 ### 长篇小说
 
-长篇小说流程覆盖题材定位、世界观、角色、势力、关系、全书大纲、卷纲、章节细纲和正文生成。正文工作流保留每章的草稿、扩写判断、润色、去 AI 味、审查、按建议修改、连续性检查和成稿文件。
+长篇小说流程以项目为单位管理。你可以创建题材方向，生成世界观、角色、势力、关系、大纲、卷纲、章节细纲和正文草稿，并持续维护长期记忆与章节状态。
 
-在本地界面中进入“长篇小说”即可创建项目、生成设定、查看大纲、管理章节进度和运行正文流水线。
+本地界面入口命名为“长篇小说”，用于管理长篇项目、查看章节进度、继续生成和进入人工复核。
 
-### 审核与管理
+### 审核与复核
 
-ANP Local Studio 包含：
+ANW 的审核流程保留在本地项目内：
 
-- 监控数据：本地任务、成本、token、并发和错误概览。
-- 短篇小说：题材选择、生成任务、作品列表、提示词编辑和阶段进度。
-- 长篇小说：长篇项目、设定、大纲、正文、追踪记忆和生成链路。
-- 题材库：短篇/长篇题材数据、来源和筛选。
-- 日志：系统日志与 API 调用消耗。
-- 设置：模型供应商、API key、Base URL、模型识别、预算和运行参数。
+- AI 审查：按情节、人物、节奏、语言、原创性、安全性和平台适配度给出结构化评分。
+- 自动重写：在阈值未达标时按配置尝试局部改写。
+- 人工复核：所有关键稿件仍可进入人工批准、拒绝或备注。
+- 日志与指标：本地记录 API 使用、阶段事件、失败原因和队列状态。
 
-AI 审查可通过命令行运行：
+## 本地界面
 
-```bash
-python -m cli.ai_review --limit 20
-python -m cli.ai_review --limit 20 --threshold 85
-```
+ANW 本地管理界面包含：
 
-## 5. 统一入口
+- 监控：首页查看队列、审查、成本、失败任务和系统状态。
+- 题材库：管理短篇与长篇题材。
+- 短篇小说：运行短篇生成流程并查看阶段产物。
+- 长篇小说：管理长篇项目、设定、大纲、章节和正文。
+- 审核队列：查看 AI 审查结果并进行人工复核。
+- 控制台：调整流程步骤、提示词和运行状态。
+- 设置：编辑配置、环境变量、模型参数、预算和系统选项。
+- 日志：查看后端运行日志和事件记录。
 
-`main.py` 支持初始化配置、初始化数据库和手动备份 SQLite：
+## 数据与安全边界
 
-```bash
-python main.py
-python main.py --backup-now
-```
+- 数据库默认保存到 `data/anw.sqlite3`。
+- 日志默认保存到 `logs/anw.log`。
+- 截图与运行证据默认保存到 `logs/screenshots/`。
+- API key 和私有路径请通过环境变量或本地私有配置注入。
+- 不要提交 `.env`、本地数据库、日志、截图、浏览器状态或真实稿件数据。
+- 项目不尝试绕过验证码、滑块、人机验证或任何平台安全机制。
 
-SQLite 备份写入 `database.backup_dir`。
+## 测试
 
-## 6. 本地验证
-
-推荐提交前运行：
+运行完整测试：
 
 ```bash
 pytest -q
-python -m py_compile config_loader.py main.py runtime_helpers.py generator\*.py review_queue\*.py cli\*.py
 ```
 
-短篇 smoke test：
+编译核心 Python 包：
 
 ```bash
-set ANP_SQLITE_PATH=data/local_verify.sqlite3
-python -m cli.batch_generate --count 3 --theme 本地验收 --word-count 600 --dry-run --print-ids
-python -m cli.ai_review --limit 5
+python -m py_compile (Get-ChildItem generator,review_queue,cli -Recurse -Filter *.py).FullName
 ```
 
-## 7. 安全说明
-
-- 不提交 `.env`、真实账号密码、API key、本地数据库、日志或浏览器数据。
-- 日志只记录动作、状态、耗时、story_id 和错误摘要，不记录密钥。
-- 生产或私有配置应放在仓库外，或通过环境变量注入。
-- 项目不内置第三方账号托管、验证码处理、网页登录态维护或外部检测流程。
-- 提交前建议运行 secret 扫描，确认没有敏感信息进入 Git 历史。
-
-## 8. 常见问题
-
-**没有 API key 会失败吗？**
-不会。配置加载器会启用 mock / dry-run，生成和审核流程仍可本地验证。
-
-**8000 端口被占用怎么办？**
-使用 `python -m review_queue.human_review --port 18000`，或设置 `ANP_REVIEW_PORT=18000`。
-
-**数据保存在哪里？**
-默认保存到 `data/anp.sqlite3`。`data/` 是本地运行数据目录，不应提交到 GitHub。
-
-**短篇和长篇可以同时使用吗？**
-可以。两套流程共享本地配置、模型调用、预算控制和日志系统，但作品数据按类型分开管理。
-
-## 9. Git 检查
-
-提交前建议确认工作区和最近提交：
+检查旧品牌和外部检测残留时，可以按项目约定使用 `rg` 做全仓库扫描。
 
 ```bash
-git status --short
-git log --oneline -1
+rg -n "需要审计的关键词"
 ```
+
+## 发布材料
+
+项目发布视频稿位于：
+
+```text
+docs/project_release_video_script.html
+```
+
+它按“分镜 / 口播 / 屏幕提示”三栏组织，可直接在浏览器中打开，用于录制项目发布视频或整理发布文案。

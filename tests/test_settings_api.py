@@ -72,11 +72,11 @@ generation:
 
 logging:
   level: "INFO"
-  file: "logs/anp.log"
+  file: "logs/anw.log"
   json: false
 
 database:
-  sqlite_path: "data/anp.sqlite3"
+  sqlite_path: "data/anw.sqlite3"
   backup_dir: "data/backups"
   daily_backup: true
 
@@ -101,8 +101,8 @@ def env_setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path
     cfg.write_text(SAMPLE_CONFIG, encoding="utf-8")
     env = tmp_path / ".env"
     env.write_text(SAMPLE_ENV, encoding="utf-8")
-    monkeypatch.setenv("ANP_CONFIG", str(cfg))
-    monkeypatch.setenv("ANP_DOTENV", str(env))
+    monkeypatch.setenv("ANW_CONFIG", str(cfg))
+    monkeypatch.setenv("ANW_DOTENV", str(env))
     # 把 login_capture 也指到临时目录
     browser = tmp_path / "data" / "browser"
     browser.mkdir(parents=True)
@@ -682,7 +682,7 @@ def test_get_system(env_setup: dict[str, Path]) -> None:
     body = json.loads(r["body"])
     assert body["log_level"] == "INFO"
     assert body["monthly_budget_cny"] == 100
-    assert body["database_path"] == "data/anp.sqlite3"
+    assert body["database_path"] == "data/anw.sqlite3"
 
 
 def test_post_system_validates_log_level(env_setup: dict[str, Path]) -> None:

@@ -1,4 +1,4 @@
-"""FastAPI local management dashboard for ANP."""
+"""FastAPI local management dashboard for ANW."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from config_loader import LoadedConfig, load_from_environment
+from config_loader import LoadedConfig, get_env, load_from_environment
 from generator.long_novel.api import router as long_novel_router
 from generator.long_novel.db import initialize_long_novel_tables
 from generator.long_novel.theme_api import router as theme_router
@@ -112,7 +112,7 @@ SHORT_PHASE_DETAILS: dict[str, dict[str, Any]] = {
 }
 
 
-app = FastAPI(title="ANP Local Studio")
+app = FastAPI(title="ANW Auto Novel Writer")
 static_dir = Path(__file__).resolve().parent / "static"
 if static_dir.is_dir():
     app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
@@ -136,7 +136,7 @@ async def _ensure_long_novel_tables() -> None:
 
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request, message: str | None = None) -> HTMLResponse:
-    """Render the local ANP management studio."""
+    """Render the local ANW management studio."""
     return HTMLResponse(_render_dashboard(message=message))
 
 
@@ -1442,7 +1442,7 @@ def _system_health(config: LoadedConfig, db_path: Path) -> dict[str, Any]:
             db_size = Path(db_path).stat().st_size
     except OSError:
         db_size = 0
-    log_path = Path(str((config.data.get("logging") or {}).get("file") or "logs/anp.log"))
+    log_path = Path(str((config.data.get("logging") or {}).get("file") or "logs/anw.log"))
     log_size = 0
     try:
         if log_path.exists():
@@ -1496,7 +1496,7 @@ def _render_dashboard(message: str | None = None) -> str:
         "<head>\n"
         "  <meta charset=\"utf-8\">\n"
         "  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n"
-        "  <title>ANP Local Studio</title>\n"
+        "  <title>ANW Auto Novel Writer</title>\n"
         f"  <style>{_assets.DASHBOARD_CSS}</style>\n"
         "  <script src=\"https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js\"></script>\n"
         "</head>\n"
@@ -1526,8 +1526,8 @@ def _render_legacy_story_card(story: Story) -> str:
 
 
 def _parse_server_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Start the local ANP management FastAPI app.")
-    parser.add_argument("--host", default=os.getenv("ANP_REVIEW_HOST", "127.0.0.1"), help="Bind host for the local server.")
+    parser = argparse.ArgumentParser(description="Start the local ANW management FastAPI app.")
+    parser.add_argument("--host", default=get_env("ANW_REVIEW_HOST", "127.0.0.1"), help="Bind host for the local server.")
     parser.add_argument("--port", type=int, default=_server_port_from_env(), help="Bind port for the local server.")
     args = parser.parse_args()
     if not (1 <= args.port <= 65535):
@@ -1536,11 +1536,11 @@ def _parse_server_args() -> argparse.Namespace:
 
 
 def _server_port_from_env() -> int:
-    raw_port = os.getenv("ANP_REVIEW_PORT", "8000")
+    raw_port = get_env("ANW_REVIEW_PORT", "8000")
     try:
         return int(raw_port)
     except ValueError:
-        logger.warning("Invalid ANP_REVIEW_PORT value; falling back to 8000")
+        logger.warning("Invalid ANW_REVIEW_PORT value; falling back to 8000")
         return 8000
 
 

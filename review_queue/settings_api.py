@@ -26,6 +26,7 @@ from fastapi import APIRouter, HTTPException, Request
 from config_loader import (
     DEFAULT_CONFIG_PATH,
     DEFAULT_DOTENV_PATH,
+    get_env,
     load_from_environment,
 )
 from review_queue.env_writer import read_env, write_env_fields
@@ -80,12 +81,12 @@ async def _json_payload(request: Request) -> dict[str, Any]:
 
 
 def _config_path() -> Path:
-    raw = os.getenv("ANP_CONFIG")
+    raw = get_env("ANW_CONFIG")
     return Path(raw) if raw else DEFAULT_CONFIG_PATH
 
 
 def _dotenv_path() -> Path:
-    raw = os.getenv("ANP_DOTENV")
+    raw = get_env("ANW_DOTENV")
     return Path(raw) if raw else DEFAULT_DOTENV_PATH
 
 
@@ -709,10 +710,10 @@ def get_system() -> dict[str, Any]:
     log = cfg.get("logging") or {}
     cost = cfg.get("cost_limits") or {}
     return {
-        "database_path": str(db.get("sqlite_path") or "data/anp.sqlite3"),
+        "database_path": str(db.get("sqlite_path") or "data/anw.sqlite3"),
         "backup_dir": str(db.get("backup_dir") or "data/backups"),
         "daily_backup": bool(db.get("daily_backup", True)),
-        "log_path": str(log.get("file") or "logs/anp.log"),
+        "log_path": str(log.get("file") or "logs/anw.log"),
         "log_level": str(log.get("level") or "INFO"),
         "log_json": bool(log.get("json", False)),
         "monthly_budget_cny": float(cost.get("monthly_budget_cny") or 0),
@@ -766,9 +767,9 @@ async def open_folder(request: Request) -> dict[str, Any]:
     kind = str(payload.get("kind") or "").strip()
     cfg = load_yaml(_config_path())
     if kind == "data":
-        target = Path(str((cfg.get("database") or {}).get("sqlite_path") or "data/anp.sqlite3")).parent
+        target = Path(str((cfg.get("database") or {}).get("sqlite_path") or "data/anw.sqlite3")).parent
     elif kind == "logs":
-        target = Path(str((cfg.get("logging") or {}).get("file") or "logs/anp.log")).parent
+        target = Path(str((cfg.get("logging") or {}).get("file") or "logs/anw.log")).parent
     elif kind == "backup":
         target = Path(str((cfg.get("database") or {}).get("backup_dir") or "data/backups"))
     else:

@@ -327,7 +327,7 @@ class DeepSeekClient:
                     "anthropic-version": "2023-06-01",
                     "Content-Type": "application/json",
                     "Accept": "application/json",
-                    "User-Agent": "ANP-Studio/1.0",
+                    "User-Agent": "ANW-Writer/1.0",
                 },
                 payload,
             )
@@ -349,7 +349,7 @@ class DeepSeekClient:
                 "Authorization": f"Bearer {self.settings.api_key}",
                 "Content-Type": "application/json",
                 "Accept": "application/json",
-                "User-Agent": "ANP-Studio/1.0",
+                "User-Agent": "ANW-Writer/1.0",
             },
             payload,
         )
