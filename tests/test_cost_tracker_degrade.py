@@ -56,7 +56,7 @@ def _config(
                 "model": "deepseek-v4-pro",
                 "flash_model": "deepseek-v4-flash",
             },
-            "database": {"sqlite_path": str(tmp_path / "anp.sqlite3")},
+            "database": {"sqlite_path": str(tmp_path / "anw.sqlite3")},
             "cost_limits": {
                 "monthly_budget_cny": monthly_budget,
                 "daily_token_limit": daily_tokens,

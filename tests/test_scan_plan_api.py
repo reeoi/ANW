@@ -31,7 +31,7 @@ def _config_yaml(tmp_path: Path) -> Path:
     its theme_pool under tmp_path/data/. We pre-copy the real seeds file
     so the dry-run client can build a synthetic pool.
     """
-    db_path = tmp_path / "anp.sqlite3"
+    db_path = tmp_path / "anw.sqlite3"
     data_dir = tmp_path / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
     # Copy real seeds.yaml so dry-run scan can synthesize a pool.
@@ -67,13 +67,13 @@ def _config_yaml(tmp_path: Path) -> Path:
 @pytest.fixture()
 def env_setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path]:
     cfg = _config_yaml(tmp_path)
-    monkeypatch.setenv("ANP_CONFIG", str(cfg))
-    monkeypatch.setenv("ANP_DOTENV", str(tmp_path / ".env"))
+    monkeypatch.setenv("ANW_CONFIG", str(cfg))
+    monkeypatch.setenv("ANW_DOTENV", str(tmp_path / ".env"))
     return {
         "cfg": cfg,
         "tmp": tmp_path,
         "pool_path": tmp_path / "data" / "theme_pool.json",
-        "db_path": tmp_path / "anp.sqlite3",
+        "db_path": tmp_path / "anw.sqlite3",
     }
 
 

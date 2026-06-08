@@ -66,7 +66,7 @@ def _config(
             },
             "logging": {
                 "level": "INFO",
-                "file": str(tmp_path / "anp.log"),
+                "file": str(tmp_path / "anw.log"),
                 "screenshot_dir": str(tmp_path / "screens"),
             },
         },

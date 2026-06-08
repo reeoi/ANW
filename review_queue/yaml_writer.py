@@ -1,6 +1,6 @@
 """保留注释 / 顺序 / 缩进的 ``config.yaml`` 读写工具。
 
-ANP 的 :mod:`config_loader` 用 ``pyyaml`` 只读地解析 ``config.yaml``。本模块在
+ANW 的 :mod:`config_loader` 用 ``pyyaml`` 只读地解析 ``config.yaml``。本模块在
 **写回** 端保留 YAML 注释、键顺序、缩进风格，避免 UI 的"⚙️ 设置"小节把整份
 配置文件的注释和顺序破坏掉。
 

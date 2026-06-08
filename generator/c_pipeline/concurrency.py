@@ -5,7 +5,7 @@ so the only contention point is between independent ``run_pipeline`` calls
 Web UI).
 
 This module deliberately uses a process-local ``threading.BoundedSemaphore``
-rather than an OS-level lock — ANP runs as a single Python process and
+rather than an OS-level lock — ANW runs as a single Python process and
 SQLite serialisation means cross-process pipelines are not a target. If a
 future deployment splits the worker into multiple processes, swap this for
 a file-lock or DB-row-lock implementation.

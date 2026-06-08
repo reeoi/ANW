@@ -1,10 +1,10 @@
-# ANP Local Studio one-click startup for PowerShell.
+# ANW Auto Novel Writer one-click startup for PowerShell.
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $ErrorActionPreference = "Stop"
 
 Set-Location -Path $PSScriptRoot
 Write-Host "========================================"
-Write-Host " ANP Local Studio startup"
+Write-Host " ANW Auto Novel Writer startup"
 Write-Host "========================================"
 
 $ForceInstall = ($args -contains "--reinstall")
@@ -59,11 +59,11 @@ if ($LASTEXITCODE -ne 0) {
   exit $LASTEXITCODE
 }
 
-if (-not $env:ANP_REVIEW_HOST) { $env:ANP_REVIEW_HOST = "127.0.0.1" }
-if (-not $env:ANP_REVIEW_PORT) { $env:ANP_REVIEW_PORT = "18000" }
+if (-not $env:ANW_REVIEW_HOST) { $env:ANW_REVIEW_HOST = "127.0.0.1" }
+if (-not $env:ANW_REVIEW_PORT) { $env:ANW_REVIEW_PORT = "18000" }
 
-Write-Host "[4.5/5] Releasing port $($env:ANP_REVIEW_PORT)..."
-$port = [int]$env:ANP_REVIEW_PORT
+Write-Host "[4.5/5] Releasing port $($env:ANW_REVIEW_PORT)..."
+$port = [int]$env:ANW_REVIEW_PORT
 $listeners = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
 if ($listeners) {
   foreach ($conn in $listeners) {
@@ -76,28 +76,28 @@ if ($listeners) {
   Write-Host "  Port $port is free."
 }
 
-Write-Host "[5/5] Starting ANP Local Studio..."
-Write-Host "URL: http://$env:ANP_REVIEW_HOST`:$env:ANP_REVIEW_PORT"
+Write-Host "[5/5] Starting ANW Auto Novel Writer..."
+Write-Host "URL: http://$env:ANW_REVIEW_HOST`:$env:ANW_REVIEW_PORT"
 
 $pythonw = ".venv\Scripts\pythonw.exe"
 if (Test-Path $pythonw) {
-  Start-Process -FilePath $pythonw -ArgumentList @("tray_app.py", "--host", $env:ANP_REVIEW_HOST, "--port", $env:ANP_REVIEW_PORT) -WindowStyle Hidden
+  Start-Process -FilePath $pythonw -ArgumentList @("tray_app.py", "--host", $env:ANW_REVIEW_HOST, "--port", $env:ANW_REVIEW_PORT) -WindowStyle Hidden
   Write-Host "Tray app started. Waiting for service health..."
   $ok = $false
   for ($i = 0; $i -lt 30; $i++) {
     Start-Sleep -Milliseconds 500
     try {
-      $url = "http://" + $env:ANP_REVIEW_HOST + ":" + $env:ANP_REVIEW_PORT + "/api/health"
+      $url = "http://" + $env:ANW_REVIEW_HOST + ":" + $env:ANW_REVIEW_PORT + "/api/health"
       $resp = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 2 -ErrorAction Stop
       if ($resp.StatusCode -eq 200) { $ok = $true; break }
     } catch { }
   }
   if ($ok) {
-    Write-Host "OK: ANP is running in the tray/background."
+    Write-Host "OK: ANW is running in the tray/background."
   } else {
     Write-Warning "Service did not become reachable within 15 seconds. Check logs\tray.log and logs\uvicorn.log."
   }
 } else {
   Write-Warning "$pythonw was not found; starting foreground server instead."
-  python -m review_queue.human_review --host $env:ANP_REVIEW_HOST --port $env:ANP_REVIEW_PORT
+  python -m review_queue.human_review --host $env:ANW_REVIEW_HOST --port $env:ANW_REVIEW_PORT
 }

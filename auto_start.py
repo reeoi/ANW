@@ -17,7 +17,7 @@ import platform
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent
-LAUNCHER_NAME = "ANP_AutoStart.bat"
+LAUNCHER_NAME = "ANW_AutoStart.bat"
 
 
 def is_windows() -> bool:
@@ -64,7 +64,7 @@ def enable(
     tray_script: Path | None = None,
     startup_dir: Path | None = None,
 ) -> Path:
-    """写一个 ``ANP_AutoStart.bat`` 到 Startup 文件夹。
+    """写一个 ``ANW_AutoStart.bat`` 到 Startup 文件夹。
 
     Returns:
         快捷方式的绝对路径。

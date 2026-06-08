@@ -3,7 +3,7 @@
 Parallel to ``generator.c_pipeline`` for short stories. Provides:
 
 - Database schema for books/volumes/chapters
-- L0 book creation pipeline (benchmark → premise → world → characters → outline)
+- L0 book creation pipeline (premise → world → characters → outline)
 - L1 volume planning
 - L2 chapter writing loop with context assembly
 - L3 chapter rewrite/backfill with cascade consistency check

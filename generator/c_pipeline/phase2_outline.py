@@ -100,7 +100,7 @@ def run_outline(
     """Run Phase 2 — outline with hard validators + retries.
 
     Args:
-        config: loaded ANP config.
+        config: loaded ANW config.
         work_dir: ``data/works/{story_id}/``.
         framework_path: defaults to ``work_dir/1_设定.md``.
         pitch_path: defaults to ``work_dir/0_选题.json``; used to read
@@ -225,8 +225,6 @@ def build_phase2_prompt(
         section_count_max=SECTION_COUNT_MAX,
         section_min_chars=SECTION_CHARS_MIN,
         section_max_chars=SECTION_CHARS_MAX,
-        genre_emotion_arc="(从设定中复用)",
-        genre_signature_scenes="(从设定中复用)",
     )
     return [
         {

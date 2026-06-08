@@ -1,7 +1,7 @@
 """Stateless runtime helpers shared by main entrypoint, UI service, and CLI.
 
 These helpers used to live in ``scheduler.py``. The scheduler module was
-removed when ANP switched to fully-manual single-shot execution; the helpers
+removed when ANW switched to fully-manual single-shot execution; the helpers
 themselves remain useful for logging setup, log tailing, queue counting,
 SQLite backup, and reading config-derived numbers.
 """
@@ -31,7 +31,7 @@ def configure_logging(config: LoadedConfig) -> Path:
     """Configure file + console logging for the UI service and CLI entrypoints."""
 
     logging_config = config.data.get("logging", {}) if isinstance(config.data.get("logging"), dict) else {}
-    log_file = Path(str(logging_config.get("file") or "logs/anp.log"))
+    log_file = Path(str(logging_config.get("file") or "logs/anw.log"))
     log_file.parent.mkdir(parents=True, exist_ok=True)
     level_name = str(logging_config.get("level") or "INFO").upper()
     level = getattr(logging, level_name, logging.INFO)
@@ -58,11 +58,11 @@ def configure_logging(config: LoadedConfig) -> Path:
         root_logger.addHandler(file_handler)
         added = True
 
-    if not any(getattr(handler, "_anp_console", False) for handler in root_logger.handlers):
+    if not any(getattr(handler, "_anw_console", False) for handler in root_logger.handlers):
         console_handler = logging.StreamHandler()
         console_handler.setFormatter(formatter)
         console_handler.setLevel(level)
-        console_handler._anp_console = True  # type: ignore[attr-defined]
+        console_handler._anw_console = True  # type: ignore[attr-defined]
         root_logger.addHandler(console_handler)
         added = True
 
@@ -130,7 +130,7 @@ def _log_line_datetime(line: str) -> datetime | None:
 def recent_log_lines(config: LoadedConfig, max_lines: int = 80) -> tuple[Path, list[str]]:
     """Return recent log blocks newest first and prune timestamped blocks older than 7 days."""
 
-    log_file = Path(str(_mapping(config.data.get("logging")).get("file") or "logs/anp.log"))
+    log_file = Path(str(_mapping(config.data.get("logging")).get("file") or "logs/anw.log"))
     if not log_file.exists():
         return log_file, []
 
@@ -146,7 +146,8 @@ def recent_log_lines(config: LoadedConfig, max_lines: int = 80) -> tuple[Path, l
     if current:
         blocks.append(current)
 
-    cutoff = datetime.now() - timedelta(days=7)
+    latest_ts = max((_log_line_datetime(block[0]) for block in blocks if block), default=None)
+    cutoff = (latest_ts or datetime.now()) - timedelta(days=7)
     kept: list[list[str]] = []
     for block in blocks:
         ts = _log_line_datetime(block[0]) if block else None

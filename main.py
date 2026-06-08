@@ -1,4 +1,4 @@
-"""Unified ANP entrypoint.
+"""Unified ANW entrypoint.
 
 After the scheduler removal (manual-only execution), this entrypoint just:
 - loads config + logging,
@@ -28,7 +28,7 @@ from runtime_helpers import (
 def main() -> int:
     """Load config, init DB+logging, print UI hint."""
 
-    parser = argparse.ArgumentParser(description="ANP local pipeline")
+    parser = argparse.ArgumentParser(description="ANW local pipeline")
     parser.add_argument(
         "--backup-now",
         action="store_true",
@@ -49,7 +49,7 @@ def main() -> int:
 
     db_path = initialize_database(config)
     print(
-        f"ANP ready: sqlite={db_path}, log={log_file}, "
+        f"ANW ready: sqlite={db_path}, log={log_file}, "
         f"monthly_api_budget_cny={get_monthly_api_limit(config)}"
     )
 

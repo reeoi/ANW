@@ -1,4 +1,4 @@
-# ANP 正式使用指南（全 UI 版）
+# ANW 正式使用指南（全 UI 版）
 
 > 更新日期: 2026-05-08
 > 适用版本: c_pipeline c1 + Phase 6 章节切分 + 执行控制台
@@ -15,7 +15,7 @@
 ### 0.1 环境检查
 
 ```bash
-cd D:/Development_alma/anp
+cd D:/Development_alma/anw
 .venv/Scripts/python.exe check_env.py
 .venv/Scripts/python.exe check_config.py
 ```
@@ -46,10 +46,10 @@ UI 启动后也可在「设置 → 生成」里粘贴覆盖。
 
 ## 1. 启动
 
-双击 `start_anp.bat` 或运行：
+双击 `start_anw.bat` 或运行：
 
 ```bash
-start_anp.bat
+start_anw.bat
 ```
 
 浏览器自动打开 <http://127.0.0.1:18000>。
@@ -139,6 +139,6 @@ start_anp.bat
 - `config.yaml` — 调度时间、操作时段、每日 N 篇范围、AI 审核阈值等
 - `.env` — DeepSeek / 番茄账号密钥
 - `data/theme_pool.json` — AI 自动从此池选题，每周一 03:00 自动刷新
-- `data/anp.sqlite3` — 作品状态、cost log、daily_publish_plan
+- `data/anw.sqlite3` — 作品状态、cost log、daily_publish_plan
 
 不要在 UI 上找「默认主题/风格/字数」字段——已删除，由 AI 自动决策。

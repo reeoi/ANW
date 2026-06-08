@@ -9,7 +9,7 @@ Endpoints:
 
 The frontend polls every 5 seconds. The scheduler-related fields
 (``scheduler_running``, ``today.next_slot_iso``, today's planned/published
-counts, the ``/auto`` toggle) were removed when ANP switched to
+counts, the ``/auto`` toggle) were removed when ANW switched to
 manual-only execution.
 """
 
@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
+from config_loader import get_env
 
 from config_loader import load_from_environment
 from review_queue.atomic_runner import kick_off_async
@@ -132,18 +133,63 @@ def console_status() -> dict[str, Any]:
 
 
 @router.post("/run-now")
-def console_run_now() -> dict[str, Any]:
+async def console_run_now(request: Request) -> dict[str, Any]:
     """Kick a fire-and-forget atomic generate→AI review task.
 
     Returns 409 Conflict if another atomic task is already running.
     """
+    payload = await _json_payload(request)
+    raw_theme_id = payload.get("theme_id")
+    if raw_theme_id is None:
+        raise HTTPException(status_code=400, detail="请先从题材库选择一个题材")
+
+    from generator.long_novel.theme_db import get_theme, mark_consumed
+
     config = load_from_environment()
+    db_path = initialize_database(config)
     try:
-        story_id = kick_off_async(config)
+        theme_id = int(raw_theme_id)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="theme_id 必须是整数") from exc
+    theme = get_theme(db_path, theme_id)
+    if not theme:
+        raise HTTPException(status_code=404, detail="未找到可用题材")
+
+    is_long_theme = theme.get("target_type") == "long"
+
+    try:
+        raw_item = json.loads(str(theme.get("raw_json") or "{}"))
+    except json.JSONDecodeError:
+        raw_item = {}
+    if not isinstance(raw_item, dict):
+        raw_item = {}
+    selected_item = {
+        **raw_item,
+        "id": f"theme_db_{theme_id}",
+        "theme": theme.get("theme") or "",
+        "genre": theme.get("genre") or "",
+        "emotion": theme.get("emotion") or "",
+        "target_platform": "番茄短篇" if is_long_theme else (theme.get("platform") or "番茄短篇"),
+        "target_length": [
+            8000 if is_long_theme else int(theme.get("target_words_min") or 8000),
+            15000 if is_long_theme else int(theme.get("target_words_max") or 15000),
+        ],
+        "hint_title": theme.get("hint_title") or "",
+        "expected_audience": theme.get("audience") or "",
+    }
+    try:
+        story_id = kick_off_async(config, overrides={"theme_pool_item": selected_item})
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    mark_consumed(db_path, theme_id)
     logger.info("Console run-now started: story_id=%s", story_id)
-    return {"ok": True, "story_id": story_id, "message": "已启动原子任务"}
+    return {
+        "ok": True,
+        "story_id": story_id,
+        "theme_id": theme_id,
+        "adapted_from_long": is_long_theme,
+        "message": "已启动短篇创作任务",
+    }
 
 
 @router.post("/cancel")
@@ -232,7 +278,6 @@ PHASE_PROMPT_MAP: dict[str, str] = {
     "phase_3": "phase3_section.txt",
     "phase_4": "phase4_polish.txt",
     "phase_5": "phase5_deslop.txt",
-    "phase_5_5": "phase5_5_zhuque_rewrite.txt",
     "phase_6": "phase6_chapter.txt",
 }
 
@@ -429,7 +474,7 @@ async def generate_step(request: Request) -> dict[str, Any]:
         config = load_from_environment()
         client = DeepSeekClient(config)
         messages = [
-            {"role": "system", "content": "你是 ANP 流水线步骤设计专家。只输出 JSON。"},
+            {"role": "system", "content": "你是 ANW 流水线步骤设计专家。只输出 JSON。"},
             {"role": "user", "content": user_prompt},
         ]
         completion = client.chat_completion(messages, thinking_mode=False, purpose="step_generate")
@@ -465,9 +510,8 @@ async def generate_step(request: Request) -> dict[str, Any]:
 
 
 def _config_path() -> Path:
-    import os
     from pathlib import Path
-    raw = os.getenv("ANP_CONFIG")
+    raw = get_env("ANW_CONFIG")
     return Path(raw) if raw else Path("config.yaml")
 
 

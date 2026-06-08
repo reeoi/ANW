@@ -1,19 +1,19 @@
-# ANP 全可视化改造 · 完整实施计划
+# ANW 全可视化改造 · 完整实施计划
 
-> **本文件目的**：把 ANP 项目从"必须改 YAML、跑命令行"改造成"全部 Web UI 操作 + 后台常驻 + 开机自启"的全可视化软件，**适合非技术用户使用**。
+> **本文件目的**：把 ANW 项目从"必须改 YAML、跑命令行"改造成"全部 Web UI 操作 + 后台常驻 + 开机自启"的全可视化软件，**适合非技术用户使用**。
 >
-> **使用方法**：在 ANP 项目根目录（`D:\Development_alma\anp`）开启新对话，让 Claude 阅读本文件后**严格按 3 期顺序**执行。每一期都有独立验收标准，**做完一期再开下一期**。
+> **使用方法**：在 ANW 项目根目录（`D:\Development_alma\anw`）开启新对话，让 Claude 阅读本文件后**严格按 3 期顺序**执行。每一期都有独立验收标准，**做完一期再开下一期**。
 
 ---
 
 ## 0. 项目背景速览（新会话必读）
 
-ANP 是一个**本地优先**的小说自动创作 + 发布流水线，技术栈：
+ANW 是一个**本地优先**的小说自动创作 + 发布流水线，技术栈：
 
 - **语言**：Python 3.11+
 - **Web 框架**：FastAPI（已有 5 个 tab 的管理界面，监听 `127.0.0.1:18000`）
 - **调度**：APScheduler（cron 触发生成 → AI 审核 → 随机延迟发布 → SQLite 备份）
-- **存储**：SQLite（`data/anp.sqlite3`）
+- **存储**：SQLite（`data/anw.sqlite3`）
 - **AI**：DeepSeek API（已有 mock/dry-run 兜底）
 - **发布**：Playwright 自动化（番茄小说 / fanqienovel.com）
 - **运行模式**：`auto`（全自动）/`semi-auto`（半自动）+ `dry_run`（演练）
@@ -21,14 +21,14 @@ ANP 是一个**本地优先**的小说自动创作 + 发布流水线，技术栈
 ### 现有目录结构
 
 ```
-D:\Development_alma\anp\
+D:\Development_alma\anw\
 ├── main.py                  # 统一入口，--mode auto / semi-auto
 ├── scheduler.py             # APScheduler 调度器，4 个 cron 任务
 ├── config_loader.py         # 读 config.yaml + 环境变量覆盖
 ├── config.yaml              # 默认配置（模板）
 ├── .env                     # 敏感字段（DEEPSEEK_API_KEY 等）
-├── start_anp.bat            # Windows 一键启动脚本
-├── start_anp.ps1            # PowerShell 启动
+├── start_anw.bat            # Windows 一键启动脚本
+├── start_anw.ps1            # PowerShell 启动
 ├── requirements.txt
 ├── generator/               # 生成模块（DeepSeek 客户端、prompt 构建）
 ├── publisher/               # 发布模块（番茄 Playwright 适配器）
@@ -804,7 +804,7 @@ function bindSecretInput(inputEl, toggleBtn) {
 
 ```bash
 # 1. 安装依赖
-cd D:\Development_alma\anp
+cd D:\Development_alma\anw
 .\.venv\Scripts\activate
 pip install -r requirements.txt
 
@@ -862,7 +862,7 @@ python -m review_queue.human_review --port 18000
 
 # 🥈 第 2 期：托盘 + 全自动后台化
 
-**预估工作量**：800-1200 行新代码 + 修改 `start_anp.bat` ≈ 半天到 1 天
+**预估工作量**：800-1200 行新代码 + 修改 `start_anw.bat` ≈ 半天到 1 天
 
 **完成标准**：双击桌面图标 → 无黑窗口 → 托盘出现 → 浏览器自动开 → 关浏览器后台还在跑 → 重启 Windows 后软件自动醒来 → 出事时 Windows 右下角弹通知。
 
@@ -875,14 +875,14 @@ python -m review_queue.human_review --port 18000
 | `tray_app.py` | ~350 | 托盘主进程，启动 uvicorn + APScheduler 子进程，管理状态色 |
 | `tray_icons/__init__.py` | - | 空文件（包标识） |
 | `tray_icons/generator.py` | ~80 | 用 Pillow 生成 4 色图标（绿/黄/红/灰）的 PNG bytes，避免依赖外部图片文件 |
-| `auto_start.py` | ~100 | 写/删 `shell:startup\\ANP.bat` 快捷方式 |
+| `auto_start.py` | ~100 | 写/删 `shell:startup\\ANW.bat` 快捷方式 |
 | `notification_bus.py` | ~150 | 通知中心，统一管理"严重/警告/信息"三档；前端 toast + 托盘色 + Windows 桌面通知 |
 
 ### 修改 5 个文件
 
 | 文件 | 改动 |
 |---|---|
-| `start_anp.bat` | 改成调用 `pythonw tray_app.py`（无控制台窗口），不再直接 `python -m review_queue.human_review` |
+| `start_anw.bat` | 改成调用 `pythonw tray_app.py`（无控制台窗口），不再直接 `python -m review_queue.human_review` |
 | `requirements.txt` | 加 `pystray>=0.19`、`Pillow>=10.0`、`pywin32>=306` |
 | `review_queue/human_review.py` | 加 `/api/notifications/stream` SSE 端点；启动 hook 通知托盘；优雅关闭 |
 | `scheduler.py` | 关键事件（成功/失败/暂停）通过 notification_bus 发出；新增 `next_run_time()` |
@@ -937,7 +937,7 @@ POST /api/control/auto                        # body: { enabled: bool }
 POST /api/control/restart                     # 软重启 uvicorn（托盘菜单触发）
 GET  /api/autostart                           # 当前是否开机自启
 POST /api/autostart                           # body: { enabled: bool }
-                                              # 写/删 shell:startup\\ANP.bat
+                                              # 写/删 shell:startup\\ANW.bat
 ```
 
 新增 `⚙️ 设置 → 系统` 小节里的两个开关：
@@ -945,7 +945,7 @@ POST /api/autostart                           # body: { enabled: bool }
 ```
 💻 系统
 ├── ☐ 启用全自动模式（启动调度器，立即生效）  -- POST /api/control/auto
-└── ☐ 开机自启动（Windows 启动时自动运行 ANP）  -- POST /api/autostart
+└── ☐ 开机自启动（Windows 启动时自动运行 ANW）  -- POST /api/autostart
 ```
 
 ## 2.4 第 2 期 `auto_start.py` 关键代码
@@ -959,27 +959,27 @@ from pathlib import Path
 def startup_folder() -> Path:
     return Path(os.environ["APPDATA"]) / "Microsoft/Windows/Start Menu/Programs/Startup"
 
-ANP_LAUNCHER_NAME = "ANP_AutoStart.bat"
-ANP_PROJECT_ROOT = Path(__file__).resolve().parent
+ANW_LAUNCHER_NAME = "ANW_AutoStart.bat"
+ANW_PROJECT_ROOT = Path(__file__).resolve().parent
 
 def is_enabled() -> bool:
-    return (startup_folder() / ANP_LAUNCHER_NAME).exists()
+    return (startup_folder() / ANW_LAUNCHER_NAME).exists()
 
 def enable() -> None:
     """写一个 .bat 到 startup 文件夹，启动时静默调用 tray_app.py."""
-    target = startup_folder() / ANP_LAUNCHER_NAME
-    pythonw = ANP_PROJECT_ROOT / ".venv" / "Scripts" / "pythonw.exe"
-    tray_script = ANP_PROJECT_ROOT / "tray_app.py"
+    target = startup_folder() / ANW_LAUNCHER_NAME
+    pythonw = ANW_PROJECT_ROOT / ".venv" / "Scripts" / "pythonw.exe"
+    tray_script = ANW_PROJECT_ROOT / "tray_app.py"
     content = (
         f"@echo off\n"
-        f"cd /d \"{ANP_PROJECT_ROOT}\"\n"
+        f"cd /d \"{ANW_PROJECT_ROOT}\"\n"
         f"timeout /t 10 /nobreak >nul\n"   # 等开机后 10 秒，避免抢资源
         f"start \"\" /B \"{pythonw}\" \"{tray_script}\"\n"
     )
     target.write_text(content, encoding="utf-8")
 
 def disable() -> None:
-    target = startup_folder() / ANP_LAUNCHER_NAME
+    target = startup_folder() / ANW_LAUNCHER_NAME
     if target.exists():
         target.unlink()
 ```
@@ -1003,7 +1003,7 @@ def make_icon(color: str, badge: int = 0) -> Image.Image:
     img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
     draw.ellipse((4, 4, 60, 60), fill=colors[color])
-    # 写 "A" 字母代表 ANP
+    # 写 "A" 字母代表 ANW
     try:
         from PIL import ImageFont
         font = ImageFont.truetype("arial.ttf", 32)
@@ -1019,7 +1019,7 @@ def make_icon(color: str, badge: int = 0) -> Image.Image:
 ## 2.6 第 2 期 `tray_app.py` 主循环
 
 ```python
-"""ANP 系统托盘主程序."""
+"""ANW 系统托盘主程序."""
 import threading
 import subprocess
 import sys
@@ -1042,9 +1042,9 @@ class TrayApp:
         self.uvicorn_proc = None
         self.scheduler_proc = None
         self.icon = pystray.Icon(
-            "ANP",
+            "ANW",
             icon=make_icon("gray"),
-            title="ANP（启动中…）",
+            title="ANW（启动中…）",
             menu=self._build_menu(),
         )
 
@@ -1069,16 +1069,16 @@ class TrayApp:
                 data = r.json()
                 if data["status"] == "ok":
                     self.icon.icon = make_icon("green")
-                    self.icon.title = "ANP（运行中，全自动已启用）"
+                    self.icon.title = "ANW（运行中，全自动已启用）"
                 elif data["status"] == "degraded":
                     self.icon.icon = make_icon("yellow")
-                    self.icon.title = "ANP（运行中，有警告）"
+                    self.icon.title = "ANW（运行中，有警告）"
                 else:
                     self.icon.icon = make_icon("red")
-                    self.icon.title = "ANP（错误）"
+                    self.icon.title = "ANW（错误）"
             except Exception:
                 self.icon.icon = make_icon("gray")
-                self.icon.title = "ANP（连接断开）"
+                self.icon.title = "ANW（连接断开）"
             time.sleep(5)
 
     def _listen_notifications(self):
@@ -1100,7 +1100,7 @@ class TrayApp:
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("🔄 重启服务", self._restart_uvicorn),
             pystray.MenuItem("📁 打开数据文件夹", lambda: subprocess.Popen(["explorer", str(PROJECT_ROOT/"data")])),
-            pystray.MenuItem("📄 打开日志文件", lambda: subprocess.Popen(["notepad", str(PROJECT_ROOT/"logs/anp.log")])),
+            pystray.MenuItem("📄 打开日志文件", lambda: subprocess.Popen(["notepad", str(PROJECT_ROOT/"logs/anw.log")])),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("🚪 退出", self._quit),
         )
@@ -1124,18 +1124,18 @@ if __name__ == "__main__":
     TrayApp().start()
 ```
 
-## 2.7 第 2 期改造 `start_anp.bat`
+## 2.7 第 2 期改造 `start_anw.bat`
 
-把现有 `start_anp.bat` 末尾改成：
+把现有 `start_anw.bat` 末尾改成：
 
 ```bat
 :: 原有的环境检查、依赖安装、目录初始化全部保留
 
 :: 关键改动：用 pythonw 静默启动托盘程序
-echo [5/5] 启动 ANP（托盘模式）...
+echo [5/5] 启动 ANW（托盘模式）...
 start "" /B ".venv\Scripts\pythonw.exe" "tray_app.py"
-echo ✅ ANP 已启动到系统托盘。
-echo （右下角任务栏可见 ANP 图标，双击打开界面）
+echo ✅ ANW 已启动到系统托盘。
+echo （右下角任务栏可见 ANW 图标，双击打开界面）
 exit /b 0
 ```
 
@@ -1215,20 +1215,20 @@ pip install -r requirements.txt
 # 2. 确认 pythonw.exe 存在
 dir .\.venv\Scripts\pythonw.exe
 
-# 3. 双击 start_anp.bat
+# 3. 双击 start_anw.bat
 ```
 
 **手动验收清单**：
 
-- [ ] 双击 `start_anp.bat` 后**不再有黑窗口残留**（最多闪一下 cmd）
-- [ ] 任务栏右下角出现 ANP 灰色图标
+- [ ] 双击 `start_anw.bat` 后**不再有黑窗口残留**（最多闪一下 cmd）
+- [ ] 任务栏右下角出现 ANW 灰色图标
 - [ ] 5 秒内图标变绿（uvicorn 起来后）
 - [ ] 默认浏览器自动打开 `http://127.0.0.1:18000`
 - [ ] 关掉浏览器，托盘图标仍在
 - [ ] 右键托盘图标，菜单项全部正常工作
 - [ ] 点【⏸️ 暂停全自动】后图标变灰，菜单文字变成【▶️ 启动全自动】
 - [ ] 点【🚪 退出】托盘消失，uvicorn 和 scheduler 子进程全部死掉（任务管理器验证）
-- [ ] ⚙️ 设置 → 系统 勾选【开机自启动】，去 `shell:startup` 文件夹（`Win+R` → `shell:startup`）能看到 `ANP_AutoStart.bat`
+- [ ] ⚙️ 设置 → 系统 勾选【开机自启动】，去 `shell:startup` 文件夹（`Win+R` → `shell:startup`）能看到 `ANW_AutoStart.bat`
 - [ ] 重启 Windows 后 10 秒内托盘图标自动出现
 - [ ] 取消勾选【开机自启动】，`shell:startup` 里的 .bat 消失
 - [ ] 模拟一次番茄风控（手动触发 `bus.publish(Severity.CRITICAL, ...)`）→ Windows 右下角弹气泡 + 托盘图标变红
@@ -1242,7 +1242,7 @@ dir .\.venv\Scripts\pythonw.exe
 5. **HEALTH_URL 超时一定要短**（2 秒）——否则托盘卡住
 6. **SSE 长连接断了要重连**：服务重启后 EventSource 自动重连
 7. **`shell:startup` 文件夹**：用 `os.environ["APPDATA"]` 拼路径，不要写死 `C:\Users\...\AppData\Roaming`
-8. **autostart 的 .bat 用绝对路径**：用户安装路径不一定是 `D:\Development_alma\anp`
+8. **autostart 的 .bat 用绝对路径**：用户安装路径不一定是 `D:\Development_alma\anw`
 9. **托盘菜单项的文字动态变化**：用 lambda 而非字符串，pystray 会每次显示菜单时重算
 10. **`pywin32` 在某些 Python 安装下需要额外跑** `python -m pywin32_postinstall -install`，文档要说明
 
@@ -1384,7 +1384,7 @@ pytest -q
 # 期望: 所有测试 pass，含数据库 migration 迁移测试
 
 # 启动
-start_anp.bat
+start_anw.bat
 # 等托盘变绿
 ```
 
@@ -1420,7 +1420,7 @@ start_anp.bat
 ## 启动开发环境
 
 ```bash
-cd D:\Development_alma\anp
+cd D:\Development_alma\anw
 .\.venv\Scripts\activate
 pip install -r requirements.txt
 
@@ -1428,7 +1428,7 @@ pip install -r requirements.txt
 python -m review_queue.human_review --port 18000
 
 # 第 2 期完成后：启托盘（生产模式）
-start_anp.bat
+start_anw.bat
 ```
 
 ## 跑测试
@@ -1443,7 +1443,7 @@ pytest -q --cov=review_queue --cov-report=term-missing  # 覆盖率
 
 ```bash
 # 注意：会清掉所有生成的小说
-rm -r data/anp.sqlite3 data/browser/ logs/
+rm -r data/anw.sqlite3 data/browser/ logs/
 python -c "from review_queue.db import initialize_database; from config_loader import load_from_environment; initialize_database(load_from_environment())"
 ```
 

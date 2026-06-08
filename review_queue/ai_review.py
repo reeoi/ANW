@@ -20,7 +20,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from config_loader import LoadedConfig, load_from_environment
+from config_loader import LoadedConfig, get_env, load_from_environment
 from generator.api_client import DeepSeekClient, provider_defaults
 from review_queue.db import (
     get_story,
@@ -145,19 +145,19 @@ def load_ai_review_settings(config: LoadedConfig | None = None) -> AIReviewSetti
         db_path = None
 
     return AIReviewSettings(
-        approval_threshold=_env_int("ANP_AI_REVIEW_THRESHOLD", int(audit.get("approval_threshold") or 90)),
-        max_rewrite_attempts=max(0, _env_int("ANP_MAX_REWRITE_ATTEMPTS", int(audit.get("max_rewrite_attempts") or 3))),
+        approval_threshold=_env_int("ANW_AI_REVIEW_THRESHOLD", int(audit.get("approval_threshold") or 90)),
+        max_rewrite_attempts=max(0, _env_int("ANW_MAX_REWRITE_ATTEMPTS", int(audit.get("max_rewrite_attempts") or 3))),
         rewrite_strategy=str(
-            os.getenv("ANP_AI_REVIEW_REWRITE_STRATEGY")
+            get_env("ANW_AI_REVIEW_REWRITE_STRATEGY")
             or audit.get("rewrite_strategy")
             or "phase_4_5_only"
         ),
         provider=provider,
         protocol=str(deepseek.get("protocol") or defaults["protocol"]),
-        model=os.getenv("ANP_AI_REVIEW_MODEL") or str(audit.get("model") or deepseek.get("model") or defaults["model"]),
-        temperature=_env_float("ANP_AI_REVIEW_TEMPERATURE", float(audit.get("temperature") or 0.3)),
+        model=get_env("ANW_AI_REVIEW_MODEL") or str(audit.get("model") or deepseek.get("model") or defaults["model"]),
+        temperature=_env_float("ANW_AI_REVIEW_TEMPERATURE", float(audit.get("temperature") or 0.3)),
         timeout_seconds=_env_int(
-            "ANP_AI_REVIEW_TIMEOUT_SECONDS",
+            "ANW_AI_REVIEW_TIMEOUT_SECONDS",
             int(audit.get("timeout_seconds") or deepseek.get("timeout_seconds") or 120),
         ),
         api_key=api_key,
@@ -387,9 +387,16 @@ def _mock_review(title: str, content: str, settings: AIReviewSettings) -> Review
 
 def _live_review(title: str, content: str, settings: AIReviewSettings) -> ReviewResult:
     prompt = (
-        "请从 plot、character、pacing、language、originality、safety、platform_fit "
-        "7 个维度审核以下中文短篇小说。只返回 JSON，字段必须包含 total_score、"
-        "dimension_scores、issues、suggestions、decision。decision 只能是 approved 或 rewrite。"
+        "你是短篇小说终审主编。请先完整通读，再按证据审核，不要因为文句流畅就默认通过。\n"
+        "审核维度：plot、character、pacing、language、originality、safety、platform_fit。\n"
+        "重点检查：\n"
+        "1. 触发事件、升级、最低谷、主反转和结尾是否形成可追溯因果；反转是否有前置证据。\n"
+        "2. 主角是否通过选择推动故事；人物动机、口吻、行为是否一致。\n"
+        "3. 是否存在重复解释、连续无变化段落、仓促反转或结尾说教。\n"
+        "4. 是否存在 AI 腔、过度工整句式、抽象情绪、万能比喻和说明式对话。\n"
+        "5. 每条 issue 必须指出具体位置或现象；每条 suggestion 必须能直接指导一次返修。\n"
+        "只返回 JSON，字段必须包含 total_score、dimension_scores、issues、suggestions、decision。"
+        "decision 只能是 approved 或 rewrite。"
         f"通过阈值：{settings.approval_threshold}/100。\n标题：{title}\n正文：{content}"
     )
     # Decision #22/#24: route ai_review to flash when budget exhausted.
@@ -445,14 +452,20 @@ def _call_deepseek(prompt: str, settings: AIReviewSettings) -> str:
                         "max_retries": 1,
                         "mock": False,
                     },
-                    "database": {"sqlite_path": settings.metrics_db_path or "data/anp.sqlite3"},
+                    "database": {"sqlite_path": settings.metrics_db_path or "data/anw.sqlite3"},
                 },
                 path=Path("ai-review-runtime"),
             )
         )
         completion = client.chat_completion(
             [
-                {"role": "system", "content": "你是严谨的中文小说编辑和内容安全审核员。"},
+                {
+                    "role": "system",
+                    "content": (
+                        "你是严谨的中文短篇终审主编。审核必须基于文本证据，"
+                        "拒绝空泛表扬和模板化建议，只输出合法 JSON。"
+                    ),
+                },
                 {"role": "user", "content": prompt},
             ],
             thinking_mode=False,
@@ -513,7 +526,7 @@ def _config_with_threshold(config: LoadedConfig, threshold: int) -> LoadedConfig
 
 
 def _env_int(name: str, default: int) -> int:
-    value = os.getenv(name)
+    value = get_env(name)
     if value in (None, ""):
         return default
     try:
@@ -523,7 +536,7 @@ def _env_int(name: str, default: int) -> int:
 
 
 def _env_float(name: str, default: float) -> float:
-    value = os.getenv(name)
+    value = get_env(name)
     if value in (None, ""):
         return default
     try:

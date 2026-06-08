@@ -1,4 +1,4 @@
-"""Lightweight metrics collection for the ANP local pipeline.
+"""Lightweight metrics collection for the ANW local pipeline.
 
 Stores DeepSeek token usage and pipeline events (generate / review / publish)
 in two SQLite tables that live next to the existing ``stories`` table. The

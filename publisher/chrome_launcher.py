@@ -65,7 +65,7 @@ def ensure_chrome(
         return {"ok": False, "message": "Chrome executable not found. Please install Google Chrome."}
 
     if user_data_dir is None:
-        user_data_dir = str(Path.home() / ".anp" / "chrome-user-data")
+        user_data_dir = str(Path.home() / ".anw" / "chrome-user-data")
         Path(user_data_dir).mkdir(parents=True, exist_ok=True)
 
     cmd = [

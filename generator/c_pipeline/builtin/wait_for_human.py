@@ -107,13 +107,13 @@ def _get_db_path(config: Any, work_dir: str | Path | None) -> str | None:
     try:
         if config and hasattr(config, "data"):
             db = config.data.get("database", {})
-            return str(db.get("sqlite_path", "data/anp.sqlite3"))
+            return str(db.get("sqlite_path", "data/anw.sqlite3"))
     except Exception:
         pass
     if work_dir:
         p = Path(work_dir)
-        return str(p.parents[2] / "data" / "anp.sqlite3")
-    return "data/anp.sqlite3"
+        return str(p.parents[2] / "data" / "anw.sqlite3")
+    return "data/anw.sqlite3"
 
 
 __all__ = ["provide_input", "run"]

@@ -1,6 +1,6 @@
 import sys
 
-sys.path.insert(0, "D:\\Development_alma\\anp")
+sys.path.insert(0, "D:\\Development_alma\\anw")
 from config_loader import load_config
 
 cfg = load_config()

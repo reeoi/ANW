@@ -15,6 +15,11 @@ if str(ROOT) not in sys.path:
 from config_loader import ConfigError, load_config
 
 
+@pytest.fixture(autouse=True)
+def _isolate_project_dotenv(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ANW_DOTENV", str(tmp_path / "missing.env"))
+
+
 def test_default_config_yaml_parses_with_c_pipeline_fields() -> None:
     """The repo-level config.yaml must declare all PLAN §5.1 fields."""
 
@@ -83,7 +88,7 @@ def test_env_override_for_deepseek_thinking_mode(tmp_path: Path, monkeypatch: py
         "deepseek:\n  api_key: \"sk-test\"\n  thinking_mode: true\n",
         encoding="utf-8",
     )
-    monkeypatch.setenv("ANP_DEEPSEEK_THINKING_MODE", "false")
+    monkeypatch.setenv("ANW_DEEPSEEK_THINKING_MODE", "false")
     config = load_config(cfg)
     assert config.data["deepseek"]["thinking_mode"] is False
 
@@ -94,7 +99,7 @@ def test_env_override_for_prompt_cache_enabled(tmp_path: Path, monkeypatch: pyte
         "deepseek:\n  api_key: \"sk-test\"\n  prompt_cache_enabled: true\n",
         encoding="utf-8",
     )
-    monkeypatch.setenv("ANP_DEEPSEEK_PROMPT_CACHE_ENABLED", "0")
+    monkeypatch.setenv("ANW_DEEPSEEK_PROMPT_CACHE_ENABLED", "0")
     config = load_config(cfg)
     assert config.data["deepseek"]["prompt_cache_enabled"] is False
 
@@ -116,7 +121,7 @@ def test_env_override_for_pool_size(tmp_path: Path, monkeypatch: pytest.MonkeyPa
         "deepseek:\n  api_key: \"sk-test\"\nscan:\n  pool_size: 100\n",
         encoding="utf-8",
     )
-    monkeypatch.setenv("ANP_SCAN_POOL_SIZE", "50")
+    monkeypatch.setenv("ANW_SCAN_POOL_SIZE", "50")
     config = load_config(cfg)
     assert config.data["scan"]["pool_size"] == 50
 
@@ -127,7 +132,7 @@ def test_env_override_for_max_concurrent_pipelines(tmp_path: Path, monkeypatch: 
         "deepseek:\n  api_key: \"sk-test\"\nc_pipeline:\n  max_concurrent_pipelines: 2\n",
         encoding="utf-8",
     )
-    monkeypatch.setenv("ANP_MAX_CONCURRENT_PIPELINES", "1")
+    monkeypatch.setenv("ANW_MAX_CONCURRENT_PIPELINES", "1")
     config = load_config(cfg)
     assert config.data["c_pipeline"]["max_concurrent_pipelines"] == 1
 
@@ -138,7 +143,7 @@ def test_env_override_for_on_budget_exceeded(tmp_path: Path, monkeypatch: pytest
         "deepseek:\n  api_key: \"sk-test\"\ncost_limits:\n  on_budget_exceeded: \"degrade\"\n",
         encoding="utf-8",
     )
-    monkeypatch.setenv("ANP_ON_BUDGET_EXCEEDED", "stop")
+    monkeypatch.setenv("ANW_ON_BUDGET_EXCEEDED", "stop")
     config = load_config(cfg)
     assert config.data["cost_limits"]["on_budget_exceeded"] == "stop"
 
@@ -149,7 +154,7 @@ def test_env_override_for_publisher_slot_gap(tmp_path: Path, monkeypatch: pytest
         "deepseek:\n  api_key: \"sk-test\"\npublisher:\n  slot_min_gap_minutes: 30\n",
         encoding="utf-8",
     )
-    monkeypatch.setenv("ANP_SLOT_MIN_GAP_MINUTES", "45")
+    monkeypatch.setenv("ANW_SLOT_MIN_GAP_MINUTES", "45")
     config = load_config(cfg)
     assert config.data["publisher"]["slot_min_gap_minutes"] == 45
 
@@ -160,7 +165,7 @@ def test_missing_api_key_forces_dry_run_and_warning(
     cfg = tmp_path / "config.yaml"
     cfg.write_text("deepseek:\n  api_key: \"\"\n", encoding="utf-8")
     # Isolate from the project .env which carries a real DEEPSEEK_API_KEY.
-    monkeypatch.setenv("ANP_DOTENV", str(tmp_path / "missing.env"))
+    monkeypatch.setenv("ANW_DOTENV", str(tmp_path / "missing.env"))
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     monkeypatch.delenv("LLM_API_KEY", raising=False)
     config = load_config(cfg)
@@ -176,7 +181,7 @@ def test_dotenv_values_do_not_leak_into_process_environment(
     cfg.write_text("deepseek:\n  api_key: \"\"\n", encoding="utf-8")
     env_file = tmp_path / ".env"
     env_file.write_text("LLM_API_KEY=dotenv-only-key\nLLM_PROVIDER=qwen\n", encoding="utf-8")
-    monkeypatch.setenv("ANP_DOTENV", str(env_file))
+    monkeypatch.setenv("ANW_DOTENV", str(env_file))
     monkeypatch.delenv("LLM_API_KEY", raising=False)
     monkeypatch.delenv("LLM_PROVIDER", raising=False)
 

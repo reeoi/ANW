@@ -29,8 +29,8 @@ def env_setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path
         "deepseek:\n  api_key: \"\"\nruntime:\n  mode: \"semi-auto\"\n  dry_run: true\n",
         encoding="utf-8",
     )
-    monkeypatch.setenv("ANP_CONFIG", str(cfg))
-    monkeypatch.setenv("ANP_DOTENV", str(tmp_path / ".env"))
+    monkeypatch.setenv("ANW_CONFIG", str(cfg))
+    monkeypatch.setenv("ANW_DOTENV", str(tmp_path / ".env"))
     bus.clear()
     return {"cfg": cfg}
 
@@ -127,14 +127,14 @@ def test_post_autostart_enable_calls_autostart_enable(
 
     def fake_enable(**kwargs: Any) -> Path:
         captured.update(kwargs)
-        return tmp_path / "ANP_AutoStart.bat"
+        return tmp_path / "ANW_AutoStart.bat"
 
     monkeypatch.setattr(control_api, "autostart_enable", fake_enable)
     r = _request("POST", "/api/autostart", json_body={"enabled": True})
     assert r["status"] == 200
     body = json.loads(r["body"])
     assert body["enabled"] is True
-    assert body["shortcut_path"].endswith("ANP_AutoStart.bat")
+    assert body["shortcut_path"].endswith("ANW_AutoStart.bat")
     assert "project_root" in captured
 
 

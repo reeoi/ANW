@@ -2,7 +2,7 @@
 <div class="chrome">
   <div class="chrome-brand">
     <span class="mark" aria-hidden="true"></span>
-    <span>ANP · STUDIO</span>
+    <span>ANW · WRITER</span>
   </div>
   <div class="chrome-path" id="chrome-path">
     <span class="crumb">系统</span><span class="sep">/</span>
@@ -29,7 +29,7 @@
     </button>
     <h1>
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
-      ANP<span>STUDIO</span>
+      ANW<span>WRITER</span>
     </h1>
     <nav id="nav">
       <button data-target="monitor" class="active">
@@ -146,7 +146,7 @@
         <div class="ops-card" id="ops-long-novel">
           <div class="ops-card-head">
             <h3>长篇小说</h3>
-            <span class="ops-card-eyebrow" id="ops-long-eyebrow">书库</span>
+            <span class="ops-card-eyebrow" id="ops-long-eyebrow">长篇项目</span>
           </div>
           <div class="ops-card-body">
             <div class="ops-login-state" id="ops-long-state">检测中…</div>
@@ -273,11 +273,26 @@
 
     <section id="generate" class="section">
       <div class="page-header">
-        <h2 data-kicker="短篇小说">创作工作台</h2>
+        <h2 data-kicker="短篇小说">短篇小说</h2>
         <div class="actions">
           <button class="btn-primary tiny" id="btn-console-run">立即执行任务</button>
           <button class="btn-danger tiny" id="btn-console-cancel" disabled>取消</button>
         </div>
+      </div>
+
+      <div class="panel short-theme-picker">
+        <div>
+          <div class="short-theme-picker-kicker">本次选题</div>
+          <h3>从现有题材库开始创作</h3>
+          <p class="meta">可选择短篇或长篇题材。长篇题材会保留核心设定，并自动改编为短篇篇幅。</p>
+        </div>
+        <div class="short-theme-picker-control">
+          <select id="short-theme-select" aria-label="选择短篇题材">
+            <option value="">加载题材库中…</option>
+          </select>
+          <button class="ghost tiny" id="btn-short-theme-refresh" type="button">刷新题材</button>
+        </div>
+        <div id="short-theme-preview" class="short-theme-preview">请选择一个题材。</div>
       </div>
 
       <div class="panel" id="inbox-panel">
@@ -293,7 +308,7 @@
           <h3>提示词模板 <span class="meta" id="prompts-summary"></span></h3>
           <span style="font-size:0.8rem;color:var(--muted)" id="prompts-chevron">展开 ⌵</span>
         </div>
-        <div id="prompts-body" style="display:none; margin-top:1rem">
+        <div id="prompts-body" hidden style="margin-top:1rem">
           <div id="prompts-list" class="empty">加载中…</div>
         </div>
       </div>
@@ -335,11 +350,11 @@
     </div>
 
     <section id="long-novel" class="section">
-      <!-- 书库视图（默认） -->
+      <!-- 长篇小说视图（默认） -->
       <div id="ln-library-view" class="ln-library-shell">
         <div class="page-header ln-library-header">
           <div>
-            <h2 data-kicker="长篇小说">书库</h2>
+            <h2 data-kicker="长篇小说">长篇小说</h2>
             <p class="ln-library-subtitle">管理长篇项目、章节进度与当前连载状态。</p>
           </div>
           <div class="actions">
@@ -347,7 +362,7 @@
             <button class="ghost tiny" id="ln-btn-refresh-books">刷新</button>
           </div>
         </div>
-        <div class="ln-library-stats" aria-label="书库统计">
+        <div class="ln-library-stats" aria-label="长篇项目统计">
           <div>
             <span>书籍</span>
             <strong><span id="ln-library-count">0</span><em>本</em></strong>
@@ -374,7 +389,7 @@
         <div class="page-header">
           <h2 data-kicker="长篇小说"><span id="ln-ws-book-title"></span></h2>
           <div class="actions">
-            <button class="ghost tiny" id="ln-btn-back-library">← 返回书库</button>
+            <button class="ghost tiny" id="ln-btn-back-library">← 返回长篇小说</button>
             <span class="meta" id="ln-ws-progress"></span>
           </div>
         </div>
@@ -383,7 +398,6 @@
           <button class="btn-primary tiny" data-ln-sub="setup">设定</button>
           <button class="ghost tiny" data-ln-sub="outline">大纲</button>
           <button class="ghost tiny" data-ln-sub="writing">正文</button>
-          <button class="ghost tiny" data-ln-sub="benchmark">对标</button>
           <button class="ghost tiny" data-ln-sub="tracking">追踪</button>
           <button class="ghost tiny" data-ln-sub="pipeline">链路</button>
         </div>
@@ -405,13 +419,19 @@
                 <strong style="font-size:0.9rem">全自动写正文</strong>
                 <span id="ln-autopilot-range-hint" style="margin-left:0.5rem;color:var(--muted);font-size:0.78rem">从最早未写章节开始连续生成</span>
               </div>
-              <div style="display:flex;align-items:center;flex-wrap:wrap;gap:0.4rem;font-size:0.82rem">
-                <label for="ln-autopilot-start-chapter">第</label>
-                <input type="number" id="ln-autopilot-start-chapter" min="1" max="500" value="1" style="width:64px">
-                <span>章到第</span>
-                <input type="number" id="ln-autopilot-end-chapter" min="1" max="500" value="1" style="width:64px">
-                <span>章</span>
+              <div class="ln-autopilot-range-actions">
+                <div class="ln-chapter-range-picker" aria-label="正文章节范围">
+                  <span>第</span>
+                  <input class="ln-chapter-range-input" type="number" id="ln-autopilot-start-chapter" min="1" max="500" value="1" aria-label="起始章节">
+                  <span>章</span>
+                  <span class="ln-range-separator">到</span>
+                  <span>第</span>
+                  <input class="ln-chapter-range-input" type="number" id="ln-autopilot-end-chapter" min="1" max="500" value="1" aria-label="结束章节">
+                  <span>章</span>
+                </div>
                 <button class="btn-primary tiny" id="ln-btn-autopilot-write-range">全自动写正文</button>
+                <button class="ghost tiny" id="ln-btn-autopilot-rewrite-range">批量重写</button>
+                <button class="btn-danger tiny" id="ln-btn-autopilot-regenerate-range">批量删除</button>
               </div>
             </div>
           </div>
@@ -430,7 +450,7 @@
               <button class="btn-primary" id="ln-btn-autopilot">AI 全自动</button>
               <button class="ghost" id="ln-btn-manual-setup">自己手动点</button>
             </div>
-            <div style="font-size:0.78rem;color:var(--muted)">全自动：题材定位 → 世界观 → 角色 → 势力 → 关系 → 大纲 → 卷纲 → 章节细纲 → 入库；正文范围在上方「全自动生成」里选择。开书前会先把前置内容写完，到正文这步停一下，确认后再按范围连续写正文。每章生成后立即保存并进入下一章；审核分数仅供参考，不会触发自动重写。全程实时显示进度，可暂停。手动：每一步自己点「运行」。</div>
+            <div style="font-size:0.78rem;color:var(--muted)">全自动：题材定位 → 世界观 → 角色 → 势力 → 关系 → 大纲 → 卷纲 → 章节细纲 → 入库；正文范围在上方「全自动生成」里选择。开书前会先把前置内容写完，到正文这步停一下，确认后再按范围连续写正文。每章都会依次执行并保留：初稿 → 扩写判断 → 润色 → 去 AI → 审查 → 按建议修改并复审 → 成稿；达到目标字数会自动跳过扩写。全程实时显示进度，可暂停。手动：每一步自己点「运行」。</div>
           </div>
           <div id="ln-setup-strip" class="phase-strip" style="display:flex;margin-bottom:1rem"></div>
           <div id="ln-setup-preview" class="panel" style="display:none;margin-bottom:1rem">
@@ -460,17 +480,6 @@
         <!-- ── 正文面板 ── -->
         <!-- Content is rendered by ensureWritingPanelLayout() in dashboard.js -->
         <div id="ln-writing-panel" style="display:none"></div>
-
-        <!-- ── 对标面板 ── -->
-        <div id="ln-benchmark-panel" style="display:none">
-          <div class="panel">
-            <div class="ln-tracking-head">
-              <h4 style="margin:0">对标作品分析</h4>
-              <button class="ghost tiny" id="ln-benchmark-refresh">刷新文件列表</button>
-            </div>
-            <div id="ln-benchmark-content" class="empty">加载中…</div>
-          </div>
-        </div>
 
         <!-- ── 追踪面板 ── -->
         <div id="ln-tracking-panel" style="display:none">
@@ -655,11 +664,13 @@
       <details class="settings-group" id="grp-generation" open>
         <summary>AI 生成模型配置</summary>
         <div class="group-body">
+          <div class="generation-settings-layout">
+          <div class="generation-settings-form">
           <div class="settings-row">
             <label for="gen-provider">模型供应商</label>
             <div class="control">
               <select id="gen-provider" aria-label="模型供应商"></select>
-              <div class="meta">官方供应商只会填入 Base URL；模型名称请手动填写。第三方中转站请选择“自定义”。</div>
+              <div class="meta">官方供应商会预填 Base URL；填写 API Key 后点击“识别可用模型”。第三方中转站请选择“自定义”，无法识别时仍可手动填写。</div>
             </div>
           </div>
           <div class="settings-row">
@@ -692,18 +703,38 @@
           </div>
           <div class="settings-row">
             <label for="gen-model">模型名称</label>
-            <div class="control"><input type="text" id="gen-model"></div>
+            <div class="control">
+              <select id="gen-model" aria-label="模型名称"></select>
+              <input type="text" id="gen-model-custom" placeholder="手动填写模型名">
+              <div class="control-inline">
+                <button class="tiny primary" type="button" id="gen-discover-models">识别可用模型</button>
+                <span class="meta" id="gen-model-discovery-msg">填写 API Key 后可自动识别；第三方中转仍可手动填写。</span>
+              </div>
+            </div>
           </div>
           <div class="settings-row">
             <label for="gen-flash-model">快速 / 降级模型</label>
             <div class="control">
-              <input type="text" id="gen-flash-model">
+              <select id="gen-flash-model" aria-label="快速 / 降级模型"></select>
+              <input type="text" id="gen-flash-model-custom" placeholder="手动填写快速模型名">
               <div class="meta">并行详写和预算降级会使用该模型；可与主模型相同。</div>
             </div>
           </div>
           <div class="group-actions">
             <button class="ghost" data-reset="generation">↩ 还原修改</button>
             <button class="primary" data-save="generation">保存本节设置</button>
+          </div>
+          </div>
+          <aside class="generation-presets-panel">
+            <div class="generation-presets-head">
+              <div>
+                <strong>渠道预设</strong>
+                <span class="meta">点击即可切换并应用</span>
+              </div>
+              <button class="tiny primary" type="button" id="generation-preset-save">保存当前</button>
+            </div>
+            <div id="generation-preset-list" class="generation-preset-list"></div>
+          </aside>
           </div>
         </div>
       </details>
@@ -745,6 +776,24 @@
       <div id="prompt-placeholder-hint" class="inbox-meta" style="margin-bottom:0.4rem"></div>
       <textarea id="prompt-user-content" class="prompt-editor prompt-editor-user" spellcheck="false">加载中…</textarea>
     </div>
+  </div>
+</div>
+
+<div id="short-prompt-modal" class="modal-backdrop" style="display:none" role="dialog" aria-modal="true" aria-labelledby="short-prompt-modal-title">
+  <div class="modal prompt-workbench">
+    <div class="prompt-workbench-head">
+      <div>
+        <div class="short-theme-picker-kicker">短篇提示词模板</div>
+        <h3 id="short-prompt-modal-title">提示词</h3>
+        <div id="short-prompt-meta" class="meta">加载中…</div>
+      </div>
+      <div class="actions">
+        <button class="ghost tiny" id="short-prompt-revert" type="button">恢复备份</button>
+        <button class="btn-primary tiny" id="short-prompt-save" type="button">保存</button>
+        <button class="ghost" id="short-prompt-close" type="button">关闭</button>
+      </div>
+    </div>
+    <textarea id="short-prompt-content" class="prompt-editor short-prompt-editor" spellcheck="false">加载中…</textarea>
   </div>
 </div>
 

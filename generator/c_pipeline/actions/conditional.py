@@ -23,7 +23,7 @@ _OP_MAP = {
     "or": lambda a, b: a or b,
 }
 
-# Parse: {var} OP value   e.g. {label} != '人工创作特征显著'     {ai_rate} > 0.3
+# Parse: {var} OP value   e.g. {score} >= 85     {status} == 'ok'
 _EXPR_RE = re.compile(r"\{(\w+)\}\s*(==|!=|>=|<=|>|<)\s*(.+)", re.DOTALL)
 
 
@@ -85,8 +85,8 @@ class ConditionalAction(BaseAction):
         # left came from a resolved variable context, so resolve original expression's {var}
         # Actually the ctx.resolve_v2 already resolved to the value. But the regex needs
         # to capture the resolved value directly. Let me fix: resolve first, then compare.
-        # The resolved expression would be like "人工创作特征显著 != '人工创作特征显著'"
-        # So left is "人工创作特征显著", op is "!=", right is "'人工创作特征显著'"
+        # The resolved expression would be like "85 >= 80"
+        # So left is "85", op is ">=", right is "80"
 
         left_val = left_raw
         right_val = self._bool_val(right_raw)

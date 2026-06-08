@@ -51,7 +51,7 @@ def _config(tmp_path: Path) -> LoadedConfig:
             },
             "deepseek": {"mock": True, "api_key": ""},
             "runtime": {"dry_run": True, "project_root": str(tmp_path)},
-            "logging": {"file": str(tmp_path / "anp.log")},
+            "logging": {"file": str(tmp_path / "anw.log")},
         },
         path=Path("ai_review.yaml"),
     )

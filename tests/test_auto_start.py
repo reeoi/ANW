@@ -20,7 +20,7 @@ import auto_start
 def test_status_default(tmp_path: Path) -> None:
     info = auto_start.status(startup_dir=tmp_path)
     assert info["enabled"] is False
-    assert info["shortcut_path"].endswith("ANP_AutoStart.bat")
+    assert info["shortcut_path"].endswith("ANW_AutoStart.bat")
 
 
 def test_enable_creates_bat(tmp_path: Path) -> None:
@@ -49,7 +49,7 @@ def test_disable_removes_bat(tmp_path: Path) -> None:
     )
     assert auto_start.disable(startup_dir=tmp_path) is True
     assert auto_start.disable(startup_dir=tmp_path) is False
-    assert not (tmp_path / "ANP_AutoStart.bat").exists()
+    assert not (tmp_path / "ANW_AutoStart.bat").exists()
 
 
 def test_enable_creates_parent_dir(tmp_path: Path) -> None:

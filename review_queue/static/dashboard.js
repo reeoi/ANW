@@ -1,4 +1,4 @@
-﻿(() => {
+(() => {
 
 
   const $ = (id) => document.getElementById(id);
@@ -11,12 +11,12 @@
     theme = theme === 'dark' ? 'dark' : 'light';
     document.documentElement.setAttribute('data-theme', theme);
     document.body.classList.toggle('light', theme === 'light');
-    localStorage.setItem('anp-theme', theme);
+    localStorage.setItem('anw-theme', theme);
     updateThemeUI(theme);
   }
 
   function initTheme() {
-    const savedTheme = localStorage.getItem('anp-theme') || 'light';
+    const savedTheme = localStorage.getItem('anw-theme') || 'light';
     applyTheme(savedTheme);
   }
 
@@ -38,7 +38,7 @@
     document.documentElement.setAttribute('data-font-size', size);
     document.body.classList.remove('font-normal', 'font-large', 'font-xlarge');
     document.body.classList.add('font-' + size);
-    localStorage.setItem('anp-font-size', size);
+    localStorage.setItem('anw-font-size', size);
     const sel = document.getElementById('font-size-select');
     if (sel) sel.value = size;
   }
@@ -46,7 +46,7 @@
   function applyDensity(density) {
     density = density === 'dense' ? 'dense' : 'default';
     document.body.classList.toggle('dense', density === 'dense');
-    localStorage.setItem('anp-density', density);
+    localStorage.setItem('anw-density', density);
     const sel = document.getElementById('density-select');
     if (sel) sel.value = density;
   }
@@ -56,7 +56,7 @@
     applyFontSize('xlarge');
     applyDensity('default');
     if (!btn) return;
-    updateThemeUI(document.documentElement.getAttribute('data-theme') || localStorage.getItem('anp-theme') || 'light');
+    updateThemeUI(document.documentElement.getAttribute('data-theme') || localStorage.getItem('anw-theme') || 'light');
     btn.addEventListener('click', function(ev) {
       ev.stopPropagation();
       var current = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
@@ -68,12 +68,12 @@
     var sidebar = document.querySelector('.sidebar');
     var toggle = document.getElementById('sidebar-toggle');
     if (!sidebar || !toggle) return;
-    var stored = localStorage.getItem('anp-sidebar-collapsed') === '1';
+    var stored = localStorage.getItem('anw-sidebar-collapsed') === '1';
     if (stored) sidebar.classList.add('collapsed');
     toggle.setAttribute('aria-label', sidebar.classList.contains('collapsed') ? '展开侧边栏' : '收起侧边栏');
     toggle.addEventListener('click', function() {
       sidebar.classList.toggle('collapsed');
-      localStorage.setItem('anp-sidebar-collapsed', sidebar.classList.contains('collapsed') ? '1' : '0');
+      localStorage.setItem('anw-sidebar-collapsed', sidebar.classList.contains('collapsed') ? '1' : '0');
       toggle.setAttribute('aria-label', sidebar.classList.contains('collapsed') ? '展开侧边栏' : '收起侧边栏');
     });
   }
@@ -725,7 +725,7 @@
     }
   }
 
-  const GENERATION_PRESETS_KEY = 'anp-generation-channel-presets:v1';
+  const GENERATION_PRESETS_KEY = 'anw-generation-channel-presets:v1';
 
   function readGenerationPresets() {
     try {
@@ -3004,7 +3004,7 @@
       var el = e.target.closest('[data-ln-outline-file]');
       if (el) _lnLoadOutlineFile(el.dataset.lnOutlineFile);
     });
-  }  // ── 书库 ──
+  }  // ── 长篇小说 ──
 
   function _lnRenderOutlineChipFiles(phaseId, label, files, status) {
     var titleEl = document.getElementById('ln-outline-preview-title');
@@ -3257,7 +3257,7 @@
   var _lnAutopilotChapterCount = 0;
 
   function _lnAutopilotModeKey(bookId) {
-    return 'anp-ln-generation-mode:' + bookId;
+    return 'anw-ln-generation-mode:' + bookId;
   }
 
   function _lnGetGenerationMode() {
@@ -3282,11 +3282,11 @@
   }
 
   function _lnAutopilotPendingKey(bookId) {
-    return 'anp-ln-autopilot-pending-chapters:' + bookId;
+    return 'anw-ln-autopilot-pending-chapters:' + bookId;
   }
 
   function _lnAutopilotPendingRangeKey(bookId) {
-    return 'anp-ln-autopilot-pending-range:' + bookId;
+    return 'anw-ln-autopilot-pending-range:' + bookId;
   }
 
   function _lnSetAutopilotPendingChapters(count) {
@@ -4069,16 +4069,16 @@
   // ── 写作工作台 ──
   var _lnViewChapter = 0;
   function _lnWorkspaceChapterKey(bookId) {
-    return 'anp-ln-view-chapter:' + bookId;
+    return 'anw-ln-view-chapter:' + bookId;
   }
   function _lnPersistWorkspaceState() {
     try {
       if (_lnActiveBookId) {
-        localStorage.setItem('anp-ln-active-book', String(_lnActiveBookId));
+        localStorage.setItem('anw-ln-active-book', String(_lnActiveBookId));
         if (_lnViewChapter) localStorage.setItem(_lnWorkspaceChapterKey(_lnActiveBookId), String(_lnViewChapter));
         else localStorage.removeItem(_lnWorkspaceChapterKey(_lnActiveBookId));
       } else {
-        localStorage.removeItem('anp-ln-active-book');
+        localStorage.removeItem('anw-ln-active-book');
       }
     } catch (_) {}
   }
@@ -4094,7 +4094,7 @@
 
   async function loadWritingWorkbench() {
     if (!_lnActiveBookId) {
-      $('ln-ws-book-title').textContent = '请先在书库中选择一本书';
+      $('ln-ws-book-title').textContent = '请先在长篇小说中选择一本书';
       return;
     }
     try {
@@ -5459,16 +5459,15 @@
     var score = Number(gate.score == null ? fallbackScore : gate.score);
     var passScore = Number(gate.pass_score || 80);
     var forced = !!(forcePass && forcePass.force_passed);
-    var strictZhuque = gate.source === 'zhuque_web' || !!gate.required_label;
     var pending = !!gate.pending;
-    var passed = strictZhuque ? !!gate.passed : (!!gate.passed || forced);
+    var passed = !!gate.passed || forced;
     var verdict = String(gate.verdict || (passed ? 'APPROVE' : 'CONCERNS')).toUpperCase();
     var cls = passed ? 'approve' : (verdict === 'REJECT' ? 'reject' : (pending ? 'pending' : 'concerns'));
     var verdictLabel = passed ? 'PASS' : (pending ? '待手动复查' : verdict);
     var width = Math.max(0, Math.min(100, score || 0));
     var standardText;
     if (pending) {
-      standardText = '本地去 AI 已完成，可继续下一步；如需外部 AI 味检测请自行复查';
+      standardText = '本地去 AI 已完成，可继续下一步';
     } else {
       standardText = '达标线：' + passScore + '分';
     }
@@ -6116,7 +6115,7 @@
     ensureWritingPanelLayout();
     if (!_lnActiveBookId) {
       var titleEl = document.getElementById('ln-ws-book-title');
-      if (titleEl) titleEl.textContent = '请先在书库中选择一本书';
+      if (titleEl) titleEl.textContent = '请先在长篇小说中选择一本书';
       return;
     }
     try {
@@ -8794,7 +8793,7 @@
       'overview':      { label: '总览驾驶舱',   num: '00' },
       'monitor':       { label: '监控面板',     num: '01' },
       'generate':      { label: '短篇创作',     num: '03' },
-      'long-novel':    { label: '长篇书库',     num: '04' },
+      'long-novel':    { label: '长篇小说',     num: '04' },
       'theme-pool':    { label: '题材库',       num: '05' },
       'logs':          { label: '系统日志',     num: '06' },
       'settings-edit': { label: '设置',         num: '07' }

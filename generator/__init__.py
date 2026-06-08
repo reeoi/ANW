@@ -1,1 +1,1 @@
-"""Novel generation package for ANP."""
+"""Novel generation package for ANW."""

@@ -36,7 +36,7 @@ class FansqAutoPublisher:
 
     def __init__(self, headless: bool = True) -> None:
         self.headless = headless
-        self.logger = logging.getLogger("anp.publisher.fansq_auto")
+        self.logger = logging.getLogger("anw.publisher.fansq_auto")
 
         # Browser / page references — populated by start_browser
         self.browser: Any | None = None
@@ -95,10 +95,6 @@ class FansqAutoPublisher:
         self.logger.info("click_publish")
         return True
 
-    def _run_zhuque_gate(self) -> dict[str, Any]:
-        """Run the Zhuque gate (login verification). Internal stub."""
-        return {"ok": True, "message": "stub"}
-
     # ---- Main entry point ----
 
     def publish(self, cfg: PublishConfig) -> dict[str, Any]:
@@ -123,9 +119,6 @@ class FansqAutoPublisher:
             self.set_category()
             self.set_trial_ratio()
             self.check_publish_agreement()
-            gate = self._run_zhuque_gate()
-            if not gate.get("ok"):
-                self.logger.warning("Zhuque gate failed: %s", gate.get("message"))
             ok = self.click_publish()
             return {"ok": ok, "story_id": cfg.story_id, "message": "published" if ok else "publish_click_failed"}
         except Exception:

@@ -87,7 +87,7 @@ def select_theme(
     """Pick a theme, micro-tune via LLM, write 0_选题.json.
 
     Args:
-        config: loaded ANP config (provides DeepSeek settings + project_root).
+        config: loaded ANW config (provides DeepSeek settings + project_root).
         work_dir: per-story directory ``data/works/{story_id}/``.
         theme_pool_path: defaults to ``data/theme_pool.json`` under project root.
         seeds_path: defaults to ``data/scan_seeds.yaml``.
@@ -100,15 +100,21 @@ def select_theme(
     work_dir = Path(work_dir)
     work_dir.mkdir(parents=True, exist_ok=True)
 
-    pool_data = _read_pool(pool_path)
-    items = list(pool_data.get("items") or [])
-    if not items:
-        raise ThemePoolEmptyError(
-            f"theme_pool.json has no items (path={pool_path}). "
-            "Run scan/seed_evolver first."
-        )
-
-    item, item_index = _pick_least_consumed(items)
+    selected_item = (overrides or {}).get("theme_pool_item")
+    if isinstance(selected_item, Mapping):
+        pool_data: dict[str, Any] | None = None
+        items: list[dict[str, Any]] = []
+        item_index = -1
+        item = dict(selected_item)
+    else:
+        pool_data = _read_pool(pool_path)
+        items = list(pool_data.get("items") or [])
+        if not items:
+            raise ThemePoolEmptyError(
+                f"theme_pool.json has no items (path={pool_path}). "
+                "Run scan/seed_evolver first."
+            )
+        item, item_index = _pick_least_consumed(items)
     overrides_applied = _apply_overrides(item, overrides or {})
 
     seeds = load_seeds(seeds_p)
@@ -129,12 +135,16 @@ def select_theme(
     pitch_path = work_dir / "0_选题.json"
     _atomic_write_json(pitch_path, pitch_data)
 
-    items[item_index] = {**item, "consumed_count": int(item.get("consumed_count", 0)) + 1}
-    _atomic_write_json(pool_path, {**pool_data, "items": items})
+    if pool_data is not None:
+        items[item_index] = {**item, "consumed_count": int(item.get("consumed_count", 0)) + 1}
+        _atomic_write_json(pool_path, {**pool_data, "items": items})
+        result_item = items[item_index]
+    else:
+        result_item = item
 
     return Phase0Result(
         pitch_data=pitch_data,
-        theme_pool_item=items[item_index],
+        theme_pool_item=result_item,
         pitch_path=pitch_path,
         llm_completion=completion,
         used_fallback=used_fallback,
@@ -171,6 +181,21 @@ def build_phase0_prompt(
     target_length = item.get("target_length") or [8000, 12000]
     target_min, target_max = int(target_length[0]), int(target_length[1])
 
+    optional_values = (
+        ("公式情绪曲线", genre.get("emotion_arc", "")),
+        ("标志性场景", "; ".join(genre.get("signature_scenes", []) or [])),
+        ("创作提醒", genre.get("notes", "")),
+        ("开头模式参考", " / ".join(filter(None, (opening_id, opening.get("template", ""), opening.get("example", ""))))),
+        ("结尾模式参考", " / ".join(filter(None, (ending_id, ending.get("技巧", ""), ending.get("name", ""))))),
+        ("反转类型参考", " / ".join(filter(None, (reversal_id, reversal.get("pattern", ""))))),
+        ("风向词", item.get("seasonal_or_topic_seed", "")),
+    )
+    optional_references = "\n".join(
+        f"- {label}：{value}" for label, value in optional_values if value
+    )
+    if optional_references:
+        optional_references = "【可选参考】\n" + optional_references
+
     template = string.Template(template_str)
     user_text = template.safe_substitute(
         theme=item.get("theme", ""),
@@ -178,22 +203,16 @@ def build_phase0_prompt(
         emotion_arc=emotion.get("target_arc", ""),
         genre_id=genre_id,
         genre_formula=genre.get("formula", ""),
-        genre_emotion_arc=genre.get("emotion_arc", ""),
-        genre_signature_scenes="; ".join(genre.get("signature_scenes", []) or []),
-        genre_notes=genre.get("notes", ""),
         target_platform=item.get("target_platform", ""),
         target_length_min=target_min,
         target_length_max=target_max,
         hint_title=item.get("hint_title", ""),
         opening_mode_id=opening_id,
-        opening_mode_template=opening.get("template", ""),
-        opening_mode_example=opening.get("example", ""),
         ending_mode_id=ending_id,
-        ending_mode_template_or_skill=ending.get("技法", ending.get("name", "")),
         reversal_type_id=reversal_id,
-        reversal_pattern=reversal.get("pattern", ""),
         seasonal_or_topic_seed=item.get("seasonal_or_topic_seed", ""),
         expected_audience=item.get("expected_audience", ""),
+        optional_references=optional_references,
     )
 
     return [

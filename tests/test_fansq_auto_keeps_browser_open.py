@@ -49,8 +49,6 @@ def _mocked_publisher() -> FansqAutoPublisher:
     pub.set_trial_ratio = MagicMock()  # type: ignore[method-assign]
     pub.check_publish_agreement = MagicMock()  # type: ignore[method-assign]
     pub.click_publish = MagicMock(return_value=True)  # type: ignore[method-assign]
-    # 朱雀 gate stub —— 单测不调真实朱雀页面
-    pub._run_zhuque_gate = MagicMock(return_value={"ok": True, "message": "test stub"})  # type: ignore[method-assign]
     # Browser / playwright stubs that track close/stop calls
     pub.browser = MagicMock()
     pub.playwright = MagicMock()

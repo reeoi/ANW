@@ -358,5 +358,7 @@ def test_live_completion_records_first_complete_sentence_latency() -> None:
 
 def test_provider_presets_include_fast_model_and_protocol() -> None:
     assert provider_defaults("qwen")["flash_model"] == "qwen3.6-flash"
+    assert provider_defaults("xiaomi")["base_url"] == "https://api.xiaomimimo.com/v1"
+    assert provider_defaults("mimo")["model"] == "mimo-v2.5-pro"
     assert provider_defaults("anthropic")["protocol"] == "anthropic"
     assert provider_defaults("custom")["protocol"] == "openai"

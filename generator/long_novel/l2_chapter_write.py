@@ -366,6 +366,39 @@ def ensure_chapter_heading(text: str, chapter_number: int) -> str:
     return body.rstrip() + "\n"
 
 
+def strip_chapter_heading(text: str) -> str:
+    """Remove an LLM-added chapter markdown heading from intermediate prose."""
+    body = str(text or "").lstrip("\ufeff \t\r\n")
+    body = _CHAPTER_HEADING_RE.sub("", body, count=1)
+    return body.rstrip() + ("\n" if body.strip() else "")
+
+
+_TRACKING_CHAPTER_HEADING_RE = re.compile(r"^##\s*第\s*(\d+)\s*章")
+_TRACKING_CURRENT_PROGRESS_RE = re.compile(r"当前进度：第\s*(\d+)\s*章")
+
+
+def _tracking_text_before_chapter(
+    text: str,
+    chapter_number: int,
+    *,
+    drop_future_progress_head: bool = False,
+) -> str:
+    """Hide tracking sections produced by this chapter or later chapters."""
+    sections = re.split(r"(?=^##\s+)", str(text or ""), flags=re.MULTILINE)
+    kept: list[str] = []
+    for section in sections:
+        heading = section.splitlines()[0] if section.splitlines() else ""
+        match = _TRACKING_CHAPTER_HEADING_RE.match(heading)
+        if match and int(match.group(1)) >= int(chapter_number):
+            continue
+        if drop_future_progress_head and heading.strip() == "## 全书进展":
+            progress = _TRACKING_CURRENT_PROGRESS_RE.search(section)
+            if progress and int(progress.group(1)) >= int(chapter_number):
+                continue
+        kept.append(section)
+    return "".join(kept).strip()
+
+
 # ── Context Assembly ──────────────────────────────────────────────────
 
 
@@ -413,25 +446,32 @@ def assemble_context(
     # Foreshadowing
     foreshadow_path = work_dir / "追踪" / "伏笔.md"
     if foreshadow_path.exists():
-        ctx["foreshadowing"] = _read_file(foreshadow_path)
+        ctx["foreshadowing"] = _tracking_text_before_chapter(_read_file(foreshadow_path), chapter_number)
 
     # Character states
     char_state_path = work_dir / "追踪" / "角色状态.md"
     if char_state_path.exists():
-        ctx["character_states"] = _read_file(char_state_path)
+        ctx["character_states"] = _tracking_text_before_chapter(_read_file(char_state_path), chapter_number)
 
     # Timeline
     timeline_path = work_dir / "追踪" / "时间线.md"
     if timeline_path.exists():
-        ctx["timeline"] = _read_file(timeline_path)
+        ctx["timeline"] = _tracking_text_before_chapter(_read_file(timeline_path), chapter_number)
 
     progress_path = work_dir / "追踪" / "全书进展.md"
     if progress_path.exists():
-        ctx["book_progress"] = _read_file(progress_path)[:3000]
+        ctx["book_progress"] = _tracking_text_before_chapter(
+            _read_file(progress_path),
+            chapter_number,
+            drop_future_progress_head=True,
+        )[:3000]
 
     constraints_path = work_dir / "追踪" / "续写约束.md"
     if constraints_path.exists():
-        ctx["continuation_constraints"] = _read_file(constraints_path)[:2000]
+        ctx["continuation_constraints"] = _tracking_text_before_chapter(
+            _read_file(constraints_path),
+            chapter_number,
+        )[:2000]
 
     # Book premise
     premise_path = work_dir / "设定" / "题材定位.md"
@@ -686,7 +726,7 @@ def run_expand(
 ) -> str:
     """Expand the draft if it's too short."""
     current_words = count_chinese_chars(draft)
-    if current_words >= target_words * 0.9:
+    if current_words >= target_words:
         return draft  # Already long enough
 
     prompt = build_expand_prompt(draft, target_words)
@@ -938,7 +978,7 @@ def run_full_chapter(
     logger.info("Draft: %d words", draft_words)
 
     # 2. Expand if needed
-    if draft_words < target_words * 0.9:
+    if draft_words < target_words:
         draft = run_expand(client, draft, target_words)
         draft_words = count_chinese_chars(draft)
         logger.info("Expanded: %d words", draft_words)

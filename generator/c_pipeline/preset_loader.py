@@ -11,11 +11,11 @@ logger = logging.getLogger(__name__)
 DEFAULT_PRESETS_DIR = Path(__file__).resolve().parents[2] / "presets"
 VALID_PHASES = frozenset({
     "phase_0", "phase_1", "phase_2", "phase_3",
-    "phase_4", "phase_5", "phase_5_5", "phase_6",
+    "phase_4", "phase_5", "phase_6",
 })
 VALID_ACTIONS = frozenset({
     "llm_call", "read_file", "write_file", "text_template",
-    "conditional", "loop", "web_detect", "http_request", "python_snippet",
+    "conditional", "loop", "http_request", "python_snippet",
 })
 
 
@@ -58,7 +58,6 @@ _V1_TO_V2_BUILTIN: dict[str, str] = {
     "phase_3": "phase_3_sections",
     "phase_4": "phase_4_polish",
     "phase_5": "phase_5_deslop",
-    "phase_5_5": "phase_5_5_zhuque",
     "phase_6": "phase_6_chapter_title",
 }
 
@@ -100,7 +99,7 @@ def _v2_normalize(preset: dict) -> dict:
             prev_map = {
                 "phase_1": "phase_0", "phase_2": "phase_1", "phase_3": "phase_2",
                 "phase_4": "phase_3", "phase_5": "phase_4",
-                "phase_5_5": "phase_5", "phase_6": "phase_5_5",
+                "phase_6": "phase_5",
             }
             prev = prev_map.get(sid)
             if prev:
@@ -108,7 +107,7 @@ def _v2_normalize(preset: dict) -> dict:
                 port_map = {
                     "phase_1": "selection", "phase_2": "framework", "phase_3": "outline",
                     "phase_4": "draft", "phase_5": "polished",
-                    "phase_5_5": "final", "phase_6": "zhuque_passed",
+                    "phase_6": "final",
                 }
                 port = port_map.get(sid, "default")
                 new_s["bindings"] = {port: f"{{steps.{prev_output}.{port}}}"}

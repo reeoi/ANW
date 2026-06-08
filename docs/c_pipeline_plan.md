@@ -1,4 +1,4 @@
-# ANP C-Pipeline 重构方案
+# ANW C-Pipeline 重构方案
 
 > 由 grill-me 拷问产出的实施计划。前置决策见本文件「锁定决策」节,任何修改前请重新拷问。
 > 创建日期: 2026-05-06
@@ -10,7 +10,7 @@
 
 ### 1.1 现状
 
-ANP 当前是「单步 prompt 调 DeepSeek 生成 3000 字短篇」的简单 pipeline:
+ANW 当前是「单步 prompt 调 DeepSeek 生成 3000 字短篇」的简单 pipeline:
 
 ```
 cli/generate --theme X --style Y → DeepSeek 1 次调用 → SQLite content blob → 7 维 AI 审核 → 番茄发布
@@ -25,7 +25,7 @@ cli/generate --theme X --style Y → DeepSeek 1 次调用 → SQLite content blo
 
 ### 1.2 目标
 
-整合 oh-story-claudecode 的短篇写作方法论,把 ANP 升级为 6-phase 多阶段 pipeline,产出 8000-12000 字符合番茄短篇标准的稿件,并实现:
+整合 oh-story-claudecode 的短篇写作方法论,把 ANW 升级为 6-phase 多阶段 pipeline,产出 8000-12000 字符合番茄短篇标准的稿件,并实现:
 - 题材/风格 LLM 自动生成(每周扫榜+演化题材池)
 - 发布时间真正随机(每天 0-5 篇,9-22 点随机时刻)
 - 多 phase 中间产物可审计、可续跑、可观测
@@ -188,9 +188,9 @@ CREATE INDEX idx_cost_log_occurred_at ON pipeline_cost_log(occurred_at);
 ### 3.3 文件系统布局
 
 ```
-D:\Development_alma\anp\
+D:\Development_alma\anw\
 ├── data/
-│   ├── anp.sqlite3
+│   ├── anw.sqlite3
 │   ├── legacy_backup_20260506.sqlite3       (D2 删表前备份)
 │   ├── theme_pool.json
 │   ├── scan_seeds.yaml                      (从 real-market-data.md 蒸馏)
@@ -208,7 +208,7 @@ D:\Development_alma\anp\
 │       ├── 5_最终稿.md                      (= final_content_path)
 │       └── meta.json                        (每 phase 耗时/调用次数/token/cost)
 ├── logs/
-│   ├── anp.log
+│   ├── anw.log
 │   └── screenshots/                         (现状)
 └── (代码结构见第 4 节)
 ```
@@ -355,12 +355,12 @@ cost_limits:
 
 logging:
   level: "INFO"
-  file: "logs/anp.log"
+  file: "logs/anw.log"
   json: false
   screenshot_dir: "logs/screenshots"
 
 database:
-  sqlite_path: "data/anp.sqlite3"
+  sqlite_path: "data/anw.sqlite3"
   backup_dir: "data/backups"
   daily_backup: true
 ```
@@ -458,7 +458,7 @@ R2 重跑代价(假设 20% 篇触发,平均 1.5 次重跑):
   - 蒸馏来源: `skills/story-short-scan/references/real-market-data.md`(seeds.yaml 主源)
   - 蒸馏来源: `skills/story-deslop/`(去 AI 味方法)
 
-- ANP 现状参考: `D:\Development_alma\anp\README.md` 与 `anp制作清单.md`
+- ANW 现状参考: `D:\Development_alma\anw\README.md` 与 `anw制作清单.md`
 
 - DeepSeek 模型: v4-pro 1M 上下文,缓存命中 0.025 元/M(输入),输出 6 元/M;v4-flash 缓存命中 0.02 元/M,输出 2 元/M
 

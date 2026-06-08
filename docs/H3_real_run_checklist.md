@@ -23,15 +23,15 @@
 
 ```powershell
 # 选项 A:备份现有 prod sqlite
-Copy-Item "D:\Development_alma\anp\data\anp.sqlite3" `
-          "D:\Development_alma\anp\data\anp.backup.before_h3.sqlite3"
+Copy-Item "D:\Development_alma\anw\data\anw.sqlite3" `
+          "D:\Development_alma\anw\data\anw.backup.before_h3.sqlite3"
 
 # 选项 B(推荐):新建临时 sqlite,跑完后丢弃
-$env:ANP_SQLITE_PATH = "D:\Development_alma\anp\data\anp.h3_test.sqlite3"
-Remove-Item $env:ANP_SQLITE_PATH -ErrorAction Ignore
+$env:ANW_SQLITE_PATH = "D:\Development_alma\anw\data\anw.h3_test.sqlite3"
+Remove-Item $env:ANW_SQLITE_PATH -ErrorAction Ignore
 ```
 
-✅ 验收:`data/` 下能看到备份文件;或 `ANP_SQLITE_PATH` 指向不存在的临时路径(下一步会自动建表)。
+✅ 验收:`data/` 下能看到备份文件;或 `ANW_SQLITE_PATH` 指向不存在的临时路径(下一步会自动建表)。
 
 ---
 
@@ -59,7 +59,7 @@ $env:DEEPSEEK_API_KEY = "sk-xxxxxxxxxxxx"
 ## c. 跑 weekly_scan,产 100 题材
 
 ```powershell
-cd D:\Development_alma\anp
+cd D:\Development_alma\anw
 python -m cli.scan_now --force
 ```
 
@@ -68,14 +68,14 @@ python -m cli.scan_now --force
 iso_week=2026Wxx
 item_count=100
 used_fallback=False
-pool_path=D:\Development_alma\anp\data\theme_pool.json
+pool_path=D:\Development_alma\anw\data\theme_pool.json
 weekly_topics=...(5 个)
 ```
 
 ✅ 验收清单:
 - [ ] `data/theme_pool.json` 大小 > 30 KB
 - [ ] `python -c "import json; d=json.load(open('data/theme_pool.json',encoding='utf-8')); print(len(d['items']))"` 输出 `100`
-- [ ] `pipeline_cost_log` 出现一行 `phase='weekly_scan'`(可在 dashboard 看,或 `sqlite3 data/anp.sqlite3 "select phase, model, cost_cny from pipeline_cost_log order by id desc limit 5"`)
+- [ ] `pipeline_cost_log` 出现一行 `phase='weekly_scan'`(可在 dashboard 看,或 `sqlite3 data/anw.sqlite3 "select phase, model, cost_cny from pipeline_cost_log order by id desc limit 5"`)
 - [ ] 控制台不出现 `[mock]` 字样(说明走了真实 API)
 
 如果失败:
@@ -101,7 +101,7 @@ Generated story_id={N} status=pending final_phase=phase_5_done chars={8000-15000
 --- summary ---
 ... (150-300 字简介)
 --- final_content_path ---
-D:\Development_alma\anp\data\works\{N}\5_最终稿.md
+D:\Development_alma\anw\data\works\{N}\5_最终稿.md
 ```
 
 ✅ 验收清单:
@@ -197,8 +197,8 @@ python -m uvicorn review_queue.human_review:app --host 127.0.0.1 --port 8765
 ```powershell
 # 生成今天的发布计划(uniform[1,1] for 验收)
 # 为了演练,临时把 daily_count_min/max 都设成 1 跑一下:
-$env:ANP_PUBLISHER_DAILY_MIN = "1"
-$env:ANP_PUBLISHER_DAILY_MAX = "1"
+$env:ANW_PUBLISHER_DAILY_MIN = "1"
+$env:ANW_PUBLISHER_DAILY_MAX = "1"
 python -m cli.plan_today
 
 # 看到 planned_count=1 后,演练 publish 草稿(--dry-run 不真发)
@@ -225,7 +225,7 @@ python -m cli.publish --dry-run --slot-id 0
 
 ```powershell
 # 1. 关掉 headless,把浏览器窗口显示出来
-$env:ANP_HEADLESS = "false"
+$env:ANW_HEADLESS = "false"
 
 # 2. 先 dry-run 走一遍(headless=false 状态下肉眼盯整个流程)
 python -m cli.publish --dry-run --slot-id 0
@@ -252,7 +252,7 @@ python -m cli.publish --slot-id 0
 - [ ] 番茄后台能搜到这一篇(草稿 / 审核中 / 已发布,以番茄实际状态为准)
 - [ ] 标题、简介、正文、字数与 dashboard 显示一致
 - [ ] 没触发风控(没有滑块、没有人机验证、没有"操作过于频繁")
-- [ ] `data/anp.sqlite3` 中 `stories.status='published'`、`pipeline_cost_log` 月度累计 < 100 CNY
+- [ ] `data/anw.sqlite3` 中 `stories.status='published'`、`pipeline_cost_log` 月度累计 < 100 CNY
 
 ---
 

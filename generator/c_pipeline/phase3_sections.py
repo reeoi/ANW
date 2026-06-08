@@ -213,9 +213,6 @@ def build_phase3_prompt(
         outline_md=outline_md,
         prior_sections_md=prior_sections_md,
         ai_slop_excerpt=excerpt,
-        genre_emotion_arc="(详见设定中的情绪曲线落点)",
-        genre_signature_scenes="(详见设定中的反转设计)",
-        genre_notes="(详见设定中的人设/物件三现)",
     )
 
     return [

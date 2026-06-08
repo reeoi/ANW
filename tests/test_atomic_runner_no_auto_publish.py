@@ -27,9 +27,9 @@ def cfg(tmp_path: Path) -> LoadedConfig:
         data={
             "runtime": {"dry_run": True, "project_root": str(tmp_path)},
             "deepseek": {"api_key": "", "mock": True},
-            "database": {"sqlite_path": str(tmp_path / "anp.sqlite3")},
+            "database": {"sqlite_path": str(tmp_path / "anw.sqlite3")},
             "publisher": {"fansq": {"enabled": True}},
-            "logging": {"file": str(tmp_path / "anp.log")},
+            "logging": {"file": str(tmp_path / "anw.log")},
         },
         path=Path("config.yaml"),
     )

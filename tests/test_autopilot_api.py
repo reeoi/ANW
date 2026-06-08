@@ -95,9 +95,9 @@ class _ReviewFakeClient:
 
 @pytest.fixture()
 def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path]:
-    """Minimal ANP_CONFIG + initialised long-novel schema on a temp SQLite db."""
+    """Minimal ANW_CONFIG + initialised long-novel schema on a temp SQLite db."""
     cfg_path = tmp_path / "config.yaml"
-    db_path = tmp_path / "anp.sqlite3"
+    db_path = tmp_path / "anw.sqlite3"
     cfg_path.write_text(
         f"""
 deepseek:
@@ -108,12 +108,12 @@ runtime:
 database:
   sqlite_path: "{str(db_path).replace(chr(92), "/")}"
 logging:
-  file: "{str(tmp_path / "anp.log").replace(chr(92), "/")}"
+  file: "{str(tmp_path / "anw.log").replace(chr(92), "/")}"
 """.strip(),
         encoding="utf-8",
     )
-    monkeypatch.setenv("ANP_CONFIG", str(cfg_path))
-    monkeypatch.setenv("ANP_SQLITE_PATH", str(db_path))
+    monkeypatch.setenv("ANW_CONFIG", str(cfg_path))
+    monkeypatch.setenv("ANW_SQLITE_PATH", str(db_path))
     ln_db.initialize_long_novel_tables(db_path)
     return {"cfg": cfg_path, "db": db_path}
 

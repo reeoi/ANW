@@ -1,1 +1,1 @@
-"""Command-line package for ANP utilities."""
+"""Command-line package for ANW utilities."""

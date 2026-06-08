@@ -133,6 +133,7 @@ def run_generate_with_retry(
     config: LoadedConfig,
     *,
     story_id: int | None = None,
+    overrides: dict[str, Any] | None = None,
     max_attempts: int = _GENERATE_MAX_ATTEMPTS,
 ) -> tuple[int, str]:
     """Run c_pipeline generate up to ``max_attempts`` times.
@@ -156,13 +157,18 @@ def run_generate_with_retry(
     for attempt in range(1, max_attempts + 1):
         state.update_phase(f"generate#{attempt}")
         try:
-            result = run_pipeline(
-                story_id=story_id,
-                config=config,
-                resume_from=resume_from,
-            )
+            run_kwargs: dict[str, Any] = {
+                "story_id": story_id,
+                "config": config,
+                "resume_from": resume_from,
+            }
+            if overrides is not None:
+                run_kwargs["overrides"] = overrides
+            result = run_pipeline(**run_kwargs)
             if result.status == "cancelled":
                 return int(result.story_id), "cancelled"
+            if result.status == "paused_user":
+                return int(result.story_id), "paused"
             return int(result.story_id), "generated"
         except PipelineCancelledError as exc:
             logger.info("generate cancelled on attempt %s: %s", attempt, exc)
@@ -193,6 +199,7 @@ def run_full_atomic_task(
     config: LoadedConfig,
     *,
     story_id: int | None = None,
+    overrides: dict[str, Any] | None = None,
     on_publish_fail_streak_exceeded: Callable[[int], None] | None = None,
 ) -> AtomicResult:
     """Run the full atomic pipeline: generate → AI review → publish.
@@ -216,13 +223,24 @@ def run_full_atomic_task(
         state.set_current(story_id, "generate")
 
         # ---------------- generate ----------------
-        sid, gen_status = run_generate_with_retry(config, story_id=story_id)
+        generate_kwargs: dict[str, Any] = {"story_id": story_id}
+        if overrides is not None:
+            generate_kwargs["overrides"] = overrides
+        sid, gen_status = run_generate_with_retry(config, **generate_kwargs)
         if gen_status == "cancelled":
             return AtomicResult(
                 story_id=sid or None,
                 status="cancelled",
                 phase="generate",
                 message="生成阶段被取消",
+                duration_seconds=round(time.monotonic() - started, 3),
+            )
+        if gen_status == "paused":
+            return AtomicResult(
+                story_id=sid or None,
+                status="paused",
+                phase="generate",
+                message="短篇流程已按阶段控制暂停，确认产物后可继续运行。",
                 duration_seconds=round(time.monotonic() - started, 3),
             )
         if gen_status != "generated":
@@ -258,8 +276,12 @@ def run_full_atomic_task(
                 duration_seconds=round(time.monotonic() - started, 3),
             )
 
+        from review_queue.db import update_story_phase
+
+        update_story_phase(db_path, sid, "phase_7_running")
         review_summary = review_story_in_database(db_path, sid, config=config)
         if review_summary.decision != "approved":
+            update_story_phase(db_path, sid, "phase_7_needs_human")
             return AtomicResult(
                 story_id=sid,
                 status="needs_human",
@@ -267,6 +289,7 @@ def run_full_atomic_task(
                 message=f"AI 审核未通过 → needs_human (score={review_summary.final_score})",
                 duration_seconds=round(time.monotonic() - started, 3),
             )
+        update_story_phase(db_path, sid, "phase_7_done")
 
         # ---------------- pipeline stops here (Q6=B 决策) ----------------
         # 流水线在审核通过后停止；发布永远等用户在 UI 中点"立即发布"。
@@ -285,7 +308,12 @@ def run_full_atomic_task(
         state.release()
 
 
-def kick_off_async(config: LoadedConfig, story_id: int | None = None) -> int | None:
+def kick_off_async(
+    config: LoadedConfig,
+    story_id: int | None = None,
+    *,
+    overrides: dict[str, Any] | None = None,
+) -> int | None:
     """Start one atomic generate/review task in a daemon thread.
 
     The dashboard calls this from ``POST /api/console/run-now`` and expects a
@@ -297,7 +325,10 @@ def kick_off_async(config: LoadedConfig, story_id: int | None = None) -> int | N
 
     def _target() -> None:
         try:
-            result = run_full_atomic_task(config, story_id=story_id)
+            task_kwargs: dict[str, Any] = {"story_id": story_id}
+            if overrides is not None:
+                task_kwargs["overrides"] = overrides
+            result = run_full_atomic_task(config, **task_kwargs)
             logger.info(
                 "Async atomic task finished: story_id=%s status=%s phase=%s",
                 result.story_id,
@@ -307,7 +338,7 @@ def kick_off_async(config: LoadedConfig, story_id: int | None = None) -> int | N
         except Exception:
             logger.exception("Async atomic task crashed")
 
-    thread = threading.Thread(target=_target, daemon=True, name="anp-atomic-runner")
+    thread = threading.Thread(target=_target, daemon=True, name="anw-atomic-runner")
     thread.start()
     return story_id
 
@@ -349,6 +380,7 @@ def run_publish_only(config: LoadedConfig, story_id: int) -> AtomicResult:
     db_path = initialize_database(config)
     try:
         state.set_current(story_id, "publish")
+        from review_queue.db import update_story_phase
         story = get_story(db_path, story_id)
         if story is None:
             return AtomicResult(
@@ -367,6 +399,7 @@ def run_publish_only(config: LoadedConfig, story_id: int) -> AtomicResult:
                 duration_seconds=round(time.monotonic() - started, 3),
             )
 
+        update_story_phase(db_path, story_id, "phase_8_running")
         result = _publish_one(config, story)
         status = _publish_result_status(getattr(result, "status", None))
         raw_status = str(getattr(result, "status", status))
@@ -375,11 +408,14 @@ def run_publish_only(config: LoadedConfig, story_id: int) -> AtomicResult:
         if should_update:
             if status == "published":
                 update_story_status(db_path, story_id, "published", summary=message)
+                update_story_phase(db_path, story_id, "phase_8_done")
                 state.reset_publish_fail_streak()
             elif status == "paused":
                 update_story_status(db_path, story_id, "publish_paused", summary=message)
+                update_story_phase(db_path, story_id, "phase_8_paused")
             else:
                 update_story_status(db_path, story_id, "publish_failed", summary=message)
+                update_story_phase(db_path, story_id, "phase_8_failed")
                 state.increment_publish_fail_streak()
 
         return AtomicResult(
@@ -393,6 +429,7 @@ def run_publish_only(config: LoadedConfig, story_id: int) -> AtomicResult:
     except Exception as exc:
         logger.exception("manual publish failed: story_id=%s", story_id)
         update_story_status(db_path, story_id, "publish_failed", summary=str(exc))
+        update_story_phase(db_path, story_id, "phase_8_failed")
         return AtomicResult(
             story_id=story_id,
             status="failed",

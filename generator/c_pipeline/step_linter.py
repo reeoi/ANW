@@ -70,9 +70,6 @@ def lint(manifest: StepManifest) -> list[LintIssue]:
                 if aname == "read_file" and "fs.read" not in perms:
                     issues.append(LintIssue("warning", "permissions",
                         "read_file action used but fs.read not declared"))
-                if aname == "web_detect" and "browser.cdp" not in perms:
-                    issues.append(LintIssue("warning", "permissions",
-                        "web_detect action used but browser.cdp not declared"))
                 if aname == "http_request" and "net.http" not in perms:
                     issues.append(LintIssue("warning", "permissions",
                         "http_request action used but net.http not declared"))

@@ -1,4 +1,4 @@
-"""ANP configuration loading utilities.
+"""ANW configuration loading utilities.
 
 Configuration values are loaded from config.yaml and sensitive values may be
 overridden by environment variables. Missing external credentials never block
@@ -60,33 +60,32 @@ SENSITIVE_ENV_OVERRIDES: dict[tuple[str, ...], str] = {
 }
 
 GENERAL_ENV_OVERRIDES: dict[tuple[str, ...], str] = {
-    ("runtime", "mode"): "ANP_MODE",
-    ("runtime", "dry_run"): "ANP_DRY_RUN",
-    ("deepseek", "mock"): "ANP_MOCK_DEEPSEEK",
-    ("deepseek", "thinking_mode"): "ANP_DEEPSEEK_THINKING_MODE",
-    ("deepseek", "prompt_cache_enabled"): "ANP_DEEPSEEK_PROMPT_CACHE_ENABLED",
-    ("logging", "level"): "ANP_LOG_LEVEL",
-    ("database", "sqlite_path"): "ANP_SQLITE_PATH",
-    ("audit", "approval_threshold"): "ANP_AI_REVIEW_THRESHOLD",
-    ("audit", "max_rewrite_attempts"): "ANP_MAX_REWRITE_ATTEMPTS",
-    ("audit", "rewrite_strategy"): "ANP_AI_REVIEW_REWRITE_STRATEGY",
-    ("audit", "model"): "ANP_AI_REVIEW_MODEL",
-    ("audit", "temperature"): "ANP_AI_REVIEW_TEMPERATURE",
-    ("audit", "timeout_seconds"): "ANP_AI_REVIEW_TIMEOUT_SECONDS",
-    ("cost_limits", "monthly_budget_cny"): "ANP_MONTHLY_BUDGET_CNY",
-    ("cost_limits", "daily_token_limit"): "ANP_DAILY_TOKEN_LIMIT",
-    ("cost_limits", "on_budget_exceeded"): "ANP_ON_BUDGET_EXCEEDED",
-    ("publisher", "slot_min_gap_minutes"): "ANP_SLOT_MIN_GAP_MINUTES",
-    ("scheduler", "enabled"): "ANP_SCHEDULER_ENABLED",
-    ("scheduler", "weekly_scan_cron"): "ANP_WEEKLY_SCAN_CRON",
-    ("scheduler", "plan_today_cron"): "ANP_PLAN_TODAY_CRON",
-    ("scan", "pool_size"): "ANP_SCAN_POOL_SIZE",
-    ("scan", "seed_file"): "ANP_SCAN_SEED_FILE",
-    ("c_pipeline", "max_concurrent_pipelines"): "ANP_MAX_CONCURRENT_PIPELINES",
-    ("c_pipeline", "phase_2_max_retries"): "ANP_PHASE_2_MAX_RETRIES",
-    ("c_pipeline", "phase_3_section_max_retries"): "ANP_PHASE_3_SECTION_MAX_RETRIES",
+    ("runtime", "mode"): "ANW_MODE",
+    ("runtime", "dry_run"): "ANW_DRY_RUN",
+    ("deepseek", "mock"): "ANW_MOCK_DEEPSEEK",
+    ("deepseek", "thinking_mode"): "ANW_DEEPSEEK_THINKING_MODE",
+    ("deepseek", "prompt_cache_enabled"): "ANW_DEEPSEEK_PROMPT_CACHE_ENABLED",
+    ("logging", "level"): "ANW_LOG_LEVEL",
+    ("database", "sqlite_path"): "ANW_SQLITE_PATH",
+    ("audit", "approval_threshold"): "ANW_AI_REVIEW_THRESHOLD",
+    ("audit", "max_rewrite_attempts"): "ANW_MAX_REWRITE_ATTEMPTS",
+    ("audit", "rewrite_strategy"): "ANW_AI_REVIEW_REWRITE_STRATEGY",
+    ("audit", "model"): "ANW_AI_REVIEW_MODEL",
+    ("audit", "temperature"): "ANW_AI_REVIEW_TEMPERATURE",
+    ("audit", "timeout_seconds"): "ANW_AI_REVIEW_TIMEOUT_SECONDS",
+    ("cost_limits", "monthly_budget_cny"): "ANW_MONTHLY_BUDGET_CNY",
+    ("cost_limits", "daily_token_limit"): "ANW_DAILY_TOKEN_LIMIT",
+    ("cost_limits", "on_budget_exceeded"): "ANW_ON_BUDGET_EXCEEDED",
+    ("publisher", "slot_min_gap_minutes"): "ANW_SLOT_MIN_GAP_MINUTES",
+    ("scheduler", "enabled"): "ANW_SCHEDULER_ENABLED",
+    ("scheduler", "weekly_scan_cron"): "ANW_WEEKLY_SCAN_CRON",
+    ("scheduler", "plan_today_cron"): "ANW_PLAN_TODAY_CRON",
+    ("scan", "pool_size"): "ANW_SCAN_POOL_SIZE",
+    ("scan", "seed_file"): "ANW_SCAN_SEED_FILE",
+    ("c_pipeline", "max_concurrent_pipelines"): "ANW_MAX_CONCURRENT_PIPELINES",
+    ("c_pipeline", "phase_2_max_retries"): "ANW_PHASE_2_MAX_RETRIES",
+    ("c_pipeline", "phase_3_section_max_retries"): "ANW_PHASE_3_SECTION_MAX_RETRIES",
 }
-
 TRUE_VALUES = {"1", "true", "yes", "y", "on"}
 FALSE_VALUES = {"0", "false", "no", "n", "off"}
 
@@ -108,10 +107,10 @@ def load_config(path: str | Path | None = None) -> LoadedConfig:
     if not config_path.exists():
         raise ConfigError(
             f"Configuration file not found: {config_path}. "
-            "Create config.yaml or set ANP_CONFIG to a valid file."
+            "Create config.yaml or set ANW_CONFIG to a valid file."
         )
 
-    dotenv_path = Path(os.getenv("ANP_DOTENV") or DEFAULT_DOTENV_PATH)
+    dotenv_path = Path(get_env("ANW_DOTENV") or DEFAULT_DOTENV_PATH)
     dotenv_env = _read_dotenv(dotenv_path)
 
     try:
@@ -137,13 +136,21 @@ def load_config(path: str | Path | None = None) -> LoadedConfig:
 
 
 def load_from_environment() -> LoadedConfig:
-    """Load config from ANP_CONFIG or the default config.yaml path."""
-    return load_config(os.getenv("ANP_CONFIG") or DEFAULT_CONFIG_PATH)
+    """Load config from ANW_CONFIG or the default config.yaml path."""
+    return load_config(get_env("ANW_CONFIG") or DEFAULT_CONFIG_PATH)
 
 
 def is_wf_next() -> bool:
-    """Check if ANP_WF_NEXT=1 feature flag is set (phased rollout for workflow v2)."""
-    return os.getenv("ANP_WF_NEXT", "").strip() in ("1", "true", "yes", "on")
+    """Check if ANW_WF_NEXT=1 feature flag is set (phased rollout for workflow v2)."""
+    return get_env("ANW_WF_NEXT", "").strip() in ("1", "true", "yes", "on")
+
+
+def get_env(name: str, default: str = "") -> str:
+    """Return an ANW environment value with a default fallback."""
+    value = os.getenv(name)
+    if value is not None:
+        return value
+    return default
 
 
 def _apply_environment_overrides(

@@ -38,7 +38,7 @@ def _config(tmp_path: Path, *, monthly_budget: float = 100.0, degrade=None) -> L
         data={
             "runtime": {"dry_run": True, "project_root": str(ROOT)},
             "deepseek": {"api_key": "", "mock": True},
-            "database": {"sqlite_path": str(tmp_path / "anp.sqlite3")},
+            "database": {"sqlite_path": str(tmp_path / "anw.sqlite3")},
             "cost_limits": {
                 "monthly_budget_cny": monthly_budget,
                 "degrade_phases": degrade if degrade is not None else
@@ -351,7 +351,7 @@ def test_config_unit_price_overrides_default(tmp_path: Path) -> None:
         data={
             "runtime": {"dry_run": True, "project_root": str(ROOT)},
             "deepseek": {"api_key": "", "mock": True},
-            "database": {"sqlite_path": str(tmp_path / "anp.sqlite3")},
+            "database": {"sqlite_path": str(tmp_path / "anw.sqlite3")},
             "cost_limits": {
                 "monthly_budget_cny": 100.0,
                 "degrade_phases": [],

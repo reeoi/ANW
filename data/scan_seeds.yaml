@@ -1,4 +1,4 @@
-# ANP scan_seeds.yaml
+# ANW scan_seeds.yaml
 # 每周一 03:00 weekly_scan 任务用此文件作为输入,产 100 条 theme_pool 进 data/theme_pool.json。
 # 蒸馏自 oh-story-claudecode 的 real-market-data.md + genre-writing-formulas.md。
 # 修改后下一次 scan 自动生效。
@@ -11,7 +11,7 @@ source_files:
   - "skills/story-short-write/references/genre-writing-formulas.md"
 
 # === 目标平台 ===
-# ANP 当前只发番茄短篇,其他平台作为风格对标参考。
+# ANW 当前只发番茄短篇,其他平台作为风格对标参考。
 target_platform:
   primary: "番茄短篇"
   primary_traits:

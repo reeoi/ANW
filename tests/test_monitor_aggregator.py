@@ -29,7 +29,7 @@ def _reset_login_cache() -> None:
 
 @pytest.fixture()
 def cfg(tmp_path: Path) -> LoadedConfig:
-    db_path = tmp_path / "anp.sqlite3"
+    db_path = tmp_path / "anw.sqlite3"
     config = LoadedConfig(
         data={
             "database": {"sqlite_path": str(db_path)},

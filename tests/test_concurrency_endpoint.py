@@ -75,9 +75,9 @@ def _reset_global_semaphore() -> None:
 def env(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> dict[str, Path]:
-    """Minimal ANP_CONFIG so /api/monitor/concurrency can build a config."""
+    """Minimal ANW_CONFIG so /api/monitor/concurrency can build a config."""
     cfg_path = tmp_path / "config.yaml"
-    db_path = tmp_path / "anp.sqlite3"
+    db_path = tmp_path / "anw.sqlite3"
     cfg_path.write_text(
         f"""
 deepseek:
@@ -97,14 +97,14 @@ scheduler:
 database:
   sqlite_path: "{str(db_path).replace(chr(92), '/')}"
 logging:
-  file: "{str(tmp_path / 'anp.log').replace(chr(92), '/')}"
+  file: "{str(tmp_path / 'anw.log').replace(chr(92), '/')}"
 c_pipeline:
   max_concurrent_pipelines: 2
 """.strip(),
         encoding="utf-8",
     )
-    monkeypatch.setenv("ANP_CONFIG", str(cfg_path))
-    monkeypatch.setenv("ANP_SQLITE_PATH", str(db_path))
+    monkeypatch.setenv("ANW_CONFIG", str(cfg_path))
+    monkeypatch.setenv("ANW_SQLITE_PATH", str(db_path))
     return {"cfg": cfg_path, "db": db_path}
 
 

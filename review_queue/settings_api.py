@@ -11,17 +11,22 @@
 from __future__ import annotations
 
 import logging
+import json
 import os
 import platform
+import re
+import socket
 import subprocess
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, HTTPException, Request
 
 from config_loader import (
     DEFAULT_CONFIG_PATH,
     DEFAULT_DOTENV_PATH,
+    get_env,
     load_from_environment,
 )
 from review_queue.env_writer import read_env, write_env_fields
@@ -76,12 +81,12 @@ async def _json_payload(request: Request) -> dict[str, Any]:
 
 
 def _config_path() -> Path:
-    raw = os.getenv("ANP_CONFIG")
+    raw = get_env("ANW_CONFIG")
     return Path(raw) if raw else DEFAULT_CONFIG_PATH
 
 
 def _dotenv_path() -> Path:
-    raw = os.getenv("ANP_DOTENV")
+    raw = get_env("ANW_DOTENV")
     return Path(raw) if raw else DEFAULT_DOTENV_PATH
 
 
@@ -130,7 +135,7 @@ def _intersect_dict(base: dict[str, Any], updates: dict[str, Any]) -> dict[str, 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 
-LLM_PROVIDERS = ("deepseek", "openai", "google", "anthropic", "zhipu", "qwen", "custom")
+LLM_PROVIDERS = ("deepseek", "openai", "google", "anthropic", "zhipu", "qwen", "xiaomi", "custom")
 
 
 def _normalize_provider(value: Any) -> str:
@@ -143,6 +148,9 @@ def _normalize_provider(value: Any) -> str:
         "bigmodel": "zhipu",
         "dashscope": "qwen",
         "aliyun": "qwen",
+        "mimo": "xiaomi",
+        "xiaomimimo": "xiaomi",
+        "xiaomi-mimo": "xiaomi",
         "openai-compatible": "custom",
     }
     provider = aliases.get(provider, provider)
@@ -156,6 +164,8 @@ def _provider_presets() -> list[dict[str, str]]:
             "label": provider_defaults(provider)["label"],
             "protocol": provider_defaults(provider)["protocol"],
             "base_url": provider_defaults(provider)["base_url"],
+            "model": provider_defaults(provider)["model"],
+            "flash_model": provider_defaults(provider)["flash_model"],
         }
         for provider in LLM_PROVIDERS
     ]
@@ -174,6 +184,95 @@ def _generation_env_values(env: dict[str, str], cfg_deepseek: dict[str, Any]) ->
     }
 
 
+def _persist_generation_probe_payload(payload: dict[str, Any]) -> None:
+    """Persist settings submitted by test/discovery buttons before probing."""
+    env_updates: dict[str, str] = {}
+    if "provider" in payload:
+        env_updates["LLM_PROVIDER"] = _normalize_provider(payload.get("provider"))
+    if "protocol" in payload:
+        env_updates["LLM_PROTOCOL"] = _normalize_protocol(str(payload.get("protocol") or "openai"))
+    raw_key = str(payload.get("api_key") or "").strip()
+    if raw_key and not is_masked(raw_key):
+        env_updates["LLM_API_KEY"] = raw_key
+        env_updates["DEEPSEEK_API_KEY"] = raw_key
+    if "base_url" in payload:
+        base_url = str(payload.get("base_url") or "").strip()
+        env_updates["LLM_BASE_URL"] = base_url
+        env_updates["DEEPSEEK_BASE_URL"] = base_url
+    if "model" in payload:
+        model = str(payload.get("model") or "").strip()
+        env_updates["LLM_MODEL"] = model
+        env_updates["DEEPSEEK_MODEL"] = model
+    if "flash_model" in payload:
+        flash_model = str(payload.get("flash_model") or "").strip()
+        env_updates["LLM_FLASH_MODEL"] = flash_model
+        env_updates["DEEPSEEK_FLASH_MODEL"] = flash_model
+    if env_updates:
+        write_env_fields(_dotenv_path(), env_updates.items())
+
+
+def _versioned_base_candidate(base_url: str) -> str | None:
+    """Return base_url + /v1 when the URL has no version-like path segment."""
+    base = str(base_url or "").rstrip("/")
+    if not base:
+        return None
+    parsed = urlparse(base)
+    path_segments = [segment.lower() for segment in parsed.path.split("/") if segment]
+    if any(segment.startswith("v") and any(ch.isdigit() for ch in segment) for segment in path_segments):
+        return None
+    return base + "/v1"
+
+
+def _persist_corrected_base_url(base_url: str) -> None:
+    write_env_fields(
+        _dotenv_path(),
+        [
+            ("LLM_BASE_URL", base_url),
+            ("DEEPSEEK_BASE_URL", base_url),
+        ],
+    )
+
+
+def _fake_ip_notice(base_url: str) -> str:
+    host = urlparse(str(base_url or "")).hostname or ""
+    if not host:
+        return ""
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except Exception:
+        return ""
+    ips = sorted({str(info[4][0]) for info in infos if info and info[4]})
+    if any(ip.startswith("198.18.") or ip.startswith("198.19.") for ip in ips):
+        return f" 当前域名解析到 Clash/Mihomo Fake-IP（{', '.join(ips[:3])}），说明仍在 TUN/Fake-IP 规则内；请在规则里加 DOMAIN, {host}, DIRECT，并刷新 DNS/重启 Clash。"
+    return ""
+
+
+def _http_error_message(resp: Any, base_url: str) -> str:
+    text = str(getattr(resp, "text", "") or "")
+    content_type = str(getattr(resp, "headers", {}).get("Content-Type", "") or "").lower()
+    server = str(getattr(resp, "headers", {}).get("Server", "") or "").lower()
+    status_code = int(getattr(resp, "status_code", 0) or 0)
+    html_title = ""
+    if "<html" in text.lower() or "text/html" in content_type:
+        match = re.search(r"<title[^>]*>(.*?)</title>", text, flags=re.I | re.S)
+        if match:
+            html_title = re.sub(r"\s+", " ", match.group(1)).strip()
+    notice = _fake_ip_notice(base_url)
+    if "cloudflare" in server or "cloudflare" in text.lower() or html_title:
+        title = f"（{html_title}）" if html_title else ""
+        return f"HTTP {status_code}: 返回的是网页拦截页{title}，不是 API JSON。{notice}".strip()
+    return f"HTTP {status_code}: {text[:200]}"
+
+
+def _should_try_versioned_base(resp: Any) -> bool:
+    status_code = int(getattr(resp, "status_code", 0) or 0)
+    if status_code in {403, 404, 405}:
+        return True
+    text = str(getattr(resp, "text", "") or "").lower()
+    content_type = str(getattr(resp, "headers", {}).get("Content-Type", "") or "").lower()
+    return "text/html" in content_type or "<html" in text
+
+
 @router.get("/generation")
 def get_generation() -> dict[str, Any]:
     cfg = load_yaml(_config_path())
@@ -182,6 +281,7 @@ def get_generation() -> dict[str, Any]:
     values = _generation_env_values(env, d)
     return {
         "has_api_key": bool(values["api_key"]),
+        "api_key_masked": mask_secret(values["api_key"]) if values["api_key"] else "",
         "provider": values["provider"],
         "protocol": values["protocol"],
         "providers": _provider_presets(),
@@ -225,6 +325,7 @@ async def set_generation(request: Request) -> dict[str, Any]:
 @router.post("/generation/test")
 async def test_generation(request: Request) -> dict[str, Any]:
     payload = await _json_payload(request)
+    _persist_generation_probe_payload(payload)
     env = read_env(_dotenv_path())
     cfg = load_yaml(_config_path())
     deepseek = cfg.get("deepseek") or {}
@@ -260,26 +361,25 @@ async def test_generation(request: Request) -> dict[str, Any]:
     try:
         import httpx
 
-        if protocol == "anthropic":
-            endpoint = _join_endpoint(base_url, "messages")
-            resp = httpx.post(
-                endpoint,
-                headers={
-                    "x-api-key": raw_key,
-                    "anthropic-version": "2023-06-01",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": model,
-                    "messages": [{"role": "user", "content": "ping"}],
-                    "max_tokens": 1,
-                },
-                timeout=15.0,
-            )
-        else:
-            endpoint = _join_endpoint(base_url, "chat/completions")
-            resp = httpx.post(
-                endpoint,
+        def _probe(candidate_base: str):
+            if protocol == "anthropic":
+                return httpx.post(
+                    _join_endpoint(candidate_base, "messages"),
+                    headers={
+                        "x-api-key": raw_key,
+                        "anthropic-version": "2023-06-01",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": model,
+                        "messages": [{"role": "user", "content": "ping"}],
+                        "max_tokens": 1,
+                    },
+                    timeout=15.0,
+                    trust_env=False,
+                )
+            return httpx.post(
+                _join_endpoint(candidate_base, "chat/completions"),
                 headers={
                     "Authorization": f"Bearer {raw_key}",
                     "Content-Type": "application/json",
@@ -290,15 +390,123 @@ async def test_generation(request: Request) -> dict[str, Any]:
                     "max_tokens": 1,
                 },
                 timeout=15.0,
+                trust_env=False,
             )
+
+        corrected_base = None
+        resp = _probe(base_url)
+        candidate_base = _versioned_base_candidate(base_url) if protocol != "anthropic" else None
+        if candidate_base and _should_try_versioned_base(resp):
+            retry_resp = _probe(candidate_base)
+            if 200 <= retry_resp.status_code < 300:
+                resp = retry_resp
+                corrected_base = candidate_base
     except Exception as exc:  # pragma: no cover - network errors are environment-specific
         return {"ok": False, "message": f"{type(exc).__name__}: {exc}"}
     if 200 <= resp.status_code < 300:
+        if corrected_base:
+            _persist_corrected_base_url(corrected_base)
+            return {"ok": True, "message": f"连接成功，已自动补全 Base URL：{corrected_base}"}
         return {"ok": True, "message": "连接成功"}
     return {
         "ok": False,
-        "message": f"HTTP {resp.status_code}: {resp.text[:200]}",
+        "message": _http_error_message(resp, base_url),
     }
+
+
+def _extract_model_names(payload: Any) -> list[str]:
+    """Read model ids from common OpenAI-compatible and Anthropic list responses."""
+    items: Any = payload
+    if isinstance(payload, dict):
+        items = payload.get("data")
+        if not isinstance(items, list):
+            items = payload.get("models")
+    if not isinstance(items, list):
+        return []
+    names: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        if isinstance(item, str):
+            name = item.strip()
+        elif isinstance(item, dict):
+            name = str(item.get("id") or item.get("name") or item.get("model") or "").strip()
+        else:
+            name = ""
+        if name and name not in seen:
+            seen.add(name)
+            names.append(name)
+    return names
+
+
+@router.post("/generation/models")
+async def discover_generation_models(request: Request) -> dict[str, Any]:
+    """Discover models exposed by the configured official API or relay."""
+    payload = await _json_payload(request)
+    _persist_generation_probe_payload(payload)
+    env = read_env(_dotenv_path())
+    cfg = load_yaml(_config_path())
+    deepseek = cfg.get("deepseek") or {}
+    provider = _normalize_provider(payload.get("provider") or env.get("LLM_PROVIDER") or deepseek.get("provider") or "deepseek")
+    defaults = provider_defaults(provider)
+    protocol = _normalize_protocol(str(payload.get("protocol") or env.get("LLM_PROTOCOL") or deepseek.get("protocol") or defaults["protocol"]))
+    raw_key = str(payload.get("api_key") or "").strip()
+    if not raw_key or is_masked(raw_key):
+        raw_key = env.get("LLM_API_KEY") or env.get("DEEPSEEK_API_KEY") or str(deepseek.get("api_key") or "")
+    base_url = str(
+        payload.get("base_url")
+        or env.get("LLM_BASE_URL")
+        or env.get("DEEPSEEK_BASE_URL")
+        or deepseek.get("base_url")
+        or defaults["base_url"]
+    ).rstrip("/")
+    if not base_url:
+        return {"ok": False, "models": [], "message": "Base URL 为空，请先填写接口地址"}
+    if not raw_key:
+        return {"ok": False, "models": [], "message": "API key 为空，请先填写"}
+
+    headers = {"Accept": "application/json"}
+    if protocol == "anthropic":
+        headers.update({"x-api-key": raw_key, "anthropic-version": "2023-06-01"})
+    else:
+        headers["Authorization"] = f"Bearer {raw_key}"
+    try:
+        import httpx
+
+        corrected_base = None
+        response = httpx.get(_join_endpoint(base_url, "models"), headers=headers, timeout=15.0, trust_env=False)
+        candidate_base = _versioned_base_candidate(base_url) if protocol != "anthropic" else None
+        if candidate_base and _should_try_versioned_base(response):
+            retry_response = httpx.get(
+                _join_endpoint(candidate_base, "models"),
+                headers=headers,
+                timeout=15.0,
+                trust_env=False,
+            )
+            if 200 <= retry_response.status_code < 300:
+                response = retry_response
+                corrected_base = candidate_base
+    except Exception as exc:  # pragma: no cover - network errors are environment-specific
+        return {"ok": False, "models": [], "message": f"{type(exc).__name__}: {exc}"}
+    if not 200 <= response.status_code < 300:
+        return {
+            "ok": False,
+            "models": [],
+            "message": _http_error_message(response, base_url),
+        }
+    try:
+        response_payload = response.json()
+    except Exception:
+        try:
+            response_payload = json.loads(response.text)
+        except Exception:
+            response_payload = {}
+    models = _extract_model_names(response_payload)
+    if models and corrected_base:
+        _persist_corrected_base_url(corrected_base)
+        return {"ok": True, "models": models, "message": f"已识别 {len(models)} 个可用模型，并自动补全 Base URL：{corrected_base}"}
+    if not models:
+        return {"ok": False, "models": [], "message": "接口已连通，但没有返回可选模型；仍可手动填写"}
+    return {"ok": True, "models": models, "message": f"已识别 {len(models)} 个可用模型"}
 
 
 # ============================================================================
@@ -502,10 +710,10 @@ def get_system() -> dict[str, Any]:
     log = cfg.get("logging") or {}
     cost = cfg.get("cost_limits") or {}
     return {
-        "database_path": str(db.get("sqlite_path") or "data/anp.sqlite3"),
+        "database_path": str(db.get("sqlite_path") or "data/anw.sqlite3"),
         "backup_dir": str(db.get("backup_dir") or "data/backups"),
         "daily_backup": bool(db.get("daily_backup", True)),
-        "log_path": str(log.get("file") or "logs/anp.log"),
+        "log_path": str(log.get("file") or "logs/anw.log"),
         "log_level": str(log.get("level") or "INFO"),
         "log_json": bool(log.get("json", False)),
         "monthly_budget_cny": float(cost.get("monthly_budget_cny") or 0),
@@ -559,9 +767,9 @@ async def open_folder(request: Request) -> dict[str, Any]:
     kind = str(payload.get("kind") or "").strip()
     cfg = load_yaml(_config_path())
     if kind == "data":
-        target = Path(str((cfg.get("database") or {}).get("sqlite_path") or "data/anp.sqlite3")).parent
+        target = Path(str((cfg.get("database") or {}).get("sqlite_path") or "data/anw.sqlite3")).parent
     elif kind == "logs":
-        target = Path(str((cfg.get("logging") or {}).get("file") or "logs/anp.log")).parent
+        target = Path(str((cfg.get("logging") or {}).get("file") or "logs/anw.log")).parent
     elif kind == "backup":
         target = Path(str((cfg.get("database") or {}).get("backup_dir") or "data/backups"))
     else:
