@@ -136,14 +136,15 @@ def isolated_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, P
     return {"cfg": cfg, "db": tmp_path / "anw.sqlite3"}
 
 
-def test_monitor_cards_endpoint_returns_4_cards(isolated_env: dict[str, Path]) -> None:
+def test_monitor_cards_endpoint_returns_core_cards(isolated_env: dict[str, Path]) -> None:
     r = _request("GET", "/api/monitor/cards")
     assert r["status"] == 200
     body = json.loads(r["body"])
     assert body["ok"] is True
-    for key in ("next_run", "last_run", "login", "budget"):
+    for key in ("next_run", "last_run", "budget"):
         assert key in body
         assert "level" in body[key]
+    assert "login" not in body
 
 
 def test_monitor_cards_endpoint_when_scheduler_off(isolated_env: dict[str, Path]) -> None:

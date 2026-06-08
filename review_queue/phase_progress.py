@@ -30,7 +30,6 @@ PHASES: tuple[str, ...] = (
     "phase_5",
     "phase_6",
     "phase_7",
-    "phase_8",
 )
 
 PHASE_LABELS: dict[str, str] = {
@@ -41,13 +40,12 @@ PHASE_LABELS: dict[str, str] = {
     "phase_4": "phase_4 全文精修",
     "phase_5": "phase_5 去 AI 味",
     "phase_6": "phase_6 分章成稿",
-    "phase_7": "phase_7 AI 审核/返修",
-    "phase_8": "phase_8 发布",
+    "phase_7": "phase_7 AI 审核/复核",
 }
 
 # Per-phase artifact filenames produced by generator/c_pipeline/*. The
 # dashboard uses this to surface "查看产物" links once a phase completes.
-# AI review lives in stories.review_detail JSON; publish has no local artifact.
+# AI review lives in stories.review_detail JSON.
 PHASE_ARTIFACTS: dict[str, tuple[str, ...]] = {
     "phase_0": ("0_选题.json",),
     "phase_1": ("1_设定.md",),
@@ -57,7 +55,6 @@ PHASE_ARTIFACTS: dict[str, tuple[str, ...]] = {
     "phase_5": ("5_最终稿.md",),
     "phase_6": ("6_最终稿_带章节.md",),
     "phase_7": (),
-    "phase_8": (),
 }
 
 # Default safety limits for the file browser.
@@ -78,11 +75,9 @@ _PHASE_DONE_RE = re.compile(r"^phase_(\d)_done$")
 _PHASE_REWRITE_RE = re.compile(r"^phase_(\d)_rewrite$")
 _PHASE_FAILED_RE = re.compile(r"^failed_at_phase_(\d)(?:_.*)?$")
 _PHASE_SECTION_RE = re.compile(r"^phase_3_section_(\d{1,3})(?:_done)?$")
-# phase_7 AI 审核 / phase_8 发布 状态机扩展
+# phase_7 AI 审核状态机扩展
 _PHASE_NEEDS_HUMAN_RE = re.compile(r"^phase_7_needs_human$")
 _PHASE_REJECTED_RE = re.compile(r"^phase_7_rejected$")
-_PHASE_PUBLISH_FAILED_RE = re.compile(r"^phase_8_failed$")
-_PHASE_PUBLISH_PAUSED_RE = re.compile(r"^phase_8_paused$")
 _OUTLINE_SECTION_COUNT_RE = re.compile(r"^-\s*section_count\s*:\s*(\d+)\s*$", re.MULTILINE)
 
 
@@ -205,19 +200,6 @@ def compute_phase_progress(current_phase: str | None) -> PhaseProgress:
         state = "failed"
         failed_at = "phase_7"
         label = "人工拒绝"
-    elif _PHASE_PUBLISH_FAILED_RE.match(raw):
-        completed_idx = 7
-        running_idx = 8
-        state = "failed"
-        failed_at = "phase_8"
-        label = "发布失败"
-    elif _PHASE_PUBLISH_PAUSED_RE.match(raw):
-        # 发布暂停：风控/验证码 / 登录态缺失
-        completed_idx = 7
-        running_idx = 8
-        state = "paused"
-        failed_at = "phase_8"
-        label = "发布已暂停（风控）"
     elif raw == "complete":
         # Preset pipeline completed all steps
         completed_idx = len(PHASES) - 1
@@ -793,9 +775,8 @@ def normalize_resume_from(value: str | None) -> str:
 
     Returns the canonical ``phase_N`` form if the input is recognized.
     Only c_pipeline generation phases (phase_0 through phase_6) are
-    resumable — phase_7 (AI 审核) and phase_8 (发布) are not orchestrator
-    steps and have their own buttons (批准 / 拒绝 / 改写 /
-    重试发布 / 复制内容).
+    resumable — phase_7 (AI 审核) is not an orchestrator step and has
+    its own review buttons (批准 / 拒绝 / 改写 / 复制内容).
 
     Raises ``ValueError`` otherwise — the caller should surface a 400.
     """

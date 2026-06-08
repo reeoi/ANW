@@ -1,1 +1,0 @@
-"""Publisher package for ANW."""

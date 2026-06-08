@@ -34,16 +34,6 @@ runtime:
 audit:
   approval_threshold: 90
 
-publisher:
-  default_platform: "fansq"
-  daily_count_min: 0
-  daily_count_max: 5
-  operating_hours: ["09:00", "22:00"]
-  slot_min_gap_minutes: 30
-  fansq:
-    enabled: true
-    login_state_path: "data/browser/fansq_state.json"
-
 scheduler:
   enabled: false
   timezone: "Asia/Shanghai"
@@ -73,7 +63,6 @@ def env_setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path
 
     # Reset atomic runner global state between tests.
     atomic_runner.state.clear_current()
-    atomic_runner.state.reset_publish_fail_streak()
     while atomic_runner.state.is_busy():
         atomic_runner.state.release()
 
@@ -173,9 +162,9 @@ def test_console_status_idle(env_setup: dict[str, Path]) -> None:
     assert body["busy"] is False
     assert "scheduler_running" not in body  # 已下线
     assert "today" not in body  # daily plan 已下线
-    assert "login_state" in body
+    assert "login_state" not in body
+    assert set(body).issuperset({"ok", "current_task", "busy", "theme_pool_count"})
     assert body["theme_pool_count"] >= 0
-    assert body["publish_fail_streak"] == 0
 
 
 def test_console_status_reflects_current_task(env_setup: dict[str, Path]) -> None:

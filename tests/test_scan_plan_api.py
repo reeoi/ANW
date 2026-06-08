@@ -52,11 +52,6 @@ def _config_yaml(tmp_path: Path) -> Path:
         "  pool_size: 100\n"
         "  on_failure: \"fallback_or_block\"\n"
         "  seed_file: \"data/scan_seeds.yaml\"\n"
-        "publisher:\n"
-        "  daily_count_min: 0\n"
-        "  daily_count_max: 3\n"
-        "  operating_hours: [\"09:00\", \"22:00\"]\n"
-        "  slot_min_gap_minutes: 30\n"
         "database:\n"
         "  sqlite_path: \"" + str(db_path).replace("\\", "/") + "\"\n",
         encoding="utf-8",

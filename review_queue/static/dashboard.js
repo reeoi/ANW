@@ -312,7 +312,7 @@
       'phase 4': '阶段 4 · 精修',
       'phase 5': '阶段 5 · 去 AI 味',
       'phase 6': '阶段 6 · 审核',
-      'phase 7': '阶段 7 · 发布',
+      'phase 7': '阶段 7 · 审核',
       'chat': '通用调用',
       'long novel premise': '长篇 · 题材定位',
       'long novel world': '长篇 · 世界观',
@@ -1414,7 +1414,6 @@
       published: { tone: 'primary', text: '已完成' },
       rejected: { tone: '', text: '已拒绝' },
       failed: { tone: 'danger', text: '失败' },
-      publish_paused: { tone: 'warn', text: '已暂停' },
     };
     const rows = [];
     stories.forEach((s) => {
@@ -2016,9 +2015,8 @@
     phase_5: 'phase_5 去 AI 味',
     phase_6: 'phase_6 分章成稿',
     phase_7: 'phase_7 AI 审核/返修',
-    phase_8: 'phase_8 发布',
   };
-  const _PHASE_ORDER = ['phase_0','phase_1','phase_2','phase_3','phase_4','phase_5','phase_6','phase_7','phase_8'];
+  const _PHASE_ORDER = ['phase_0','phase_1','phase_2','phase_3','phase_4','phase_5','phase_6','phase_7'];
 
   function ensureProgressTracking(storyId) {
     if (storyId == null) return;
@@ -2427,8 +2425,6 @@
     needs_human: '需人工审核',
     approved: '已批准',
     published: '已完成',
-    publish_paused: '已暂停',
-    publish_failed: '失败',
     failed: '失败',
     rejected: '已拒绝',
     cancelled: '已取消',
@@ -2503,7 +2499,7 @@
       if (summary) {
         const counts = {};
         stories.forEach((s) => { counts[s.status] = (counts[s.status] || 0) + 1; });
-        const pending = (counts.needs_human || 0) + (counts.approved || 0) + (counts.publish_paused || 0);
+        const pending = (counts.needs_human || 0) + (counts.approved || 0);
         summary.textContent = '共 ' + stories.length + ' 篇' + (pending ? '，待处理 ' + pending + ' 篇' : '');
       }
       if (stories.length === 0) {

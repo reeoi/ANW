@@ -85,12 +85,6 @@ deepseek:
 runtime:
   mode: "semi-auto"
   dry_run: true
-publisher:
-  default_platform: "fansq"
-  daily_count_min: 0
-  daily_count_max: 5
-  operating_hours: ["09:00", "22:00"]
-  slot_min_gap_minutes: 30
 scheduler:
   enabled: false
   timezone: "Asia/Shanghai"
