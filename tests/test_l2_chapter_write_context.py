@@ -99,3 +99,31 @@ def test_rewrite_tracking_update_does_not_move_latest_progress_backwards(tmp_pat
     progress = (tmp_path / "追踪" / "全书进展.md").read_text(encoding="utf-8")
     assert "当前进度：第5章已完成" in context
     assert "## 第1章" in progress
+
+
+def test_assemble_context_hides_tracking_from_current_and_future_chapters(tmp_path: Path) -> None:
+    (tmp_path / "大纲").mkdir()
+    (tmp_path / "大纲" / "细纲_第002章.md").write_text("第二章细纲", encoding="utf-8")
+    ensure_tracking_files(tmp_path, 3)
+    (tmp_path / "追踪" / "全书进展.md").write_text(
+        "## 全书进展\n\n- 当前进度：第3章已完成\n\n"
+        "## 第1章\n\n- 摘要：第一章记忆\n\n"
+        "## 第2章\n\n- 摘要：第二章未来记忆\n\n"
+        "## 第3章\n\n- 摘要：第三章未来记忆\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "追踪" / "角色状态.md").write_text(
+        "## 角色状态\n\n"
+        "## 第1章\n\n- 第一章角色状态\n\n"
+        "## 第2章\n\n- 第二章未来状态\n",
+        encoding="utf-8",
+    )
+
+    ctx = assemble_context(tmp_path, 2)
+
+    assert "第一章记忆" in ctx["book_progress"]
+    assert "第二章未来记忆" not in ctx["book_progress"]
+    assert "第三章未来记忆" not in ctx["book_progress"]
+    assert "当前进度：第3章已完成" not in ctx["book_progress"]
+    assert "第一章角色状态" in ctx["character_states"]
+    assert "第二章未来状态" not in ctx["character_states"]

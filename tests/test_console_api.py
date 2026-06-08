@@ -123,6 +123,42 @@ def _request(
     return anyio.run(run)
 
 
+def _seed_short_theme() -> int:
+    from config_loader import load_from_environment
+    from generator.long_novel.theme_db import initialize_theme_tables, upsert_theme
+    from review_queue.db import initialize_database
+
+    db_path = initialize_database(load_from_environment())
+    initialize_theme_tables(db_path)
+    return upsert_theme(
+        db_path,
+        theme="测试短篇题材",
+        genre="都市",
+        emotion="反转",
+        platform="番茄短篇",
+        target_type="short",
+    )
+
+
+def _seed_long_theme() -> int:
+    from config_loader import load_from_environment
+    from generator.long_novel.theme_db import initialize_theme_tables, upsert_theme
+    from review_queue.db import initialize_database
+
+    db_path = initialize_database(load_from_environment())
+    initialize_theme_tables(db_path)
+    return upsert_theme(
+        db_path,
+        theme="测试长篇题材",
+        genre="玄幻",
+        emotion="成长",
+        platform="番茄长篇",
+        target_type="long",
+        target_words_min=800000,
+        target_words_max=1200000,
+    )
+
+
 # ============================================================================
 # /api/console/status
 # ============================================================================
@@ -169,19 +205,22 @@ def test_run_now_kicks_async_returns_story_id(
 ) -> None:
     captured: dict[str, Any] = {}
 
-    def fake_kick(config: Any) -> int:
+    def fake_kick(config: Any, *, overrides: dict[str, Any] | None = None) -> int:
         captured["called"] = True
+        captured["overrides"] = overrides
         return 7
 
     import review_queue.console_api as ca
 
     monkeypatch.setattr(ca, "kick_off_async", fake_kick)
-    r = _request("POST", "/api/console/run-now", json_body={})
+    theme_id = _seed_short_theme()
+    r = _request("POST", "/api/console/run-now", json_body={"theme_id": theme_id})
     assert r["status"] == 200
     body = json.loads(r["body"])
     assert body["ok"] is True
     assert body["story_id"] == 7
     assert captured.get("called") is True
+    assert captured["overrides"]["theme_pool_item"]["theme"] == "测试短篇题材"
 
 
 def test_run_now_returns_409_when_busy(
@@ -189,12 +228,36 @@ def test_run_now_returns_409_when_busy(
 ) -> None:
     import review_queue.console_api as ca
 
-    def boom(config: Any) -> int:
+    def boom(config: Any, *, overrides: dict[str, Any] | None = None) -> int:
         raise RuntimeError("另一个原子任务正在运行")
 
     monkeypatch.setattr(ca, "kick_off_async", boom)
-    r = _request("POST", "/api/console/run-now", json_body={})
+    theme_id = _seed_short_theme()
+    r = _request("POST", "/api/console/run-now", json_body={"theme_id": theme_id})
     assert r["status"] == 409
+
+
+def test_run_now_adapts_long_theme_to_short_story(
+    env_setup: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_kick(config: Any, *, overrides: dict[str, Any] | None = None) -> int:
+        captured["overrides"] = overrides
+        return 8
+
+    import review_queue.console_api as ca
+
+    monkeypatch.setattr(ca, "kick_off_async", fake_kick)
+    theme_id = _seed_long_theme()
+    r = _request("POST", "/api/console/run-now", json_body={"theme_id": theme_id})
+    assert r["status"] == 200
+    body = json.loads(r["body"])
+    item = captured["overrides"]["theme_pool_item"]
+    assert body["adapted_from_long"] is True
+    assert item["theme"] == "测试长篇题材"
+    assert item["target_platform"] == "番茄短篇"
+    assert item["target_length"] == [8000, 15000]
 
 
 # ============================================================================

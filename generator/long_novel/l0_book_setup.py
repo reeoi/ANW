@@ -1,7 +1,6 @@
 """L0 — Book creation pipeline.
 
 Phases:
-- L0_benchmark: 对标分析 (optional, runs story-long-analyze style breakdown)
 - L0_premise: 选题定位 → 设定/题材定位.md
 - L0_world: 世界观 + 势力 → 设定/世界观/*.md + 设定/势力/*.md
 - L0_characters: 角色设计 → 设定/角色/*.md + 设定/关系.md
@@ -441,18 +440,9 @@ def run_l0_premise(
     title: str,
     genre: str,
     premise: str,
-    benchmark_dir: Path | None = None,
     additional_prompt: str | None = None,
 ) -> dict[str, Any]:
-    """Generate 题材定位.md with core premise and benchmark analysis."""
-    benchmark_text = ""
-    benchmark_path_label = None
-    if benchmark_dir and benchmark_dir.exists():
-        report = benchmark_dir / "拆文报告.md"
-        if report.exists():
-            benchmark_text = report.read_text(encoding="utf-8")[:3000]
-            benchmark_path_label = str(report)
-
+    """Generate 题材定位.md with the core premise and positioning."""
     system = _load_prompt("l0_premise_system.txt") or (
         "你是一位资深的网络小说编辑和故事架构师。"
         "你的任务是根据用户提供的题材和梗概，撰写一份完整的题材定位文档。"
@@ -463,7 +453,6 @@ def run_l0_premise(
 书名：{title}
 题材：{genre}（{genre_note}）
 一句话梗概：{premise}
-{benchmark_section}
 
 请按以下结构输出（Markdown格式）：
 
@@ -471,11 +460,6 @@ def run_l0_premise(
 - 核心梗概（三分法：表层/中层/深层）
 - 目标读者画像
 - 题材竞争力分析
-
-## 对标分析
-- 同题材爆款模式
-- 差异化切入点
-- 可借鉴套路
 
 ## 卖点设计
 - 核心卖点（至少3个）
@@ -491,8 +475,6 @@ def run_l0_premise(
         "genre": genre,
         "genre_note": genre_note,
         "premise": premise,
-        "benchmark_text": benchmark_text,
-        "benchmark_section": f"对标作品分析参考：{benchmark_text}" if benchmark_text else "",
     })
     user = _with_additional_prompt(user, additional_prompt)
     inputs = [
@@ -501,15 +483,6 @@ def run_l0_premise(
         _param_input("premise", premise),
         _param_input("genre_note", genre_note),
     ]
-    if benchmark_path_label:
-        inputs.append({
-            "kind": "file",
-            "path": benchmark_path_label,
-            "label": "对标拆文报告",
-            "bytes_used": len(benchmark_text.encode("utf-8")),
-            "bytes_total": Path(benchmark_path_label).stat().st_size,
-            "exists": True,
-        })
     result = _llm_traced(
         client, work_dir, "premise", system, user,
         thinking=True, inputs=inputs,

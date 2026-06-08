@@ -15,6 +15,11 @@ if str(ROOT) not in sys.path:
 from config_loader import ConfigError, load_config
 
 
+@pytest.fixture(autouse=True)
+def _isolate_project_dotenv(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ANP_DOTENV", str(tmp_path / "missing.env"))
+
+
 def test_default_config_yaml_parses_with_c_pipeline_fields() -> None:
     """The repo-level config.yaml must declare all PLAN §5.1 fields."""
 

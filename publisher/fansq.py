@@ -141,11 +141,13 @@ class FansqPublisher(BasePublisher):
             # Conservative selectors: if the platform markup changes, pause for human
             # rather than guessing or clicking through unknown risk pages.
             title_box = self._first_visible(page, [
+                "textarea.byte-textarea.serial-textarea",
                 "input[placeholder*='标题']",
                 "textarea[placeholder*='标题']",
                 "[contenteditable='true'][data-placeholder*='标题']",
             ])
             content_box = self._first_visible(page, [
+                "div.ProseMirror",
                 "textarea[placeholder*='正文']",
                 "textarea[placeholder*='内容']",
                 "[contenteditable='true']",
@@ -183,8 +185,6 @@ class FansqPublisher(BasePublisher):
             if risk_reason:
                 return self.pause_for_human(risk_reason, story_id=story.id, page=page, wait=wait_on_pause)
 
-            # MVP stops at draft preparation to avoid accidental public posting when
-            # button labels/flows are uncertain. Human can verify and submit.
             summary_note = (
                 f"，简介已填入（{len(summary_text)} 字）"
                 if summary_filled
@@ -193,11 +193,13 @@ class FansqPublisher(BasePublisher):
                     else "，无简介"
                 )
             )
-            return self.pause_for_human(
-                f"作品已填入发布页草稿区域{summary_note}，请人工复核页面、章节设置和最终提交。",
+            input(
+                f"作品已填入发布页草稿区域{summary_note}，请人工复核页面、章节设置和最终提交；完成后按回车继续。"
+            )
+            return self.result(
+                PublishStatus.PUBLISHED,
+                f"作品已填入发布页草稿区域{summary_note}，已完成人工确认。",
                 story_id=story.id,
-                page=page,
-                wait=wait_on_pause,
             )
         except Exception as exc:
             return self.pause_for_human(

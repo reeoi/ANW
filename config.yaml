@@ -62,19 +62,13 @@ c_pipeline:
     max_chapters: 10
     title_min_chars: 3
     title_max_chars: 8
-  zhuque_loop:                                    # Phase 5.5 — 朱雀 AI 检测闭环
-    enabled: true                                 # 设为 false 跳过朱雀检测
-    max_rounds: 3                                 # 最多重写轮数（含首次检测）
-    char_limit: 2000                              # 朱雀单次提交字数上限（实测后调整）
-    wait_result_seconds: 30                       # 等待检测结果出现的超时
   phase_controls:                                 # 每个 phase 的执行控制：auto | skip | pause_after
-    phase_0: "pause_after"
+    phase_0: "auto"
     phase_1: "auto"
     phase_2: "auto"
     phase_3: "auto"
     phase_4: "auto"
     phase_5: "auto"
-    phase_5_5: "auto"
     phase_6: "auto"
 
 publisher:

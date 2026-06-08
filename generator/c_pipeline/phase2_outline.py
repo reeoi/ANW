@@ -225,8 +225,6 @@ def build_phase2_prompt(
         section_count_max=SECTION_COUNT_MAX,
         section_min_chars=SECTION_CHARS_MIN,
         section_max_chars=SECTION_CHARS_MAX,
-        genre_emotion_arc="(从设定中复用)",
-        genre_signature_scenes="(从设定中复用)",
     )
     return [
         {

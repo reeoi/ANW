@@ -45,13 +45,6 @@ steps:
     pause_after: false
     prompt_override: null
 
-  - id: phase_5_5
-    type: builtin
-    label: "朱雀检测"
-    enabled: true
-    pause_after: false
-    prompt_override: null
-
   - id: phase_6
     type: builtin
     label: "分章"

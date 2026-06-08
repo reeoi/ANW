@@ -28,27 +28,26 @@ PHASES: tuple[str, ...] = (
     "phase_3",
     "phase_4",
     "phase_5",
-    "phase_5_5",
     "phase_6",
     "phase_7",
+    "phase_8",
 )
 
 PHASE_LABELS: dict[str, str] = {
-    "phase_0": "phase_0 选题",
-    "phase_1": "phase_1 框架/简介",
-    "phase_2": "phase_2 大纲",
-    "phase_3": "phase_3 逐节",
-    "phase_4": "phase_4 精修",
+    "phase_0": "phase_0 题材定位",
+    "phase_1": "phase_1 故事圣经",
+    "phase_2": "phase_2 节拍大纲",
+    "phase_3": "phase_3 分节初稿",
+    "phase_4": "phase_4 全文精修",
     "phase_5": "phase_5 去 AI 味",
-    "phase_5_5": "phase_5_5 朱雀检测",
-    "phase_6": "phase_6 审核",
-    "phase_7": "phase_7 发布",
+    "phase_6": "phase_6 分章成稿",
+    "phase_7": "phase_7 AI 审核/返修",
+    "phase_8": "phase_8 发布",
 }
 
 # Per-phase artifact filenames produced by generator/c_pipeline/*. The
 # dashboard uses this to surface "查看产物" links once a phase completes.
-# phase_6 / phase_7 don't produce file artifacts (review report lives in
-# stories.review_detail JSON; publish has no local artifact).
+# AI review lives in stories.review_detail JSON; publish has no local artifact.
 PHASE_ARTIFACTS: dict[str, tuple[str, ...]] = {
     "phase_0": ("0_选题.json",),
     "phase_1": ("1_设定.md",),
@@ -56,9 +55,9 @@ PHASE_ARTIFACTS: dict[str, tuple[str, ...]] = {
     "phase_3": ("3_正文_合稿.md",),
     "phase_4": ("4_精修稿.md",),
     "phase_5": ("5_最终稿.md",),
-    "phase_5_5": ("5_5_朱雀通过稿.md",),
-    "phase_6": (),
+    "phase_6": ("6_最终稿_带章节.md",),
     "phase_7": (),
+    "phase_8": (),
 }
 
 # Default safety limits for the file browser.
@@ -79,17 +78,11 @@ _PHASE_DONE_RE = re.compile(r"^phase_(\d)_done$")
 _PHASE_REWRITE_RE = re.compile(r"^phase_(\d)_rewrite$")
 _PHASE_FAILED_RE = re.compile(r"^failed_at_phase_(\d)(?:_.*)?$")
 _PHASE_SECTION_RE = re.compile(r"^phase_3_section_(\d{1,3})(?:_done)?$")
-# phase_5_5 朱雀检测闭环专用
-_PHASE_5_5_RUNNING_RE = re.compile(r"^phase_5_5_running$")
-_PHASE_5_5_DONE_RE = re.compile(r"^phase_5_5_done$")
-_PHASE_5_5_SKIPPED_RE = re.compile(r"^phase_5_5_skipped$")
-_PHASE_5_5_PAUSED_RE = re.compile(r"^phase_5_5_paused$")
-_PHASE_5_5_REJECTED_RE = re.compile(r"^phase_5_5_rejected$")
-# phase_6 审核 / phase_7 发布 状态机扩展
-_PHASE_NEEDS_HUMAN_RE = re.compile(r"^phase_6_needs_human$")
-_PHASE_REJECTED_RE = re.compile(r"^phase_6_rejected$")
-_PHASE_PUBLISH_FAILED_RE = re.compile(r"^phase_7_failed$")
-_PHASE_PUBLISH_PAUSED_RE = re.compile(r"^phase_7_paused$")
+# phase_7 AI 审核 / phase_8 发布 状态机扩展
+_PHASE_NEEDS_HUMAN_RE = re.compile(r"^phase_7_needs_human$")
+_PHASE_REJECTED_RE = re.compile(r"^phase_7_rejected$")
+_PHASE_PUBLISH_FAILED_RE = re.compile(r"^phase_8_failed$")
+_PHASE_PUBLISH_PAUSED_RE = re.compile(r"^phase_8_paused$")
 _OUTLINE_SECTION_COUNT_RE = re.compile(r"^-\s*section_count\s*:\s*(\d+)\s*$", re.MULTILINE)
 
 
@@ -148,14 +141,7 @@ def compute_phase_progress(current_phase: str | None) -> PhaseProgress:
     label = raw
 
     def _phase_idx(digit: int) -> int:
-        """Map a regex-captured digit to the actual PHASES index.
-
-        phase_5_5 was inserted at index 6, pushing phase_6→7, phase_7→8.
-        Digits 0-5 map directly; digits 6+ need +1 offset.
-        """
-        if digit <= 5:
-            return digit
-        return digit + 1  # skip over phase_5_5 at index 6
+        return digit
 
     completed_idx = -1  # last *fully* completed phase
     running_idx = 0  # phase currently in flight
@@ -207,58 +193,30 @@ def compute_phase_progress(current_phase: str | None) -> PhaseProgress:
         state = "failed"
         failed_at = f"phase_{n}"
         label = f"phase_{n} 失败"
-    elif _PHASE_5_5_RUNNING_RE.match(raw):
-        completed_idx = 5  # phase_5 done
-        running_idx = 6
-        state = "running"
-        label = "phase_5_5 朱雀检测中"
-    elif _PHASE_5_5_DONE_RE.match(raw):
-        completed_idx = 6  # phase_5_5 done
-        running_idx = 7  # phase_6
-        state = "running"
-        label = "phase_5_5 朱雀通过"
-    elif _PHASE_5_5_SKIPPED_RE.match(raw):
+    elif _PHASE_NEEDS_HUMAN_RE.match(raw):
         completed_idx = 6
         running_idx = 7
-        state = "running"
-        label = "phase_5_5 已跳过（mock/dry-run）"
-    elif _PHASE_5_5_PAUSED_RE.match(raw):
-        completed_idx = 5
-        running_idx = 6
-        state = "needs_human"
-        label = "phase_5_5 朱雀异常，需人工介入"
-    elif _PHASE_5_5_REJECTED_RE.match(raw):
-        completed_idx = 5
-        running_idx = 6
-        state = "failed"
-        failed_at = "phase_5_5"
-        label = "phase_5_5 朱雀拒绝（多轮仍不显著）"
-    elif _PHASE_NEEDS_HUMAN_RE.match(raw):
-        # AI 审核未通过 → needs_human：phase_6 卡住等人工 (index 7, after phase_5_5)
-        completed_idx = 5  # phases 0-5 done
-        running_idx = 7    # phase_6 at index 7
         state = "needs_human"
         label = "AI 审核未通过，等待人工"
     elif _PHASE_REJECTED_RE.match(raw):
-        # 人工拒绝：phase_6 失败终态 (index 7)
-        completed_idx = 5
+        # 人工拒绝：AI 审核阶段失败终态
+        completed_idx = 6
         running_idx = 7
         state = "failed"
-        failed_at = "phase_6"
+        failed_at = "phase_7"
         label = "人工拒绝"
     elif _PHASE_PUBLISH_FAILED_RE.match(raw):
-        # 发布失败：phase_7 失败 (index 8), phase_0-6 completed (indices 0-5,7)
-        completed_idx = 7  # phase_6 done at index 7
-        running_idx = 8    # phase_7 at index 8
+        completed_idx = 7
+        running_idx = 8
         state = "failed"
-        failed_at = "phase_7"
+        failed_at = "phase_8"
         label = "发布失败"
     elif _PHASE_PUBLISH_PAUSED_RE.match(raw):
         # 发布暂停：风控/验证码 / 登录态缺失
         completed_idx = 7
         running_idx = 8
         state = "paused"
-        failed_at = "phase_7"
+        failed_at = "phase_8"
         label = "发布已暂停（风控）"
     elif raw == "complete":
         # Preset pipeline completed all steps
@@ -834,21 +792,21 @@ def normalize_resume_from(value: str | None) -> str:
     """Validate a phase identifier supplied by the dashboard's resume button.
 
     Returns the canonical ``phase_N`` form if the input is recognized.
-    Only c_pipeline generation phases (phase_0 through phase_5) are
-    resumable — phase_6 (审核) and phase_7 (发布) are not orchestrator
-    steps and have their own buttons (批准 / 拒绝 / 改写 phase_5 /
+    Only c_pipeline generation phases (phase_0 through phase_6) are
+    resumable — phase_7 (AI 审核) and phase_8 (发布) are not orchestrator
+    steps and have their own buttons (批准 / 拒绝 / 改写 /
     重试发布 / 复制内容).
 
     Raises ``ValueError`` otherwise — the caller should surface a 400.
     """
 
     raw = (value or "").strip().lower()
-    # c_pipeline orchestrator only generates phase_0..phase_5.
-    GENERATION_PHASES = PHASES[:6]
+    # c_pipeline orchestrator generates phase_0..phase_6.
+    GENERATION_PHASES = PHASES[:7]
     if raw in GENERATION_PHASES:
         return raw
     # accept "phase_N_done" -> normalize to next generation phase;
-    # phase_5_done -> reject (review is the next step, not a c_pipeline phase)
+    # phase_6_done -> reject (review is the next step, not a c_pipeline phase)
     m = _PHASE_DONE_RE.match(raw)
     if m:
         n = int(m.group(1))

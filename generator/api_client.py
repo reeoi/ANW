@@ -2,7 +2,7 @@
 
 Configuration is sourced from ``LoadedConfig.data['deepseek']``:
 
-- ``provider``            default ``deepseek``; supports openai/google/anthropic/zhipu/qwen/custom
+- ``provider``            default ``deepseek``; supports openai/google/anthropic/zhipu/qwen/xiaomi/custom
 - ``protocol``            default ``openai``; custom relays may use ``anthropic``
 - ``api_key``             provider API key
 - ``base_url``            provider API base URL
@@ -31,11 +31,18 @@ from dataclasses import dataclass, field
 from http.client import IncompleteRead, RemoteDisconnected
 from typing import Any, Iterable, Mapping, Sequence
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import ProxyHandler, Request, build_opener
 
 from config_loader import LoadedConfig
 
 logger = logging.getLogger(__name__)
+
+_NO_PROXY_OPENER = build_opener(ProxyHandler({}))
+
+
+def urlopen(request: Request, *, timeout: float | None = None):  # noqa: ANN201
+    """Open LLM requests without inheriting broken system proxy variables."""
+    return _NO_PROXY_OPENER.open(request, timeout=timeout)
 
 
 class DeepSeekClientError(RuntimeError):
@@ -319,6 +326,8 @@ class DeepSeekClient:
                     "x-api-key": self.settings.api_key,
                     "anthropic-version": "2023-06-01",
                     "Content-Type": "application/json",
+                    "Accept": "application/json",
+                    "User-Agent": "ANP-Studio/1.0",
                 },
                 payload,
             )
@@ -339,6 +348,8 @@ class DeepSeekClient:
             {
                 "Authorization": f"Bearer {self.settings.api_key}",
                 "Content-Type": "application/json",
+                "Accept": "application/json",
+                "User-Agent": "ANP-Studio/1.0",
             },
             payload,
         )
@@ -601,6 +612,13 @@ def provider_defaults(provider: str) -> dict[str, str]:
             "model": "qwen3.6-plus",
             "flash_model": "qwen3.6-flash",
         },
+        "xiaomi": {
+            "label": "Xiaomi Mimo",
+            "protocol": "openai",
+            "base_url": "https://api.xiaomimimo.com/v1",
+            "model": "mimo-v2.5-pro",
+            "flash_model": "mimo-v2-flash",
+        },
         "custom": {
             "label": "自定义 / 第三方中转",
             "protocol": "openai",
@@ -622,9 +640,12 @@ def _normalize_provider(provider: str) -> str:
         "bigmodel": "zhipu",
         "dashscope": "qwen",
         "aliyun": "qwen",
+        "mimo": "xiaomi",
+        "xiaomimimo": "xiaomi",
+        "xiaomi-mimo": "xiaomi",
         "openai-compatible": "custom",
     }
-    return aliases.get(value, value if value in {"deepseek", "openai", "google", "anthropic", "zhipu", "qwen", "custom"} else "custom")
+    return aliases.get(value, value if value in {"deepseek", "openai", "google", "anthropic", "zhipu", "qwen", "xiaomi", "custom"} else "custom")
 
 
 def _normalize_protocol(protocol: str) -> str:

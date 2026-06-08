@@ -15,7 +15,6 @@ from generator.c_pipeline.actions.llm_call import LLMCallAction
 from generator.c_pipeline.actions.loop import LoopAction
 from generator.c_pipeline.actions.python_snippet import PythonSnippetAction
 from generator.c_pipeline.actions.text_template import TextTemplateAction
-from generator.c_pipeline.actions.web_detect import WebDetectAction
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +25,6 @@ _ACTION_REGISTRY: dict[str, type] = {
     "text_template": TextTemplateAction,
     "conditional": ConditionalAction,
     "loop": LoopAction,
-    "web_detect": WebDetectAction,
     "http_request": HttpRequestAction,
     "python_snippet": PythonSnippetAction,
 }

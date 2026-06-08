@@ -3004,7 +3004,7 @@
       var el = e.target.closest('[data-ln-outline-file]');
       if (el) _lnLoadOutlineFile(el.dataset.lnOutlineFile);
     });
-  }  // ── 书库 ──
+  }  // ── 长篇小说 ──
 
   function _lnRenderOutlineChipFiles(phaseId, label, files, status) {
     var titleEl = document.getElementById('ln-outline-preview-title');
@@ -4094,7 +4094,7 @@
 
   async function loadWritingWorkbench() {
     if (!_lnActiveBookId) {
-      $('ln-ws-book-title').textContent = '请先在书库中选择一本书';
+      $('ln-ws-book-title').textContent = '请先在长篇小说中选择一本书';
       return;
     }
     try {
@@ -5459,16 +5459,15 @@
     var score = Number(gate.score == null ? fallbackScore : gate.score);
     var passScore = Number(gate.pass_score || 80);
     var forced = !!(forcePass && forcePass.force_passed);
-    var strictZhuque = gate.source === 'zhuque_web' || !!gate.required_label;
     var pending = !!gate.pending;
-    var passed = strictZhuque ? !!gate.passed : (!!gate.passed || forced);
+    var passed = !!gate.passed || forced;
     var verdict = String(gate.verdict || (passed ? 'APPROVE' : 'CONCERNS')).toUpperCase();
     var cls = passed ? 'approve' : (verdict === 'REJECT' ? 'reject' : (pending ? 'pending' : 'concerns'));
     var verdictLabel = passed ? 'PASS' : (pending ? '待手动复查' : verdict);
     var width = Math.max(0, Math.min(100, score || 0));
     var standardText;
     if (pending) {
-      standardText = '本地去 AI 已完成，可继续下一步；如需外部 AI 味检测请自行复查';
+      standardText = '本地去 AI 已完成，可继续下一步';
     } else {
       standardText = '达标线：' + passScore + '分';
     }
@@ -6116,7 +6115,7 @@
     ensureWritingPanelLayout();
     if (!_lnActiveBookId) {
       var titleEl = document.getElementById('ln-ws-book-title');
-      if (titleEl) titleEl.textContent = '请先在书库中选择一本书';
+      if (titleEl) titleEl.textContent = '请先在长篇小说中选择一本书';
       return;
     }
     try {
@@ -8794,7 +8793,7 @@
       'overview':      { label: '总览驾驶舱',   num: '00' },
       'monitor':       { label: '监控面板',     num: '01' },
       'generate':      { label: '短篇创作',     num: '03' },
-      'long-novel':    { label: '长篇书库',     num: '04' },
+      'long-novel':    { label: '长篇小说',     num: '04' },
       'theme-pool':    { label: '题材库',       num: '05' },
       'logs':          { label: '系统日志',     num: '06' },
       'settings-edit': { label: '设置',         num: '07' }

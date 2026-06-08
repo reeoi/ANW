@@ -150,6 +150,7 @@ def stop_proc(proc: subprocess.Popen | None, label: str = "process", timeout: fl
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                     timeout=10.0,
+                    check=True,
                 )
                 proc.wait(timeout=timeout)
                 return
@@ -422,36 +423,18 @@ class TrayApp:
                     pass
                 return
 
-            # Launch (don't use launch_uvicorn's port check, force it)
-            cwd = PROJECT_ROOT
-            log_dir = cwd / "logs"
-            log_dir.mkdir(parents=True, exist_ok=True)
-            log_path = log_dir / "uvicorn.log"
-            python_exe = _resolve_console_python()
-            logger.info("Launching uvicorn: %s -m uvicorn ... --port %s", python_exe, self.port)
-            creation = getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0
             for attempt in range(1, 4):
                 try:
-                    log_handle = log_path.open("ab", buffering=0)
-                    self.uvicorn_proc = subprocess.Popen(
-                        [python_exe, "-m", "uvicorn", "review_queue.human_review:app",
-                         "--host", self.host, "--port", str(self.port)],
-                        cwd=str(cwd),
-                        creationflags=creation,
-                        stdout=log_handle,
-                        stderr=subprocess.STDOUT,
-                        stdin=subprocess.DEVNULL,
-                    )
-                    # Wait briefly and check it's still alive
-                    time.sleep(1.5)
-                    if self.uvicorn_proc.poll() is None:
+                    proc = launch_uvicorn(self.host, self.port, project_root=PROJECT_ROOT)
+                    if proc is not None:
+                        self.uvicorn_proc = proc
                         logger.info("Uvicorn relaunched (attempt %d, pid=%s)", attempt, self.uvicorn_proc.pid)
                         try:
                             self.icon.notify("服务已重启", "ANP")
                         except Exception:
                             pass
                         return
-                    logger.warning("Uvicorn exited immediately (attempt %d, rc=%s)", attempt, self.uvicorn_proc.returncode)
+                    logger.warning("Uvicorn launch returned no process (attempt %d)", attempt)
                 except Exception as exc:
                     logger.error("Launch attempt %d failed: %s", attempt, exc)
                 time.sleep(2.0)

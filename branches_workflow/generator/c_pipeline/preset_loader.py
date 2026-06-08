@@ -11,11 +11,11 @@ logger = logging.getLogger(__name__)
 DEFAULT_PRESETS_DIR = Path(__file__).resolve().parents[2] / "presets"
 VALID_PHASES = frozenset({
     "phase_0", "phase_1", "phase_2", "phase_3",
-    "phase_4", "phase_5", "phase_5_5", "phase_6",
+    "phase_4", "phase_5", "phase_6",
 })
 VALID_ACTIONS = frozenset({
     "llm_call", "read_file", "write_file", "text_template",
-    "conditional", "loop", "web_detect", "http_request", "python_snippet",
+    "conditional", "loop", "http_request", "python_snippet",
 })
 
 

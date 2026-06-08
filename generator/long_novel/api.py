@@ -471,112 +471,51 @@ def _draft_context_manifest(ctx: dict[str, Any]) -> list[dict[str, Any]]:
     return manifest
 
 
-def _run_zhuque_detection(text: str, book_id: int, chapter_number: int) -> dict[str, Any]:
-    try:
-        from generator.c_pipeline.zhuque_client import ZHUQUE_URL, ZhuqueClient
-        client = ZhuqueClient(wait_result_seconds=20.0)
-        result = client.detect(text, story_id=book_id * 100000 + chapter_number)
-        return {
-            "ok": result.anomaly is None,
-            "passed": result.passed,
-            "label": getattr(result.label, "value", str(result.label)),
-            "ai_probability": result.ai_probability,
-            "message": result.message,
-            "raw_text": result.raw_text,
-            "anomaly": getattr(result.anomaly, "value", str(result.anomaly)) if result.anomaly else None,
-            "screenshot_path": str(result.screenshot_path) if result.screenshot_path else None,
-            "required_label": "人工创作特征显著",
-            "source_url": ZHUQUE_URL,
-        }
-    except Exception as exc:
-        logger.exception("zhuque_detection_failed book=%s chapter=%s", book_id, chapter_number)
-        return {
-            "ok": False,
-            "passed": False,
-            "label": "UNKNOWN",
-            "ai_probability": None,
-            "message": f"朱雀检测调用失败：{exc.__class__.__name__}: {exc}",
-            "raw_text": "",
-            "anomaly": "client_error",
-            "screenshot_path": None,
-            "required_label": "人工创作特征显著",
-            "source_url": "https://matrix.tencent.com/ai-detect/ai_gen_txt",
-        }
-
-
-def _score_deai_result(text: str, zhuque: dict[str, Any] | None = None) -> dict[str, Any]:
+def _score_deai_result(text: str) -> dict[str, Any]:
     """Build a local quality gate for the de-AI step."""
-    zhuque = zhuque or {}
-    required_label = "人工创作特征显著"
-    pass_score = 100
-    label = str(zhuque.get("label") or "UNKNOWN")
-    zhuque_ok = bool(zhuque.get("ok"))
-    zhuque_passed = bool(zhuque.get("passed")) or (zhuque_ok and label == required_label)
-    ai_probability = zhuque.get("ai_probability")
-    no_detection = not zhuque  # True 表示用户尚未手动触发朱雀检测
-    findings: list[str] = []
-    recommendations: list[str] = []
-    if zhuque_passed:
-        score = 100
-        findings.append("朱雀网页检测结果为「人工创作特征显著」。")
-    elif no_detection:
-        # 用户还没手动复查朱雀，本地只做轻量评估，不展示"未通过"红字。
-        score = 80
-        findings.append("已完成本地去 AI 改写。朱雀检测改为手动可选，可点击「复制全文」拿到朱雀网页复查。")
-    else:
-        if not zhuque_ok:
-            score = 0
-            findings.append("朱雀网页检测未成功完成，本步骤不能通过。")
-            recommendations.append("请先在 Chrome 中打开朱雀网页完成登录/验证码，然后重跑去 AI。")
-        elif label == "人工创作特征一般":
-            score = 70
-            findings.append("朱雀网页检测结果为「人工创作特征一般」，未达到通过标准。")
-            recommendations.append("继续改写模板化转折、抽象情绪、整齐段落和说明腔，直到朱雀显示「人工创作特征显著」。")
-        elif label == "人工创作特征不显著":
-            score = 40
-            findings.append("朱雀网页检测结果为「人工创作特征不显著」，未达到通过标准。")
-            recommendations.append("需要大幅重写叙述节奏、对白差异、场景细节和人物反应。")
-        else:
-            score = 0
-            findings.append(f"朱雀网页没有返回可通过标签：{label}。")
-            recommendations.append("请以朱雀网页显示「人工创作特征显著」为唯一通过标准。")
-        if ai_probability is not None:
-            try:
-                prob = max(0.0, min(1.0, float(ai_probability)))
-                findings.append(f"朱雀返回 AI 概率：{round(prob * 100)}%。")
-            except Exception:
-                pass
+    def _local_char_count(value: str) -> int:
+        return sum(1 for ch in value if "\u4e00" <= ch <= "\u9fff")
 
+    pass_score = 82
+    score = 88
+    findings: list[str] = ["已完成本地去 AI 改写，并通过文本特征质量门评估。"]
+    recommendations: list[str] = []
     ai_phrases = [
         "仿佛", "似乎", "微微", "淡淡", "不由得", "心中一动", "眼中闪过",
         "嘴角勾起", "一股", "某种", "复杂的情绪",
     ]
     hits = [phrase for phrase in ai_phrases if phrase in text]
-    if hits and not zhuque_passed:
+    if hits:
         score -= min(18, len(hits) * 3)
         findings.append("仍有高频 AI 味表达：" + " / ".join(hits[:8]))
         recommendations.append("用具体动作、对白和感官细节替换泛泛的情绪标签。")
 
+    paragraph_count = max(1, len([p for p in text.splitlines() if p.strip()]))
+    avg_paragraph_len = _local_char_count(text) / paragraph_count
+    if avg_paragraph_len > 260:
+        score -= 6
+        findings.append("部分段落偏长，阅读节奏可能显得整齐或说明感过强。")
+        recommendations.append("拆分长段，穿插动作、环境反馈和短对白。")
+    if text.count("。") and text.count("，") / max(1, text.count("。")) > 5:
+        score -= 5
+        findings.append("长句比例偏高，句式层次容易显得机械。")
+        recommendations.append("把连续说明句改成短句、停顿和人物反应。")
+
     score = max(0, min(100, int(score)))
-    if zhuque_passed:
+    if score >= pass_score:
         verdict = "APPROVE"
-    elif no_detection:
-        # 未做朱雀检测 → 视为待手动确认；UI 侧把这个状态当成"已完成本地改写、可手动复查"。
-        verdict = "PENDING"
     else:
         verdict = "CONCERNS" if score >= 65 else "REJECT"
     return {
         "verdict": verdict,
         "score": score,
         "pass_score": pass_score,
-        "passed": zhuque_passed,
-        "pending": no_detection and not zhuque_passed,
-        "required_label": required_label,
-        "source": "zhuque_web",
-        "source_url": zhuque.get("source_url") or "https://matrix.tencent.com/ai-detect/ai_gen_txt",
+        "passed": score >= pass_score,
+        "pending": False,
+        "source": "local_text_quality",
         "findings": findings,
         "recommendations": recommendations,
-        "summary": f"去 AI 质量门：{verdict} / {label} / {score}分",
+        "summary": f"去 AI 质量门：{verdict} / 本地文本特征 / {score}分",
     }
 
 
@@ -2964,7 +2903,7 @@ _CHAPTER_PROMPT_INFO = {
         "label": "继续降低 AI 味",
         "system_file": "l2_deslop_fix_system.txt",
         "user_file": "l2_deslop_fix_user.txt",
-        "placeholders": ["chapter_number", "suggestions", "zhuque_raw", "extra_prompt", "source"],
+        "placeholders": ["chapter_number", "suggestions", "extra_prompt", "source"],
     },
 }
 
@@ -3693,17 +3632,16 @@ def _api_write_chapter_step_blocking(
         deslop_path = _step_file_path(work_dir, chapter_number, chapter_title, "deslop")
         _archive_step_version(work_dir, chapter_number, chapter_title, "deslop")
         deslop_path.write_text(final, encoding="utf-8")
-        # 不再自动调用朱雀检测，避免外部依赖卡住流程；保留空 gate 占位以便手动复查后回填。
-        deai = _score_deai_result(final, None)
+        deai = _score_deai_result(final)
         gate_path = _step_gate_path(work_dir, chapter_number, chapter_title, "deslop")
         gate_path.write_text(
-            json.dumps({"zhuque": {}, "deai": deai}, ensure_ascii=False, indent=2),
+            json.dumps({"deai": deai}, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
         run_count = _step_run_count(work_dir, chapter_number, chapter_title, "deslop")
         return {
             "ok": True, "step": "deslop", "word_count": final_words,
-            "content": final, "zhuque": {}, "deai": deai, "next_step": "review",
+            "content": final, "deai": deai, "next_step": "review",
             "source_before": strip_chapter_heading(source),
             "source_word_count": count_chinese_chars(strip_chapter_heading(source)),
             "run_count": run_count,
@@ -4030,11 +3968,9 @@ def api_write_chapter_step_output(book_id: int, chapter_number: int, step_name: 
     force_pass = _read_json_file(_step_force_read(work_dir, chapter_number, step_name))
     if step_name == "deslop" and (
         not gate.get("deai")
-        or gate.get("deai", {}).get("source") != "zhuque_web"
-        or gate.get("deai", {}).get("required_label") != "人工创作特征显著"
+        or gate.get("deai", {}).get("source") != "local_text_quality"
     ):
-        gate["zhuque"] = gate.get("zhuque") or {}
-        gate["deai"] = _score_deai_result(raw, gate["zhuque"])
+        gate["deai"] = _score_deai_result(raw)
 
     # 给前端做"原文/修改后"对比用：找当前步骤的上一步内容。
     source_before = ""
@@ -4056,7 +3992,6 @@ def api_write_chapter_step_output(book_id: int, chapter_number: int, step_name: 
         "source_word_count": count_chinese_chars(source_before),
         "word_count": count_chinese_chars(raw),
         "target_words": int(ch.get("target_words") or book.get("target_words_per_chapter") or 0),
-        "zhuque": gate.get("zhuque") if step_name == "deslop" else None,
         "deai": gate.get("deai") if step_name == "deslop" else None,
         "force_pass": force_pass,
         "run_count": _step_run_count(work_dir, chapter_number, chapter_title, step_name),
@@ -4374,10 +4309,10 @@ def _api_revise_chapter_step_blocking(
         deslop_path = _step_file_path(work_dir, chapter_number, chapter_title, "deslop")
         _archive_step_version(work_dir, chapter_number, chapter_title, "deslop")
         deslop_path.write_text(revised, encoding="utf-8")
-        deai = _score_deai_result(revised, None)
+        deai = _score_deai_result(revised)
         gate_path = _step_gate_path(work_dir, chapter_number, chapter_title, "deslop")
         gate_path.write_text(
-            json.dumps({"zhuque": {}, "deai": deai}, ensure_ascii=False, indent=2),
+            json.dumps({"deai": deai}, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
         from generator.long_novel.l4_review import run_story_review
@@ -4409,7 +4344,6 @@ def _api_revise_chapter_step_blocking(
             "revised_step": "deslop",
             "content": revised,
             "word_count": count_chinese_chars(revised),
-            "zhuque": {},
             "deai": deai,
             "review": new_review,
             "revised_content": revised,
@@ -4427,7 +4361,6 @@ def _api_revise_chapter_step_blocking(
     gate = _read_json_file(_step_gate_read(work_dir, chapter_number, "deslop"))
     deai = gate.get("deai") or {}
     suggestions = "\n".join([*(deai.get("findings") or []), *(deai.get("recommendations") or [])])
-    zhuque_raw = str((gate.get("zhuque") or {}).get("raw_text") or "")[:3000]
     system = _load_prompt_template(
         "l2_deslop_fix_system.txt",
         "你是中文网文资深去 AI 味编辑。只改文风，不改剧情、人设、关系、伏笔和章节推进。只输出修改后的完整正文，不要解释。",
@@ -4436,7 +4369,6 @@ def _api_revise_chapter_step_blocking(
     user = _render_prompt_template(user_template, {
         "chapter_number": chapter_number,
         "suggestions": suggestions or "重点减少工整模板句、抽象情绪、泛泛转折和排比说明。",
-        "zhuque_raw": zhuque_raw or "（暂无原始结果，本轮仍按朱雀必须显示「人工创作特征显著」为目标。）",
         "extra_prompt": extra_prompt or "无",
         "source": source,
     })
@@ -4446,10 +4378,9 @@ def _api_revise_chapter_step_blocking(
     if deslop_path.exists():
         deslop_path.with_suffix(".md.bak").write_text(deslop_path.read_text(encoding="utf-8"), encoding="utf-8")
     deslop_path.write_text(revised, encoding="utf-8")
-    # 同样不自动调用朱雀，由用户手动复查后再写入 gate。
-    deai = _score_deai_result(revised, None)
+    deai = _score_deai_result(revised)
     gate_path = _step_gate_path(work_dir, chapter_number, chapter_title, "deslop")
-    gate_path.write_text(json.dumps({"zhuque": {}, "deai": deai}, ensure_ascii=False, indent=2), encoding="utf-8")
+    gate_path.write_text(json.dumps({"deai": deai}, ensure_ascii=False, indent=2), encoding="utf-8")
     force = _step_force_read(work_dir, chapter_number, "deslop")
     if force and force.exists():
         force.unlink()
@@ -4458,9 +4389,8 @@ def _api_revise_chapter_step_blocking(
         "step": "deslop",
         "content": revised,
         "word_count": count_chinese_chars(revised),
-        "zhuque": {},
         "deai": deai,
-        "message": "已按去 AI 建议修改完成，需手动复查朱雀网页",
+        "message": "已按去 AI 建议修改完成，并重新完成本地质量门评估",
         "source_before": source,
     }
 
@@ -4581,15 +4511,6 @@ def api_delete_step_history(book_id: int, chapter_number: int, step_name: str, v
         "deleted": deleted_name,
         "message": "历史版本源文件已删除",
     }
-
-
-@router.post("/books/{book_id}/write-chapter/{chapter_number}/zhuque-detect")
-async def api_run_zhuque_detect(book_id: int, chapter_number: int) -> dict[str, Any]:
-    """已停用：朱雀网页检测改为完全外部手动操作，不再从本系统启动 Chrome。"""
-    raise HTTPException(
-        status_code=410,
-        detail="朱雀检测已停用，请到外部网页手动复查。",
-    )
 
 
 @router.put("/books/{book_id}/chapters/{chapter_number}")

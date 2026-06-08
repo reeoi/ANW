@@ -158,15 +158,15 @@ def test_phases_returns_progress_strip(env: dict[str, Path]) -> None:
     assert body["current_phase"] == "phase_3_section_05_done"
     assert body["state"] == "running"
     assert body["section_index"] == 5
-    assert len(body["steps"]) == 9  # 6 generation + zhuque + review + publish
+    assert len(body["steps"]) == 9  # 7 generation + review + publish
     assert body["steps"][2]["status"] == "done"
     assert body["steps"][3]["status"] == "in_progress"
 
 
-def test_phases_phase_7_done_reports_complete(env: dict[str, Path]) -> None:
+def test_phases_phase_8_done_reports_complete(env: dict[str, Path]) -> None:
     """全流程完成（审核+发布）才算 100%。"""
     initialize_database(LoadedConfig(data={"database": {"sqlite_path": str(env["db"])}}, path=env["cfg"]))
-    sid = _seed_story(env["db"], current_phase="phase_7_done")
+    sid = _seed_story(env["db"], current_phase="phase_8_done")
     body = json.loads(_request("GET", f"/api/stories/{sid}/phases")["body"])
     assert body["state"] == "done"
     assert body["percent"] == 100.0
@@ -228,6 +228,50 @@ def test_phases_artifacts_payload_marks_existing_files(
     artifacts = body["artifacts"]
     assert artifacts["phase_0"][0]["exists"] is True
     assert artifacts["phase_1"][0]["exists"] is False
+
+
+def test_phase_detail_returns_chain_inputs_call_output_and_prompt(
+    env: dict[str, Path], tmp_path: Path
+) -> None:
+    initialize_database(LoadedConfig(data={"database": {"sqlite_path": str(env["db"])}}, path=env["cfg"]))
+    work_dir = tmp_path / "work_detail"
+    work_dir.mkdir()
+    (work_dir / "1_设定.md").write_text("# 故事圣经", encoding="utf-8")
+    (work_dir / "2_小节大纲.md").write_text("# 小节大纲", encoding="utf-8")
+    sid = _seed_story(env["db"], work_dir=work_dir, current_phase="phase_2_done")
+    import sqlite3
+
+    with sqlite3.connect(env["db"]) as connection:
+        connection.execute(
+            """
+            INSERT INTO pipeline_cost_log(
+                story_id, phase, model, input_tokens, cached_tokens, output_tokens, cost_cny
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (sid, "phase_2", "test-model", 120, 20, 80, 0.01),
+        )
+
+    r = _request("GET", f"/api/stories/{sid}/phases/phase_2/detail")
+    assert r["status"] == 200
+    body = json.loads(r["body"])
+    assert body["description"]
+    assert body["flow"]["source"] == "generator/c_pipeline/phase2_outline.py"
+    assert body["inputs"][0]["path"] == "1_设定.md"
+    assert body["inputs"][0]["exists"] is True
+    assert body["call_is_actual"] is True
+    assert body["call_parameters"]["model"] == "test-model"
+    assert body["outputs"][0]["path"] == "2_小节大纲.md"
+    assert body["outputs"][0]["exists"] is True
+    assert "genre_emotion_arc" not in body["prompt"]["variables"]
+    assert "framework_md" in body["prompt"]["variables"]
+
+
+def test_phase_detail_marks_review_as_promptless(env: dict[str, Path]) -> None:
+    initialize_database(LoadedConfig(data={"database": {"sqlite_path": str(env["db"])}}, path=env["cfg"]))
+    sid = _seed_story(env["db"], current_phase="phase_7_running")
+    body = json.loads(_request("GET", f"/api/stories/{sid}/phases/phase_7/detail")["body"])
+    assert body["prompt"] is None
+    assert body["flow"]["stage"] == "审核发布链路"
 
 
 def test_phases_payload_surfaces_retry_state_after_failure(env: dict[str, Path]) -> None:

@@ -413,7 +413,7 @@ def build_l0_stages(
         return AutopilotStage(phase=phase, label=label, run=fn, is_done=lambda p=phase: l0_phase_done(wd, p))
 
     return [
-        stage("premise", "题材定位", lambda: run_l0_premise(client, wd, title, genre, premise, None, additional_prompt)),
+        stage("premise", "题材定位", lambda: run_l0_premise(client, wd, title, genre, premise, additional_prompt)),
         stage("world", "世界观", lambda: run_l0_world(client, wd, title, genre, additional_prompt)),
         stage("characters", "角色设计", lambda: run_l0_characters(client, wd, title, genre, additional_prompt)),
         stage("factions", "势力", lambda: run_l0_factions(client, wd, title, genre, additional_prompt)),

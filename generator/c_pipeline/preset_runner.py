@@ -34,7 +34,6 @@ _BUILTIN_DISPATCH: dict[str, str] = {
     "phase_3": "phase3_sections.run_sections",
     "phase_4": "phase4_polish.run_polish",
     "phase_5": "phase5_deslop.run_deslop",
-    "phase_5_5": "phase5_5_zhuque_loop.run_zhuque_loop",
     "phase_6": "phase6_chapter_title.run_chapter_titling",
 }
 

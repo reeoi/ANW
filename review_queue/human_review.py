@@ -7,6 +7,7 @@ import html
 import json
 import logging
 import os
+import re
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -23,7 +24,8 @@ from generator.long_novel.theme_api import router as theme_router
 from generator.long_novel.theme_db import initialize_theme_tables
 from review_queue import dashboard_assets as _assets  # hot-reload: _assets.DASHBOARD_* reads from disk each request
 from review_queue.ai_review import review_story_in_database, run_review_batch
-from review_queue.console_api import router as console_router
+from review_queue.atomic_runner import run_publish_only
+from review_queue.console_api import PHASE_PROMPT_MAP, router as console_router
 from review_queue.control_api import router as control_router
 from review_queue.db import (
     get_database_path,
@@ -38,6 +40,8 @@ from review_queue.db import (
 from review_queue.metrics import list_api_usage_logs, query_overview, record_pipeline_event
 from review_queue.models import Story
 from review_queue.phase_progress import (
+    PHASE_LABELS,
+    PHASES,
     PhaseAttempt,
     PhaseStep,
     PhaseTimelineEntry,
@@ -58,6 +62,54 @@ from review_queue.settings_api import router as settings_router
 from runtime_helpers import configure_logging, recent_log_lines
 
 logger = logging.getLogger(__name__)
+
+SHORT_PHASE_DETAILS: dict[str, dict[str, Any]] = {
+    "phase_0": {
+        "description": "从当前题材库选定一个种子题材，并压缩为可直接执行的选题卡。",
+        "source": "generator/c_pipeline/phase0_select.py",
+        "inputs": (),
+    },
+    "phase_1": {
+        "description": "把选题卡扩展为故事圣经，固定人物、冲突、反转、情绪曲线与结局承诺。",
+        "source": "generator/c_pipeline/phase1_framework.py",
+        "inputs": ("0_选题.json",),
+    },
+    "phase_2": {
+        "description": "把故事圣经拆成逐节可执行的因果节拍，控制总字数和反转位置。",
+        "source": "generator/c_pipeline/phase2_outline.py",
+        "inputs": ("1_设定.md",),
+    },
+    "phase_3": {
+        "description": "按节拍逐节写作，并使用已完成前文维持连续性，最后合并为完整初稿。",
+        "source": "generator/c_pipeline/phase3_sections.py",
+        "inputs": ("1_设定.md", "2_小节大纲.md", "3_正文_*.md"),
+    },
+    "phase_4": {
+        "description": "对完整初稿做结构和语言精修，修复逻辑跳跃、重复与节奏问题。",
+        "source": "generator/c_pipeline/phase4_polish.py",
+        "inputs": ("3_正文_合稿.md",),
+    },
+    "phase_5": {
+        "description": "在不改变剧情事实的前提下清理 AI 腔、套话和机械句式。",
+        "source": "generator/c_pipeline/phase5_deslop.py",
+        "inputs": ("4_精修稿.md", "generator/c_pipeline/prompts/ai_slop_blacklist.json"),
+    },
+    "phase_6": {
+        "description": "根据正文节奏切分章节并生成章节标题，输出可阅读的最终稿。",
+        "source": "generator/c_pipeline/phase6_chapter_title.py",
+        "inputs": ("5_最终稿.md",),
+    },
+    "phase_7": {
+        "description": "对最终稿进行 AI 审核；达到阈值则进入待发布，否则按审核意见返修或转人工。",
+        "source": "review_queue/ai_review.py",
+        "inputs": ("6_最终稿_带章节.md",),
+    },
+    "phase_8": {
+        "description": "将审核通过的最终稿发布到目标平台，并记录发布状态。",
+        "source": "publisher/",
+        "inputs": ("6_最终稿_带章节.md",),
+    },
+}
 
 
 app = FastAPI(title="ANP Local Studio")
@@ -236,6 +288,168 @@ def api_story_phases(story_id: int) -> dict[str, Any]:
     }
 
 
+@app.get("/api/stories/{story_id}/phases/{phase}/detail")
+def api_story_phase_detail(story_id: int, phase: str) -> dict[str, Any]:
+    """Return the same inspectable chain information used by the long-novel UI."""
+
+    story = _ensure_story_exists(story_id)
+    if phase not in SHORT_PHASE_DETAILS:
+        raise HTTPException(status_code=404, detail=f"未知短篇阶段：{phase}")
+
+    detail = SHORT_PHASE_DETAILS[phase]
+    work_dir = None
+    if (story.work_dir or "").strip():
+        candidate = Path(story.work_dir)
+        if candidate.exists() and candidate.is_dir():
+            work_dir = candidate
+
+    inputs: list[dict[str, Any]] = []
+    if phase == "phase_0":
+        for name, value in (
+            ("theme", story.genre or story.hint_title or ""),
+            ("emotion", story.emotion or ""),
+            ("target_length", story.target_length),
+        ):
+            inputs.append({"kind": "parameter", "name": name, "value": value})
+    for input_path in detail["inputs"]:
+        inputs.extend(_short_phase_input_payload(work_dir, str(input_path)))
+
+    artifacts = list_phase_artifacts(work_dir).get(phase, [])
+    outputs = [
+        {
+            "path": row["name"],
+            "exists": bool(row["exists"]),
+            "size_bytes": row["size_bytes"],
+        }
+        for row in artifacts
+    ]
+    if phase == "phase_7":
+        outputs.append({
+            "path": "stories.summary / stories.ai_review_score",
+            "exists": story.ai_review_score is not None or bool(story.summary),
+            "size_bytes": None,
+        })
+    elif phase == "phase_8":
+        outputs.append({
+            "path": "stories.status = published",
+            "exists": story.status == "published",
+            "size_bytes": None,
+        })
+
+    prompt = _short_phase_prompt_payload(phase)
+    config = load_from_environment()
+    deepseek = config.data.get("deepseek", {}) or {}
+    call_parameters: dict[str, Any] = {
+        "model": deepseek.get("model"),
+        "thinking_mode": deepseek.get("thinking_mode"),
+        "max_output_tokens": deepseek.get("max_output_tokens"),
+        "timeout_seconds": deepseek.get("timeout_seconds"),
+        "max_retries": deepseek.get("max_retries"),
+    }
+    latest_call = _latest_short_phase_call(_database_path(config), story.id, phase)
+    if latest_call:
+        call_parameters.update(latest_call)
+
+    phase_index = PHASES.index(phase)
+    return {
+        "ok": True,
+        "story_id": story.id,
+        "phase": phase,
+        "label": PHASE_LABELS.get(phase, phase),
+        "description": detail["description"],
+        "flow": {
+            "stage": "短篇生成链路" if phase_index <= 6 else "审核发布链路",
+            "order": phase_index + 1,
+            "total": len(PHASES),
+            "next": PHASE_LABELS.get(PHASES[phase_index + 1]) if phase_index + 1 < len(PHASES) else None,
+            "source": detail["source"],
+        },
+        "inputs": inputs,
+        "call_parameters": call_parameters,
+        "call_is_actual": bool(latest_call),
+        "outputs": outputs,
+        "prompt": prompt,
+    }
+
+
+def _short_phase_input_payload(work_dir: Path | None, raw_path: str) -> list[dict[str, Any]]:
+    project_root = Path(__file__).resolve().parents[1]
+    is_project_path = raw_path.startswith("generator/") or raw_path.startswith("review_queue/")
+    base = project_root if is_project_path else work_dir
+    if base is None:
+        return [{"kind": "file", "path": raw_path, "label": raw_path, "exists": False}]
+
+    matches = list(base.glob(raw_path)) if "*" in raw_path else [base / raw_path]
+    if not matches:
+        matches = [base / raw_path]
+    payload: list[dict[str, Any]] = []
+    for target in matches:
+        exists = target.exists() and target.is_file()
+        size = target.stat().st_size if exists else None
+        display_path = raw_path if "*" not in raw_path else target.name
+        payload.append({
+            "kind": "file",
+            "path": display_path,
+            "label": display_path,
+            "exists": exists,
+            "bytes_used": size,
+            "bytes_total": size,
+        })
+    return payload
+
+
+def _short_phase_prompt_payload(phase: str) -> dict[str, Any] | None:
+    filename = PHASE_PROMPT_MAP.get(phase)
+    if not filename:
+        return None
+    path = Path(__file__).resolve().parents[1] / "generator" / "c_pipeline" / "prompts" / filename
+    if not path.exists():
+        return {"filename": filename, "content": "", "variables": [], "exists": False}
+    content = path.read_text(encoding="utf-8")
+    variables = sorted(set(re.findall(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}", content)))
+    return {
+        "filename": filename,
+        "content": content,
+        "variables": variables,
+        "exists": True,
+        "size_bytes": len(content.encode("utf-8")),
+    }
+
+
+def _latest_short_phase_call(db_path: Path, story_id: int, phase: str) -> dict[str, Any] | None:
+    patterns = {
+        "phase_3": "phase_3%",
+        "phase_7": "ai_review%",
+        "phase_8": "publish%",
+    }
+    pattern = patterns.get(phase, phase + "%")
+    try:
+        with sqlite3.connect(db_path) as connection:
+            connection.row_factory = sqlite3.Row
+            row = connection.execute(
+                """
+                SELECT model, input_tokens, cached_tokens, output_tokens, cost_cny, occurred_at
+                FROM pipeline_cost_log
+                WHERE story_id = ? AND phase LIKE ?
+                ORDER BY occurred_at DESC, id DESC
+                LIMIT 1
+                """,
+                (story_id, pattern),
+            ).fetchone()
+    except sqlite3.OperationalError:
+        return None
+    if row is None:
+        return None
+    return {
+        "model": str(row["model"] or ""),
+        "input_tokens": int(row["input_tokens"] or 0),
+        "cached_tokens": int(row["cached_tokens"] or 0),
+        "output_tokens": int(row["output_tokens"] or 0),
+        "cost_cny": float(row["cost_cny"] or 0),
+        "started_at": str(row["occurred_at"] or ""),
+    }
+
+
 @app.get("/api/stories/{story_id}/files")
 def api_story_files(story_id: int) -> dict[str, Any]:
     """List files in the story's work_dir (top level only, sorted)."""
@@ -277,6 +491,32 @@ def api_story_file_content(story_id: int, filename: str) -> dict[str, Any]:
         "name": filename,
         "size_bytes": len(text.encode("utf-8")),
         "content": text,
+    }
+
+
+@app.post("/api/stories/{story_id}/publish")
+def api_story_publish(story_id: int) -> dict[str, Any]:
+    """Publish one approved story through the manual publish path."""
+
+    story = _ensure_story_exists(story_id)
+    if story.status != "approved":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Only approved stories can be published; current status is {story.status}.",
+        )
+
+    result = run_publish_only(_load_config(), story.id)
+    if result.status == "busy":
+        raise HTTPException(status_code=409, detail=result.message)
+    if result.status == "failed":
+        raise HTTPException(status_code=500, detail=result.message)
+    return {
+        "ok": True,
+        "story_id": story.id,
+        "status": result.status,
+        "phase": result.phase,
+        "message": result.message,
+        "publish_status": result.publish_status,
     }
 
 
@@ -647,10 +887,10 @@ def api_repair_orphans() -> dict[str, Any]:
             if phases_seen:
                 max_phase = max(phases_seen)
                 if max_phase >= 6:
-                    status = "approved"
+                    status = "pending"
                 elif max_phase >= 5:
                     status = "needs_human"
-                current_phase = f"phase_{max_phase}_done" if max_phase < 7 else "phase_6_done"
+                current_phase = f"phase_{min(max_phase, 6)}_done"
         except Exception:
             pass
 

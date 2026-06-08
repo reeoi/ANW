@@ -44,16 +44,11 @@ from generator.c_pipeline import (
     phase2_outline,
     phase3_sections,
     phase4_polish,
-    phase5_5_zhuque_loop,
     phase5_deslop,
     phase6_chapter_title,
 )
 from generator.c_pipeline.concurrency import PipelineSemaphore, make_semaphore_from_config
 from generator.c_pipeline.cost_tracker import CostTracker
-from generator.c_pipeline.phase5_5_zhuque_loop import (
-    ZhuqueAnomalyError,
-    ZhuqueRejectedError,
-)
 from review_queue.db import (
     get_story,
     initialize_database,
@@ -75,7 +70,6 @@ PHASES: tuple[str, ...] = (
     "phase_3",
     "phase_4",
     "phase_5",
-    "phase_5_5",
     "phase_6",
 )
 
@@ -327,10 +321,9 @@ def run_pipeline(
                     duration_seconds=round(time.monotonic() - started, 3),
                     warnings=warnings,
                 )
-                # phase_control: pause after phase_0?
-                _pause = _handle_phase_pause_after(config, db_path, story_id, 'phase_0', work_dir=work_dir, final_content_path=final_content_path, char_count=char_count, used_fallback_any=used_fallback_any, final_title=final_title, summary=summary, sections_needs_human=sections_needs_human, started=started, warnings=warnings)
-                if _pause:
-                    return _pause
+            _pause = _handle_phase_pause_after(config, db_path, story_id, 'phase_0', work_dir=work_dir, final_content_path=final_content_path, char_count=char_count, used_fallback_any=used_fallback_any, final_title=final_title, summary=summary, sections_needs_human=sections_needs_human, started=started, warnings=warnings)
+            if _pause:
+                return _pause
 
             # ---------- Phase 1 ----------
             if resume_idx <= 1:
@@ -362,10 +355,10 @@ def run_pipeline(
                     duration_seconds=round(time.monotonic() - started, 3),
                     warnings=warnings,
                 )
-                # phase_control: pause after phase_1?
-                _pause = _handle_phase_pause_after(config, db_path, story_id, 'phase_1', work_dir=work_dir, final_content_path=final_content_path, char_count=char_count, used_fallback_any=used_fallback_any, final_title=final_title, summary=summary, sections_needs_human=sections_needs_human, started=started, warnings=warnings)
-                if _pause:
-                    return _pause
+            _pause = _handle_phase_pause_after(config, db_path, story_id, 'phase_1', work_dir=work_dir, final_content_path=final_content_path, char_count=char_count, used_fallback_any=used_fallback_any, final_title=final_title, summary=summary, sections_needs_human=sections_needs_human, started=started, warnings=warnings)
+            if _pause:
+                return _pause
+            if resume_idx <= 1:
                 warnings.extend(phase1.warnings)
             else:
                 title, summary = _read_phase1_artifacts(work_dir / "1_设定.md")
@@ -393,10 +386,10 @@ def run_pipeline(
                     duration_seconds=round(time.monotonic() - started, 3),
                     warnings=warnings,
                 )
-                # phase_control: pause after phase_2?
-                _pause = _handle_phase_pause_after(config, db_path, story_id, 'phase_2', work_dir=work_dir, final_content_path=final_content_path, char_count=char_count, used_fallback_any=used_fallback_any, final_title=final_title, summary=summary, sections_needs_human=sections_needs_human, started=started, warnings=warnings)
-                if _pause:
-                    return _pause
+            _pause = _handle_phase_pause_after(config, db_path, story_id, 'phase_2', work_dir=work_dir, final_content_path=final_content_path, char_count=char_count, used_fallback_any=used_fallback_any, final_title=final_title, summary=summary, sections_needs_human=sections_needs_human, started=started, warnings=warnings)
+            if _pause:
+                return _pause
+            if resume_idx <= 2:
                 warnings.extend(phase2.warnings)
 
             # ---------- Phase 3 ----------
@@ -433,10 +426,10 @@ def run_pipeline(
                     duration_seconds=round(time.monotonic() - started, 3),
                     warnings=warnings,
                 )
-                # phase_control: pause after phase_3?
-                _pause = _handle_phase_pause_after(config, db_path, story_id, 'phase_3', work_dir=work_dir, final_content_path=final_content_path, char_count=char_count, used_fallback_any=used_fallback_any, final_title=final_title, summary=summary, sections_needs_human=sections_needs_human, started=started, warnings=warnings)
-                if _pause:
-                    return _pause
+            _pause = _handle_phase_pause_after(config, db_path, story_id, 'phase_3', work_dir=work_dir, final_content_path=final_content_path, char_count=char_count, used_fallback_any=used_fallback_any, final_title=final_title, summary=summary, sections_needs_human=sections_needs_human, started=started, warnings=warnings)
+            if _pause:
+                return _pause
+            if resume_idx <= 3:
                 warnings.extend(phase3.warnings)
 
             # ---------- Phase 4 ----------
@@ -461,10 +454,10 @@ def run_pipeline(
                     duration_seconds=round(time.monotonic() - started, 3),
                     warnings=warnings,
                 )
-                # phase_control: pause after phase_4?
-                _pause = _handle_phase_pause_after(config, db_path, story_id, 'phase_4', work_dir=work_dir, final_content_path=final_content_path, char_count=char_count, used_fallback_any=used_fallback_any, final_title=final_title, summary=summary, sections_needs_human=sections_needs_human, started=started, warnings=warnings)
-                if _pause:
-                    return _pause
+            _pause = _handle_phase_pause_after(config, db_path, story_id, 'phase_4', work_dir=work_dir, final_content_path=final_content_path, char_count=char_count, used_fallback_any=used_fallback_any, final_title=final_title, summary=summary, sections_needs_human=sections_needs_human, started=started, warnings=warnings)
+            if _pause:
+                return _pause
+            if resume_idx <= 4:
                 warnings.extend(phase4.warnings)
 
             # ---------- Phase 5 ----------
@@ -497,116 +490,12 @@ def run_pipeline(
                         warnings=warnings,
                     )
                 warnings.extend(phase5.warnings)
-
-            # ---------- Phase 5.5 (朱雀 AI 检测闭环) ----------
-            if resume_idx <= 6:
-                _check_cancellation(db_path, story_id)
-                update_story_phase(db_path, story_id, "phase_5_5_running")
-                zhuque_enabled = bool(
-                    (config.data.get("c_pipeline") or {}).get("zhuque_loop", {}).get("enabled", True)
-                )
-                # Mock / dry-run 模式跳过：朱雀需要真实 Chrome + 朱雀登录，单测无法 mock 站
-                skip_for_mock = client.is_mock() or bool(
-                    config.data.get("runtime", {}).get("dry_run")
-                )
-                if not zhuque_enabled or skip_for_mock:
-                    reason = "config_disabled" if not zhuque_enabled else "mock_or_dryrun"
-                    logger.info(
-                        "phase5_5_skipped story_id=%s reason=%s", story_id, reason
-                    )
-                    update_story_phase(db_path, story_id, "phase_5_5_skipped")
-                    # 复制 phase5 产物为 phase5_5 产物，保持下游路径一致
-                    skip_dst = work_dir / "5_5_朱雀通过稿.md"
-                    if final_content_path and Path(final_content_path).exists():
-                        skip_dst.write_text(
-                            Path(final_content_path).read_text(encoding="utf-8"),
-                            encoding="utf-8",
-                        )
-                        final_content_path = skip_dst
-                        warnings.append(f"phase 5.5 skipped ({reason})")
-                else:
-                    try:
-                        phase5_5 = phase5_5_zhuque_loop.run_zhuque_loop(
-                            config,
-                            work_dir=work_dir,
-                            story_id=story_id,
-                            client=client,
-                            cost_tracker=tracker,
-                        )
-                        final_content_path = phase5_5.final_path
-                        char_count = phase5_5.char_count
-                        update_story_phase(
-                            db_path,
-                            story_id,
-                            "phase_5_5_done",
-                            final_content_path=str(final_content_path),
-                        )
-                        warnings.append(
-                            f"phase 5.5 朱雀通过：{len(phase5_5.rounds)} 轮检测"
-                        )
-                    except ZhuqueAnomalyError as anomaly_exc:
-                        update_story_phase(db_path, story_id, "phase_5_5_paused")
-                        update_story_status(
-                            db_path,
-                            story_id,
-                            "paused_zhuque_anomaly",
-                            summary=f"朱雀检测异常({anomaly_exc.anomaly.value})：{anomaly_exc}",
-                        )
-                        logger.warning(
-                            "phase5_5_paused story_id=%s anomaly=%s",
-                            story_id, anomaly_exc.anomaly.value,
-                        )
-                        refreshed = get_story(db_path, story_id)
-                        return PipelineResult(
-                            story_id=story_id,
-                            work_dir=work_dir,
-                            final_phase="phase_5_5_paused",
-                            status="paused_zhuque_anomaly",
-                            final_content_path=final_content_path,
-                            used_fallback=used_fallback_any,
-                            needs_human=True,
-                            total_cost_cny=float(refreshed.pipeline_cost_cny if refreshed else 0.0),
-                            final_title=final_title,
-                            summary=summary,
-                            char_count=char_count,
-                            sections_needs_human=sections_needs_human,
-                            duration_seconds=round(time.monotonic() - started, 3),
-                            warnings=warnings + [
-                                f"朱雀异常：{anomaly_exc.anomaly.value} - {anomaly_exc}"
-                            ],
-                        )
-                    except ZhuqueRejectedError as rejected_exc:
-                        update_story_phase(db_path, story_id, "phase_5_5_rejected")
-                        update_story_status(
-                            db_path,
-                            story_id,
-                            "rejected_ai",
-                            summary=f"朱雀检测 {rejected_exc.rounds} 轮仍未达「人工创作特征显著」",
-                        )
-                        logger.warning(
-                            "phase5_5_rejected story_id=%s rounds=%s last_label=%s",
-                            story_id, rejected_exc.rounds, rejected_exc.last_label.value,
-                        )
-                        refreshed = get_story(db_path, story_id)
-                        return PipelineResult(
-                            story_id=story_id,
-                            work_dir=work_dir,
-                            final_phase="phase_5_5_rejected",
-                            status="rejected_ai",
-                            final_content_path=final_content_path,
-                            used_fallback=used_fallback_any,
-                            needs_human=False,
-                            total_cost_cny=float(refreshed.pipeline_cost_cny if refreshed else 0.0),
-                            final_title=final_title,
-                            summary=summary,
-                            char_count=char_count,
-                            sections_needs_human=sections_needs_human,
-                            duration_seconds=round(time.monotonic() - started, 3),
-                            warnings=warnings + [str(rejected_exc)],
-                        )
+            _pause = _handle_phase_pause_after(config, db_path, story_id, 'phase_5', work_dir=work_dir, final_content_path=final_content_path, char_count=char_count, used_fallback_any=used_fallback_any, final_title=final_title, summary=summary, sections_needs_human=sections_needs_human, started=started, warnings=warnings)
+            if _pause:
+                return _pause
 
             # ---------- Phase 6 (chapter titling) ----------
-            if resume_idx <= 7:
+            if resume_idx <= 6:
                 _check_cancellation(db_path, story_id)
                 update_story_phase(db_path, story_id, "phase_6_running")
                 phase6 = phase6_chapter_title.run_chapter_titling(
@@ -638,6 +527,9 @@ def run_pipeline(
                         warnings=warnings,
                     )
                 warnings.extend(phase6.warnings)
+            _pause = _handle_phase_pause_after(config, db_path, story_id, 'phase_6', work_dir=work_dir, final_content_path=final_content_path, char_count=char_count, used_fallback_any=used_fallback_any, final_title=final_title, summary=summary, sections_needs_human=sections_needs_human, started=started, warnings=warnings)
+            if _pause:
+                return _pause
 
         except PipelineCancelledError:
             current_phase = _current_phase_label(db_path, story_id)

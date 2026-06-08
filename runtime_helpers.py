@@ -146,7 +146,8 @@ def recent_log_lines(config: LoadedConfig, max_lines: int = 80) -> tuple[Path, l
     if current:
         blocks.append(current)
 
-    cutoff = datetime.now() - timedelta(days=7)
+    latest_ts = max((_log_line_datetime(block[0]) for block in blocks if block), default=None)
+    cutoff = (latest_ts or datetime.now()) - timedelta(days=7)
     kept: list[list[str]] = []
     for block in blocks:
         ts = _log_line_datetime(block[0]) if block else None

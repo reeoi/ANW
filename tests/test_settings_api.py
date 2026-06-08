@@ -198,14 +198,17 @@ def test_get_generation_masks_api_key(env_setup: dict[str, Path]) -> None:
     body = json.loads(r["body"])
     assert body["has_api_key"] is True
     assert body["provider"] == "deepseek"
-    assert {p["id"] for p in body["providers"]} >= {"openai", "google", "anthropic", "zhipu", "qwen", "custom"}
-    assert all("model" not in preset and "flash_model" not in preset for preset in body["providers"])
+    assert {p["id"] for p in body["providers"]} >= {"openai", "google", "anthropic", "zhipu", "qwen", "xiaomi", "custom"}
+    xiaomi = next(p for p in body["providers"] if p["id"] == "xiaomi")
+    assert xiaomi["base_url"] == "https://api.xiaomimimo.com/v1"
+    assert xiaomi["protocol"] == "openai"
+    assert xiaomi["model"] == "mimo-v2.5-pro"
+    assert xiaomi["flash_model"] == "mimo-v2-flash"
     assert body["protocol"] == "openai"
     assert "flash_model" in body
     assert "model" in body
     assert "base_url" in body
-    # api_key_masked 已移除，不应出现在响应中
-    assert "api_key_masked" not in r["body"]
+    assert body["api_key_masked"] == settings_api.mask_secret("sk-abcdef-1234567890-tail")
 
 
 def test_post_generation_keeps_existing_when_masked(env_setup: dict[str, Path]) -> None:
@@ -276,6 +279,7 @@ def test_generation_test_calls_httpx(env_setup: dict[str, Path], monkeypatch: py
         captured["url"] = url
         captured["headers"] = kwargs.get("headers")
         captured["json"] = kwargs.get("json")
+        captured["trust_env"] = kwargs.get("trust_env")
         return FakeResp()
 
     import httpx
@@ -292,6 +296,68 @@ def test_generation_test_calls_httpx(env_setup: dict[str, Path], monkeypatch: py
     assert captured["url"] == "https://example.test/chat/completions"
     assert captured["headers"]["Authorization"] == "Bearer sk-newtest-xxx"
     assert captured["json"]["model"] == "deepseek-v4-pro"
+    assert captured["trust_env"] is False
+
+
+def test_generation_test_persists_submitted_key(env_setup: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeResp:
+        status_code = 401
+        text = "unauthorized"
+
+    def fake_post(url: str, **kwargs: Any) -> FakeResp:
+        return FakeResp()
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    r = _request(
+        "POST",
+        "/api/settings/generation/test",
+        json_body={
+            "provider": "custom",
+            "api_key": "sk-probe-save",
+            "base_url": "https://relay.example/v1",
+            "model": "relay-model",
+            "flash_model": "relay-flash",
+        },
+    )
+    assert r["status"] == 200
+    env_text = env_setup["env"].read_text(encoding="utf-8")
+    assert "LLM_API_KEY=sk-probe-save" in env_text
+    assert "LLM_BASE_URL=https://relay.example/v1" in env_text
+    assert "LLM_MODEL=relay-model" in env_text
+    assert "LLM_FLASH_MODEL=relay-flash" in env_text
+
+
+def test_generation_test_auto_appends_v1_after_404(env_setup: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, Any] = {"urls": []}
+
+    class FakeResp:
+        def __init__(self, status_code: int, text: str = "") -> None:
+            self.status_code = status_code
+            self.text = text
+
+    def fake_post(url: str, **kwargs: Any) -> FakeResp:
+        captured["urls"].append(url)
+        return FakeResp(200 if url == "https://relay.example/v1/chat/completions" else 404)
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    r = _request(
+        "POST",
+        "/api/settings/generation/test",
+        json_body={"api_key": "sk-v1", "base_url": "https://relay.example", "model": "relay-model"},
+    )
+    body = json.loads(r["body"])
+    env_text = env_setup["env"].read_text(encoding="utf-8")
+
+    assert body["ok"] is True
+    assert captured["urls"] == [
+        "https://relay.example/chat/completions",
+        "https://relay.example/v1/chat/completions",
+    ]
+    assert "LLM_BASE_URL=https://relay.example/v1" in env_text
 
 
 def test_generation_test_uses_anthropic_messages_endpoint(env_setup: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
@@ -305,6 +371,7 @@ def test_generation_test_uses_anthropic_messages_endpoint(env_setup: dict[str, P
         captured["url"] = url
         captured["headers"] = kwargs.get("headers")
         captured["json"] = kwargs.get("json")
+        captured["trust_env"] = kwargs.get("trust_env")
         return FakeResp()
 
     import httpx
@@ -325,6 +392,7 @@ def test_generation_test_uses_anthropic_messages_endpoint(env_setup: dict[str, P
     assert captured["url"] == "https://api.anthropic.com/v1/messages"
     assert captured["headers"]["x-api-key"] == "sk-ant-test"
     assert captured["json"]["max_tokens"] == 1
+    assert captured["trust_env"] is False
 
 
 def test_generation_test_custom_provider_can_use_anthropic_protocol(
@@ -339,6 +407,7 @@ def test_generation_test_custom_provider_can_use_anthropic_protocol(
     def fake_post(url: str, **kwargs: Any) -> FakeResp:
         captured["url"] = url
         captured["headers"] = kwargs.get("headers")
+        captured["trust_env"] = kwargs.get("trust_env")
         return FakeResp()
 
     import httpx
@@ -359,6 +428,123 @@ def test_generation_test_custom_provider_can_use_anthropic_protocol(
     assert json.loads(r["body"])["ok"] is True
     assert captured["url"] == "https://relay.example/v1/messages"
     assert captured["headers"]["x-api-key"] == "relay-key"
+    assert captured["trust_env"] is False
+
+
+def test_generation_models_discovers_openai_compatible_models(
+    env_setup: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: dict[str, Any] = {}
+
+    class FakeResp:
+        status_code = 200
+        text = ""
+
+        @staticmethod
+        def json() -> dict[str, Any]:
+            return {"data": [{"id": "model-pro"}, {"id": "model-flash"}, {"id": "model-pro"}]}
+
+    def fake_get(url: str, **kwargs: Any) -> FakeResp:
+        captured["url"] = url
+        captured["headers"] = kwargs.get("headers")
+        captured["trust_env"] = kwargs.get("trust_env")
+        return FakeResp()
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    r = _request(
+        "POST",
+        "/api/settings/generation/models",
+        json_body={"api_key": "sk-models", "base_url": "https://relay.example/v1"},
+    )
+    body = json.loads(r["body"])
+
+    assert r["status"] == 200
+    assert body["ok"] is True
+    assert body["models"] == ["model-pro", "model-flash"]
+    assert captured["url"] == "https://relay.example/v1/models"
+    assert captured["headers"]["Authorization"] == "Bearer sk-models"
+    assert captured["trust_env"] is False
+
+
+def test_generation_models_auto_appends_v1_after_404(
+    env_setup: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: dict[str, Any] = {"urls": []}
+
+    class FakeResp:
+        def __init__(self, status_code: int, payload: dict[str, Any] | None = None, text: str = "") -> None:
+            self.status_code = status_code
+            self._payload = payload or {}
+            self.text = text
+
+        def json(self) -> dict[str, Any]:
+            return self._payload
+
+    def fake_get(url: str, **kwargs: Any) -> FakeResp:
+        captured["urls"].append(url)
+        if url == "https://relay.example/v1/models":
+            return FakeResp(200, {"data": [{"id": "relay-model"}]})
+        return FakeResp(404, text="not found")
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    r = _request(
+        "POST",
+        "/api/settings/generation/models",
+        json_body={"api_key": "sk-models", "base_url": "https://relay.example"},
+    )
+    body = json.loads(r["body"])
+    env_text = env_setup["env"].read_text(encoding="utf-8")
+
+    assert body["ok"] is True
+    assert body["models"] == ["relay-model"]
+    assert captured["urls"] == ["https://relay.example/models", "https://relay.example/v1/models"]
+    assert "LLM_BASE_URL=https://relay.example/v1" in env_text
+
+
+def test_generation_models_uses_anthropic_headers(
+    env_setup: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: dict[str, Any] = {}
+
+    class FakeResp:
+        status_code = 200
+        text = ""
+
+        @staticmethod
+        def json() -> dict[str, Any]:
+            return {"data": [{"id": "claude-example"}]}
+
+    def fake_get(url: str, **kwargs: Any) -> FakeResp:
+        captured["url"] = url
+        captured["headers"] = kwargs.get("headers")
+        captured["trust_env"] = kwargs.get("trust_env")
+        return FakeResp()
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    r = _request(
+        "POST",
+        "/api/settings/generation/models",
+        json_body={
+            "provider": "anthropic",
+            "protocol": "anthropic",
+            "api_key": "sk-ant-models",
+            "base_url": "https://api.anthropic.com/v1",
+        },
+    )
+    body = json.loads(r["body"])
+
+    assert body["ok"] is True
+    assert body["models"] == ["claude-example"]
+    assert captured["url"] == "https://api.anthropic.com/v1/models"
+    assert captured["headers"]["x-api-key"] == "sk-ant-models"
+    assert captured["headers"]["anthropic-version"] == "2023-06-01"
+    assert captured["trust_env"] is False
 
 
 # ============================================================================

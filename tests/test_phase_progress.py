@@ -42,24 +42,24 @@ def test_progress_phase_0_baseline_treats_as_running() -> None:
 def test_progress_phase_2_done_reports_one_third_progress() -> None:
     info = compute_phase_progress("phase_2_done")
     assert info.state == "running"
-    assert info.percent == round(3 / 9 * 100, 1)  # phase_0..phase_2 done out of 9 (含 phase_5_5)
+    assert info.percent == round(3 / 9 * 100, 1)
     assert [s.status for s in info.steps[:3]] == ["done", "done", "done"]
     assert info.steps[3].status == "in_progress"
     assert info.steps[3].phase == "phase_3"
 
 
 def test_progress_phase_5_done_advances_to_review() -> None:
-    """phase_5 完成 → 进入 phase_5_5 朱雀检测（不再是 phase_6 审核）。"""
+    """phase_5 完成 → 进入 phase_6 分章成稿。"""
     info = compute_phase_progress("phase_5_done")
     assert info.state == "running"
     assert info.steps[5].status == "done"
     assert info.steps[6].status == "in_progress"
-    assert info.steps[6].phase == "phase_5_5"
+    assert info.steps[6].phase == "phase_6"
 
 
-def test_progress_phase_7_done_is_complete() -> None:
-    """全流程完成（生成 + 朱雀 + 审核 + 发布）才算 100%。"""
-    info = compute_phase_progress("phase_7_done")
+def test_progress_phase_8_done_is_complete() -> None:
+    """全流程完成（生成 + 审核 + 发布）才算 100%。"""
+    info = compute_phase_progress("phase_8_done")
     assert info.state == "done"
     assert info.percent == 100.0
     for step in info.steps:
@@ -67,45 +67,44 @@ def test_progress_phase_7_done_is_complete() -> None:
 
 
 def test_progress_phase_6_done_advances_to_publish() -> None:
-    """审核通过 → phase_6_done，等待人工触发 phase_7 发布。"""
+    """分章完成 → phase_6_done，进入 phase_7 AI 审核。"""
     info = compute_phase_progress("phase_6_done")
     assert info.state == "running"
-    # phase_6 at index 7 in the 9-phase tuple
-    assert info.steps[7].status == "done"
-    assert info.steps[8].status == "in_progress"
-    assert info.steps[8].phase == "phase_7"
+    assert info.steps[6].status == "done"
+    assert info.steps[7].status == "in_progress"
+    assert info.steps[7].phase == "phase_7"
 
 
-def test_progress_phase_6_needs_human() -> None:
-    """AI 审核未通过 → 卡在 phase_6 等人工。"""
-    info = compute_phase_progress("phase_6_needs_human")
+def test_progress_phase_7_needs_human() -> None:
+    """AI 审核未通过 → 卡在 phase_7 等人工。"""
+    info = compute_phase_progress("phase_7_needs_human")
     assert info.state == "needs_human"
     assert info.steps[5].status == "done"      # phase_5
-    assert info.steps[7].status in ("in_progress", "needs_human")  # phase_6 at index 7
-    assert info.steps[8].status == "pending"    # phase_7 at index 8
+    assert info.steps[7].status in ("in_progress", "needs_human")
+    assert info.steps[8].status == "pending"
 
 
-def test_progress_phase_6_rejected_marks_failed() -> None:
-    """人工拒绝 → phase_6 失败终态。"""
-    info = compute_phase_progress("phase_6_rejected")
-    assert info.state == "failed"
-    assert info.failed_at == "phase_6"
-
-
-def test_progress_phase_7_failed_can_retry() -> None:
-    """发布失败 → phase_7 失败，但 phase_0~6 已完成。"""
-    info = compute_phase_progress("phase_7_failed")
+def test_progress_phase_7_rejected_marks_failed() -> None:
+    """人工拒绝 → phase_7 失败终态。"""
+    info = compute_phase_progress("phase_7_rejected")
     assert info.state == "failed"
     assert info.failed_at == "phase_7"
-    assert info.steps[7].status == "done"       # phase_6 at index 7
-    assert info.steps[8].status in ("failed", "in_progress")  # phase_7 at index 8
 
 
-def test_progress_phase_7_paused_marks_paused() -> None:
+def test_progress_phase_8_failed_can_retry() -> None:
+    """发布失败 → phase_8 失败，但 phase_0~7 已完成。"""
+    info = compute_phase_progress("phase_8_failed")
+    assert info.state == "failed"
+    assert info.failed_at == "phase_8"
+    assert info.steps[7].status == "done"
+    assert info.steps[8].status in ("failed", "in_progress")
+
+
+def test_progress_phase_8_paused_marks_paused() -> None:
     """发布暂停（风控/登录态）。"""
-    info = compute_phase_progress("phase_7_paused")
+    info = compute_phase_progress("phase_8_paused")
     assert info.state == "paused"
-    assert info.failed_at == "phase_7"
+    assert info.failed_at == "phase_8"
 
 
 def test_progress_phase_3_running_marks_phase_3_in_progress() -> None:
@@ -152,14 +151,14 @@ def test_progress_none_input_treated_as_phase_0() -> None:
     assert info.state == "running"
 
 
-def test_progress_phases_constant_is_eight_entries() -> None:
-    """生成 6 阶段 + 朱雀检测 + 审核 + 发布 = 9。"""
+def test_progress_phases_constant_is_nine_entries() -> None:
+    """生成 7 阶段 + 审核 + 发布 = 9。"""
     assert len(PHASES) == 9
     assert PHASES[0] == "phase_0"
     assert PHASES[5] == "phase_5"
-    assert PHASES[6] == "phase_5_5"
-    assert PHASES[7] == "phase_6"
-    assert PHASES[-1] == "phase_7"
+    assert PHASES[6] == "phase_6"
+    assert PHASES[7] == "phase_7"
+    assert PHASES[-1] == "phase_8"
 
 
 # ============================================================ list_work_dir_files
@@ -258,7 +257,7 @@ def test_normalize_resume_from_done_advances_to_next() -> None:
 
 def test_normalize_resume_from_terminal_done_rejected() -> None:
     with pytest.raises(ValueError):
-        normalize_resume_from("phase_5_done")
+        normalize_resume_from("phase_6_done")
 
 
 def test_normalize_resume_from_unknown_rejected() -> None:
