@@ -8,15 +8,27 @@ ANW 是 Auto Novel Writer 的缩写，是一个本地优先的小说创作、审
 
 ### 监控数据中心
 
-![ANW 监控数据中心](docs/images/readme-dashboard.png)
+<a href="docs/images/readme-dashboard.png">
+  <img src="docs/images/readme-dashboard.png" alt="ANW 监控数据中心" width="48%">
+</a>
 
 ### 长篇小说工作区
 
-![ANW 长篇小说工作区](docs/images/readme-long-novel.png)
+<a href="docs/images/readme-long-novel-books.png">
+  <img src="docs/images/readme-long-novel-books.png" alt="ANW 长篇小说项目书架" width="32%">
+</a>
+<a href="docs/images/readme-long-novel-generating.png">
+  <img src="docs/images/readme-long-novel-generating.png" alt="ANW 长篇小说全自动生成" width="32%">
+</a>
+<a href="docs/images/readme-long-novel-worldview.png">
+  <img src="docs/images/readme-long-novel-worldview.png" alt="ANW 长篇小说世界观文件" width="32%">
+</a>
 
 ### 题材库
 
-![ANW 题材库](docs/images/readme-theme-pool.png)
+<a href="docs/images/readme-theme-pool.png">
+  <img src="docs/images/readme-theme-pool.png" alt="ANW 题材库" width="48%">
+</a>
 
 ## 快速启动
 
