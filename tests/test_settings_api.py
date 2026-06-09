@@ -47,22 +47,11 @@ audit:
     safety: 0.10
     platform_fit: 0.10
 
-publisher:
-  default_platform: "fansq"
-  fansq:
-    enabled: true
-    login_state_path: "data/browser/fansq_state.json"
-    draft_url: "https://fanqienovel.com/"
-    min_publish_interval_minutes: 5
-    max_publish_interval_minutes: 15
-    pause_on_risk_control: true
-
 scheduler:
   enabled: false
   timezone: "Asia/Shanghai"
   generate_cron: "0 9 * * *"
   review_cron: "30 9 * * *"
-  publish_cron: "0 10 * * *"
   backup_cron: "0 3 * * *"
 
 generation:
@@ -103,17 +92,7 @@ def env_setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path
     env.write_text(SAMPLE_ENV, encoding="utf-8")
     monkeypatch.setenv("ANW_CONFIG", str(cfg))
     monkeypatch.setenv("ANW_DOTENV", str(env))
-    # 把 login_capture 也指到临时目录
-    browser = tmp_path / "data" / "browser"
-    browser.mkdir(parents=True)
-    from review_queue import login_capture
-
-    monkeypatch.setattr(login_capture, "PROJECT_ROOT", tmp_path)
-    monkeypatch.setattr(login_capture, "BROWSER_DIR", browser)
-    monkeypatch.setattr(login_capture, "SESSION_FILE", browser / ".login_session.json")
-    monkeypatch.setattr(login_capture, "TRIGGER_FINISH_FILE", browser / ".login_trigger_finish")
-    monkeypatch.setattr(login_capture, "WORKER_DONE_FILE", browser / ".login_worker_done.json")
-    return {"cfg": cfg, "env": env, "browser": browser}
+    return {"cfg": cfg, "env": env}
 
 
 def _request(
@@ -596,82 +575,6 @@ def test_post_audit_rejects_threshold_inversion(env_setup: dict[str, Path]) -> N
 
 
 # ============================================================================
-# 发布
-# ============================================================================
-
-
-def test_get_publish_includes_login_state(env_setup: dict[str, Path]) -> None:
-    r = _request("GET", "/api/settings/publish")
-    assert r["status"] == 200
-    body = json.loads(r["body"])
-    # CDP 模式：测试环境没有运行 Chrome（9222 端口空），且默认 storage_state 文件不存在
-    # → 返回 chrome_offline。旧 storage_state 语义下这里曾期望 missing。
-    assert body["login_state"]["status"] in {"chrome_offline", "cdp_active"}
-    assert body["login_session"]["status"] == "none"
-    assert body["min_publish_interval_minutes"] == 5
-
-
-def test_post_publish_rejects_inverted_intervals(env_setup: dict[str, Path]) -> None:
-    r = _request(
-        "POST",
-        "/api/settings/publish",
-        json_body={
-            "min_publish_interval_minutes": 30,
-            "max_publish_interval_minutes": 10,
-        },
-    )
-    assert r["status"] == 400
-
-
-def test_post_publish_rejects_bad_url(env_setup: dict[str, Path]) -> None:
-    r = _request("POST", "/api/settings/publish", json_body={"draft_url": "not-a-url"})
-    assert r["status"] == 400
-
-
-def test_post_publish_persists(env_setup: dict[str, Path]) -> None:
-    r = _request(
-        "POST",
-        "/api/settings/publish",
-        json_body={
-            "min_publish_interval_minutes": 7,
-            "max_publish_interval_minutes": 20,
-            "pause_on_risk_control": True,
-        },
-    )
-    assert r["status"] == 200
-    cfg_text = env_setup["cfg"].read_text(encoding="utf-8")
-    assert "min_publish_interval_minutes: 7" in cfg_text
-    assert "max_publish_interval_minutes: 20" in cfg_text
-
-
-def test_login_endpoints_round_trip(
-    env_setup: dict[str, Path], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from review_queue import login_capture
-
-    class _DummyProc:
-        def __init__(self, pid: int = 1234) -> None:
-            self.pid = pid
-
-    monkeypatch.setattr(login_capture.subprocess, "Popen", lambda *a, **kw: _DummyProc(7))
-
-    r = _request("POST", "/api/settings/publish/login")
-    assert r["status"] == 200
-    body = json.loads(r["body"])
-    assert body["status"] == "pending"
-    assert body["pid"] == 7
-
-    r = _request("GET", "/api/settings/publish/login/status")
-    assert r["status"] == 200
-    status_body = json.loads(r["body"])
-    assert status_body["session"]["status"] == "pending"
-
-    r = _request("POST", "/api/settings/publish/login/cancel")
-    assert r["status"] == 200
-    assert json.loads(r["body"])["ok"] is True
-
-
-# ============================================================================
 # 系统
 # ============================================================================
 
@@ -755,7 +658,6 @@ def test_get_all_settings(env_setup: dict[str, Path]) -> None:
     assert set(body.keys()) >= {
         "generation",
         "audit",
-        "publish",
         "system",
         "notifications",
     }
@@ -774,20 +676,8 @@ def test_get_mode_default_is_dry_run(env_setup: dict[str, Path]) -> None:
     assert body["dry_run"] is True
 
 
-def test_post_mode_to_real_requires_confirmations(env_setup: dict[str, Path]) -> None:
+def test_post_mode_to_real(env_setup: dict[str, Path]) -> None:
     r = _request("POST", "/api/mode", json_body={"dry_run": False})
-    assert r["status"] == 400
-
-
-def test_post_mode_to_real_with_confirmations(env_setup: dict[str, Path]) -> None:
-    r = _request(
-        "POST",
-        "/api/mode",
-        json_body={
-            "dry_run": False,
-            "confirmations": ["login_state_ready", "accept_consequences"],
-        },
-    )
     assert r["status"] == 200
     cfg_text = env_setup["cfg"].read_text(encoding="utf-8")
     assert "dry_run: false" in cfg_text
@@ -842,24 +732,6 @@ def test_post_audit_rejects_max_rewrite_invalid(env_setup: dict[str, Path]) -> N
     assert r["status"] == 400
 
 
-def test_post_publish_rejects_negative_interval(env_setup: dict[str, Path]) -> None:
-    r = _request(
-        "POST",
-        "/api/settings/publish",
-        json_body={"min_publish_interval_minutes": -5},
-    )
-    assert r["status"] == 400
-
-
-def test_post_publish_rejects_non_int_min(env_setup: dict[str, Path]) -> None:
-    r = _request(
-        "POST",
-        "/api/settings/publish",
-        json_body={"min_publish_interval_minutes": "soon"},
-    )
-    assert r["status"] == 400
-
-
 def test_post_system_rejects_negative_budget(env_setup: dict[str, Path]) -> None:
     r = _request("POST", "/api/settings/system", json_body={"monthly_budget_cny": -10})
     assert r["status"] == 400
@@ -889,20 +761,6 @@ def test_post_mode_with_runtime_change(env_setup: dict[str, Path]) -> None:
     assert r["status"] == 200
     cfg_text = env_setup["cfg"].read_text(encoding="utf-8")
     assert 'mode: "auto"' in cfg_text or "mode: auto" in cfg_text
-
-
-def test_finish_login_when_no_session(env_setup: dict[str, Path]) -> None:
-    r = _request("POST", "/api/settings/publish/login/finish")
-    assert r["status"] == 200
-    body = json.loads(r["body"])
-    assert body["ok"] is False
-
-
-def test_login_status_returns_state_object(env_setup: dict[str, Path]) -> None:
-    r = _request("GET", "/api/settings/publish/login/status")
-    assert r["status"] == 200
-    body = json.loads(r["body"])
-    assert "session" in body and "login_state" in body
 
 
 def test_open_folder_data_kind(env_setup: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
@@ -940,14 +798,6 @@ def test_post_generation_writes_base_url_and_model(env_setup: dict[str, Path]) -
     env_text = env_setup["env"].read_text(encoding="utf-8")
     assert "DEEPSEEK_BASE_URL=https://new-base/v1" in env_text
     assert "DEEPSEEK_MODEL=deepseek-v4-flash" in env_text
-
-
-def test_get_publish_when_pause_disabled(env_setup: dict[str, Path]) -> None:
-    """切换 pause_on_risk_control，确认 GET 反映出来。"""
-    _request("POST", "/api/settings/publish", json_body={"pause_on_risk_control": False})
-    r = _request("GET", "/api/settings/publish")
-    body = json.loads(r["body"])
-    assert body["pause_on_risk_control"] is False
 
 
 def test_test_generation_uses_existing_key_when_masked(

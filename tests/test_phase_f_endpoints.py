@@ -98,12 +98,6 @@ runtime:
   dry_run: true
 audit:
   approval_threshold: 90
-publisher:
-  default_platform: "fansq"
-  daily_count_min: 0
-  daily_count_max: 5
-  operating_hours: ["09:00", "22:00"]
-  slot_min_gap_minutes: 30
 scheduler:
   enabled: false
   timezone: "Asia/Shanghai"
@@ -158,15 +152,15 @@ def test_phases_returns_progress_strip(env: dict[str, Path]) -> None:
     assert body["current_phase"] == "phase_3_section_05_done"
     assert body["state"] == "running"
     assert body["section_index"] == 5
-    assert len(body["steps"]) == 9  # 7 generation + review + publish
+    assert len(body["steps"]) == 8  # 7 generation + review
     assert body["steps"][2]["status"] == "done"
     assert body["steps"][3]["status"] == "in_progress"
 
 
-def test_phases_phase_8_done_reports_complete(env: dict[str, Path]) -> None:
-    """全流程完成（审核+发布）才算 100%。"""
+def test_phases_phase_7_done_reports_complete(env: dict[str, Path]) -> None:
+    """全流程完成（审核）才算 100%。"""
     initialize_database(LoadedConfig(data={"database": {"sqlite_path": str(env["db"])}}, path=env["cfg"]))
-    sid = _seed_story(env["db"], current_phase="phase_8_done")
+    sid = _seed_story(env["db"], current_phase="phase_7_done")
     body = json.loads(_request("GET", f"/api/stories/{sid}/phases")["body"])
     assert body["state"] == "done"
     assert body["percent"] == 100.0
@@ -271,7 +265,7 @@ def test_phase_detail_marks_review_as_promptless(env: dict[str, Path]) -> None:
     sid = _seed_story(env["db"], current_phase="phase_7_running")
     body = json.loads(_request("GET", f"/api/stories/{sid}/phases/phase_7/detail")["body"])
     assert body["prompt"] is None
-    assert body["flow"]["stage"] == "审核发布链路"
+    assert body["flow"]["stage"] == "审核链路"
 
 
 def test_phases_payload_surfaces_retry_state_after_failure(env: dict[str, Path]) -> None:

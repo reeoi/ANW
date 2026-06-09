@@ -24,7 +24,6 @@ from generator.long_novel.theme_api import router as theme_router
 from generator.long_novel.theme_db import initialize_theme_tables
 from review_queue import dashboard_assets as _assets  # hot-reload: _assets.DASHBOARD_* reads from disk each request
 from review_queue.ai_review import review_story_in_database, run_review_batch
-from review_queue.atomic_runner import run_publish_only
 from review_queue.console_api import PHASE_PROMPT_MAP, router as console_router
 from review_queue.control_api import router as control_router
 from review_queue.db import (
@@ -100,13 +99,8 @@ SHORT_PHASE_DETAILS: dict[str, dict[str, Any]] = {
         "inputs": ("5_最终稿.md",),
     },
     "phase_7": {
-        "description": "对最终稿进行 AI 审核；达到阈值则进入待发布，否则按审核意见返修或转人工。",
+        "description": "对最终稿进行 AI 审核；达到阈值则进入人工复核，否则按审核意见返修或转人工。",
         "source": "review_queue/ai_review.py",
-        "inputs": ("6_最终稿_带章节.md",),
-    },
-    "phase_8": {
-        "description": "将审核通过的最终稿发布到目标平台，并记录发布状态。",
-        "source": "publisher/",
         "inputs": ("6_最终稿_带章节.md",),
     },
 }
@@ -329,13 +323,6 @@ def api_story_phase_detail(story_id: int, phase: str) -> dict[str, Any]:
             "exists": story.ai_review_score is not None or bool(story.summary),
             "size_bytes": None,
         })
-    elif phase == "phase_8":
-        outputs.append({
-            "path": "stories.status = published",
-            "exists": story.status == "published",
-            "size_bytes": None,
-        })
-
     prompt = _short_phase_prompt_payload(phase)
     config = load_from_environment()
     deepseek = config.data.get("deepseek", {}) or {}
@@ -358,7 +345,7 @@ def api_story_phase_detail(story_id: int, phase: str) -> dict[str, Any]:
         "label": PHASE_LABELS.get(phase, phase),
         "description": detail["description"],
         "flow": {
-            "stage": "短篇生成链路" if phase_index <= 6 else "审核发布链路",
+            "stage": "短篇生成链路" if phase_index <= 6 else "审核链路",
             "order": phase_index + 1,
             "total": len(PHASES),
             "next": PHASE_LABELS.get(PHASES[phase_index + 1]) if phase_index + 1 < len(PHASES) else None,
@@ -420,7 +407,6 @@ def _latest_short_phase_call(db_path: Path, story_id: int, phase: str) -> dict[s
     patterns = {
         "phase_3": "phase_3%",
         "phase_7": "ai_review%",
-        "phase_8": "publish%",
     }
     pattern = patterns.get(phase, phase + "%")
     try:
@@ -491,32 +477,6 @@ def api_story_file_content(story_id: int, filename: str) -> dict[str, Any]:
         "name": filename,
         "size_bytes": len(text.encode("utf-8")),
         "content": text,
-    }
-
-
-@app.post("/api/stories/{story_id}/publish")
-def api_story_publish(story_id: int) -> dict[str, Any]:
-    """Publish one approved story through the manual publish path."""
-
-    story = _ensure_story_exists(story_id)
-    if story.status != "approved":
-        raise HTTPException(
-            status_code=400,
-            detail=f"Only approved stories can be published; current status is {story.status}.",
-        )
-
-    result = run_publish_only(_load_config(), story.id)
-    if result.status == "busy":
-        raise HTTPException(status_code=409, detail=result.message)
-    if result.status == "failed":
-        raise HTTPException(status_code=500, detail=result.message)
-    return {
-        "ok": True,
-        "story_id": story.id,
-        "status": result.status,
-        "phase": result.phase,
-        "message": result.message,
-        "publish_status": result.publish_status,
     }
 
 
@@ -1186,7 +1146,7 @@ def _clean_optional(value: str | None, max_length: int = 2_000) -> str | None:
 
 
 def _queue_stats(db_path: str | Path) -> dict[str, int]:
-    statuses = ["pending", "needs_human", "approved", "published", "rejected", "publish_paused", "publish_failed", "failed"]
+    statuses = ["pending", "needs_human", "approved", "rejected", "failed"]
     stats = {status: 0 for status in statuses}
     with sqlite3.connect(Path(db_path)) as connection:
         total = connection.execute("SELECT COUNT(*) FROM stories").fetchone()[0]
@@ -1194,7 +1154,6 @@ def _queue_stats(db_path: str | Path) -> dict[str, int]:
     for status, count in rows:
         stats[str(status)] = int(count)
     stats["total"] = int(total)
-    stats["failed"] = int(stats.get("failed", 0) + stats.get("publish_failed", 0))
     return stats
 
 
@@ -1430,7 +1389,6 @@ def _schedule_info(config: LoadedConfig) -> dict[str, Any]:
         "timezone": str(scheduler_cfg.get("timezone") or "Asia/Shanghai"),
         "generate_cron": str(scheduler_cfg.get("generate_cron") or ""),
         "review_cron": str(scheduler_cfg.get("review_cron") or ""),
-        "publish_cron": str(scheduler_cfg.get("publish_cron") or ""),
         "backup_cron": str(scheduler_cfg.get("backup_cron") or ""),
     }
 

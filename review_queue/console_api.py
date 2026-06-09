@@ -67,21 +67,6 @@ def _theme_pool_count() -> int:
     return len(items) if isinstance(items, list) else 0
 
 
-def _login_state_payload() -> dict[str, Any]:
-    config = load_from_environment()
-    fansq = ((config.data.get("publisher") or {}).get("fansq") or {})
-    raw_path = str(fansq.get("login_state_path") or "").strip()
-    if not raw_path:
-        return {"status": "missing", "path": None, "exists": False}
-    path = Path(raw_path)
-    exists = path.exists()
-    return {
-        "status": "valid" if exists else "missing",
-        "path": str(path),
-        "exists": exists,
-    }
-
-
 def _current_task_payload() -> dict[str, Any] | None:
     """Inspect AtomicRunnerState; if running, enrich with story phase from DB."""
     snapshot = atomic_state.get_current()
@@ -126,8 +111,6 @@ def console_status() -> dict[str, Any]:
         "ok": True,
         "current_task": _current_task_payload(),
         "busy": atomic_state.is_busy(),
-        "login_state": _login_state_payload(),
-        "publish_fail_streak": atomic_state.get_publish_fail_streak(),
         "theme_pool_count": _theme_pool_count(),
     }
 
@@ -218,7 +201,7 @@ async def console_cancel(request: Request) -> dict[str, Any]:
     if story is None:
         raise HTTPException(status_code=404, detail="story 不存在")
     if story.status == "published":
-        raise HTTPException(status_code=400, detail="已发布作品无法取消")
+        raise HTTPException(status_code=400, detail="已完成作品无法取消")
     ok = request_story_cancel(db_path, sid)
     if not ok:
         raise HTTPException(status_code=404, detail="story 不存在")

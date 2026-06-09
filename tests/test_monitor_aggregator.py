@@ -20,13 +20,6 @@ from review_queue.db import initialize_database
 from review_queue.metrics import ensure_metrics_schema, record_pipeline_event
 
 
-@pytest.fixture(autouse=True)
-def _reset_login_cache() -> None:
-    ma.reset_login_cache()
-    yield
-    ma.reset_login_cache()
-
-
 @pytest.fixture()
 def cfg(tmp_path: Path) -> LoadedConfig:
     db_path = tmp_path / "anw.sqlite3"
@@ -34,7 +27,6 @@ def cfg(tmp_path: Path) -> LoadedConfig:
         data={
             "database": {"sqlite_path": str(db_path)},
             "cost_limits": {"monthly_budget_cny": 100, "daily_token_limit": 200000},
-            "publisher": {"fansq": {"login_state_path": str(tmp_path / "no.json")}},
         },
         path=Path("config.yaml"),
     )
@@ -76,8 +68,8 @@ def test_last_run_card_with_success(cfg: LoadedConfig) -> None:
 
 
 def test_last_run_card_consecutive_failures_danger(cfg: LoadedConfig) -> None:
-    record_pipeline_event(_db_path(cfg), kind="publish", status="failed", message="x")
-    record_pipeline_event(_db_path(cfg), kind="publish", status="failed", message="y")
+    record_pipeline_event(_db_path(cfg), kind="generate", status="failed", message="x")
+    record_pipeline_event(_db_path(cfg), kind="review", status="failed", message="y")
     out = ma.monitor_cards(cfg, _db_path(cfg))
     assert out["last_run"]["level"] == "danger"
     assert out["last_run"]["consecutive_failures"] >= 2
@@ -85,46 +77,9 @@ def test_last_run_card_consecutive_failures_danger(cfg: LoadedConfig) -> None:
 
 def test_last_run_card_one_failure_warn(cfg: LoadedConfig) -> None:
     record_pipeline_event(_db_path(cfg), kind="generate", status="success")
-    record_pipeline_event(_db_path(cfg), kind="publish", status="failed")
+    record_pipeline_event(_db_path(cfg), kind="review", status="failed")
     out = ma.monitor_cards(cfg, _db_path(cfg))
     assert out["last_run"]["level"] == "warn"
-
-
-# ============================================================================
-# login
-# ============================================================================
-
-
-def test_login_card_default_missing(cfg: LoadedConfig, monkeypatch: pytest.MonkeyPatch) -> None:
-    """CDP 离线 + 默认 storage_state 不存在 → chrome_offline，level=danger。"""
-    from publisher import chrome_launcher
-
-    from review_queue import login_capture
-
-    monkeypatch.setattr(login_capture, "state_file", lambda: Path("/nope/missing.json"))
-    monkeypatch.setattr(chrome_launcher, "is_cdp_ready", lambda *a, **kw: False)
-    monkeypatch.setattr(login_capture, "is_cdp_ready", lambda *a, **kw: False)
-    ma.reset_login_cache()
-    out = ma.monitor_cards(cfg, _db_path(cfg))
-    assert out["login"]["level"] == "danger"
-    assert out["login"]["status"] == "chrome_offline"
-
-
-def test_login_card_caches_within_ttl(cfg: LoadedConfig, monkeypatch: pytest.MonkeyPatch) -> None:
-    from review_queue import login_capture
-
-    call_count = {"n": 0}
-
-    def fake_validity(path=None) -> dict:
-        call_count["n"] += 1
-        return {"status": "valid", "label": "有效", "days_left": 30}
-
-    monkeypatch.setattr(login_capture, "login_state_validity", fake_validity)
-    out1 = ma.monitor_cards(cfg, _db_path(cfg))
-    out2 = ma.monitor_cards(cfg, _db_path(cfg))
-    assert out1["login"]["level"] == "ok"
-    assert out2["login"]["level"] == "ok"
-    assert call_count["n"] == 1  # 第二次走缓存
 
 
 # ============================================================================

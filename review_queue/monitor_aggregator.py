@@ -18,25 +18,17 @@
 from __future__ import annotations
 
 import sqlite3
-import threading
-import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 from config_loader import LoadedConfig
 
-# 登录态缓存：60 秒，避免每次 polling 都读文件
-_LOGIN_CACHE: dict[str, Any] = {}
-_LOGIN_CACHE_LOCK = threading.Lock()
-_LOGIN_CACHE_TTL = 60.0
-
-
 def monitor_cards(config: LoadedConfig, db_path: str | Path) -> dict[str, Any]:
     """聚合 4 张状态卡片所需数据。
 
     Args:
-        config: 已加载的配置（含 cost_limits / publisher.fansq 等）。
+        config: 已加载的配置（含 cost_limits 等）。
         db_path: SQLite 路径。
 
     第一张卡（"待处理收件箱"）由阶段 4 接入；本阶段仅删除调度器依赖。
@@ -44,7 +36,6 @@ def monitor_cards(config: LoadedConfig, db_path: str | Path) -> dict[str, Any]:
     return {
         "next_run": _next_run_card(),
         "last_run": _last_run_card(db_path),
-        "login": _login_card(),
         "budget": _budget_card(config, db_path),
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -122,59 +113,6 @@ def _last_run_card(db_path: str | Path) -> dict[str, Any]:
 
 
 # ============================================================================
-# Card: 登录态 (60 秒缓存)
-# ============================================================================
-
-
-def _login_card() -> dict[str, Any]:
-    now = time.time()
-    with _LOGIN_CACHE_LOCK:
-        cached_at = _LOGIN_CACHE.get("at", 0)
-        if cached_at and now - cached_at < _LOGIN_CACHE_TTL:
-            return _LOGIN_CACHE["card"]
-    # 重新计算
-    try:
-        from review_queue import login_capture
-
-        cdp_ok = bool(login_capture.is_cdp_ready(timeout=0.0))
-        raw = login_capture.login_state_validity(login_capture.state_file())
-    except Exception:
-        cdp_ok = False
-        raw = {"status": "missing", "label": "登录态不可用", "days_left": None}
-
-    status = str(raw.get("status") or "missing")
-    if status == "missing" and not cdp_ok:
-        status = "chrome_offline"
-        raw = {**raw, "label": "Chrome CDP 离线 / 登录态缺失"}
-    elif status == "missing" and cdp_ok:
-        status = "missing"
-        raw = {**raw, "label": "登录态缺失"}
-    days_left = raw.get("days_left")
-    if status in {"valid", "cdp_active"}:
-        level = "ok"
-    elif status in {"expiring", "session_only"}:
-        level = "warn"
-    else:
-        level = "danger"
-    card = {
-        "status": status,
-        "label": str(raw.get("label") or status),
-        "days_left": days_left,
-        "level": level,
-    }
-    with _LOGIN_CACHE_LOCK:
-        _LOGIN_CACHE["card"] = card
-        _LOGIN_CACHE["at"] = now
-    return card
-
-
-def reset_login_cache() -> None:
-    """测试时显式清缓存。"""
-    with _LOGIN_CACHE_LOCK:
-        _LOGIN_CACHE.clear()
-
-
-# ============================================================================
 # Card: 月度预算
 # ============================================================================
 
@@ -247,5 +185,4 @@ def is_quiet_hours(config: LoadedConfig, now: datetime | None = None) -> bool:
 __all__ = [
     "is_quiet_hours",
     "monitor_cards",
-    "reset_login_cache",
 ]
