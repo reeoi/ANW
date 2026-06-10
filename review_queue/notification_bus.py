@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import threading
 import uuid
 from collections import deque
@@ -25,6 +26,8 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, AsyncIterator, Callable, Iterable
+
+logger = logging.getLogger(__name__)
 
 
 class Severity(str, Enum):
@@ -78,8 +81,9 @@ class _Subscriber:
             try:
                 self.loop.call_soon_threadsafe(_drain_one, self.queue)
                 self.loop.call_soon_threadsafe(self.queue.put_nowait, notification)
-            except Exception:
-                pass
+            except (asyncio.QueueFull, RuntimeError) as exc:
+                # 二次失败基本是 loop 正在关闭，消息只能丢弃。
+                logger.debug("notification_dropped_for_slow_subscriber: %s", exc)
 
 
 def _drain_one(queue: asyncio.Queue[Notification]) -> None:

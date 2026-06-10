@@ -10,8 +10,8 @@
 
 from __future__ import annotations
 
-import logging
 import json
+import logging
 import os
 import platform
 import re
@@ -29,9 +29,9 @@ from config_loader import (
     get_env,
     load_from_environment,
 )
+from generator.api_client import _join_endpoint, _normalize_protocol, provider_defaults
 from review_queue.env_writer import read_env, write_env_fields
 from review_queue.yaml_writer import load_yaml, save_yaml, update_yaml_field
-from generator.api_client import _join_endpoint, _normalize_protocol, provider_defaults
 
 logger = logging.getLogger(__name__)
 
@@ -179,7 +179,9 @@ def _generation_env_values(env: dict[str, str], cfg_deepseek: dict[str, Any]) ->
         "api_key": env.get("LLM_API_KEY") or env.get("DEEPSEEK_API_KEY") or str(cfg_deepseek.get("api_key") or ""),
         "base_url": env.get("LLM_BASE_URL") or env.get("DEEPSEEK_BASE_URL") or str(cfg_deepseek.get("base_url") or defaults["base_url"]),
         "model": env.get("LLM_MODEL") or env.get("DEEPSEEK_MODEL") or str(cfg_deepseek.get("model") or defaults["model"]),
-        "flash_model": env.get("LLM_FLASH_MODEL") or env.get("DEEPSEEK_FLASH_MODEL") or str(cfg_deepseek.get("flash_model") or defaults["flash_model"]),
+        "flash_model": (
+            env.get("LLM_FLASH_MODEL") or env.get("DEEPSEEK_FLASH_MODEL") or str(cfg_deepseek.get("flash_model") or defaults["flash_model"])
+        ),
     }
 
 
@@ -242,7 +244,10 @@ def _fake_ip_notice(base_url: str) -> str:
         return ""
     ips = sorted({str(info[4][0]) for info in infos if info and info[4]})
     if any(ip.startswith("198.18.") or ip.startswith("198.19.") for ip in ips):
-        return f" 当前域名解析到 Clash/Mihomo Fake-IP（{', '.join(ips[:3])}），说明仍在 TUN/Fake-IP 规则内；请在规则里加 DOMAIN, {host}, DIRECT，并刷新 DNS/重启 Clash。"
+        return (
+            f" 当前域名解析到 Clash/Mihomo Fake-IP（{', '.join(ips[:3])}），说明仍在 TUN/Fake-IP 规则内；"
+            f"请在规则里加 DOMAIN, {host}, DIRECT，并刷新 DNS/重启 Clash。"
+        )
     return ""
 
 

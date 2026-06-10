@@ -46,6 +46,14 @@ def test_initialize_creates_three_tables_with_indexes(tmp_path: Path) -> None:
     assert {"idx_stories_status", "idx_stories_current_phase", "idx_cost_log_occurred_at"}.issubset(indexes)
 
 
+def test_initialize_enables_persistent_wal_journal(tmp_path: Path) -> None:
+    db = initialize_database(_config(tmp_path))
+    # WAL 持久化在库文件里——用全新连接读，确认写入方/读取方都享受 WAL。
+    with sqlite3.connect(db) as conn:
+        mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
+    assert str(mode).lower() == "wal"
+
+
 def test_stories_columns_match_plan(tmp_path: Path) -> None:
     db = initialize_database(_config(tmp_path))
     with sqlite3.connect(db) as conn:

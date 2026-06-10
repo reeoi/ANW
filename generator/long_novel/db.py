@@ -1,6 +1,6 @@
 """Long novel database — books / volumes / chapters tables.
 
-Shares the same SQLite connection as ``review_queue.db``.
+Shares the same SQLite database file as the top-level ``storage`` package.
 Schema is created lazily via ``initialize_database``.
 """
 

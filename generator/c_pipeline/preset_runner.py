@@ -17,9 +17,9 @@ from generator.c_pipeline.actions.base import ActionContext
 from generator.c_pipeline.actions.runner import ActionRunner
 from generator.c_pipeline.cost_tracker import CostTracker
 from generator.c_pipeline.preset_loader import load_preset
-from review_queue.db import (
+from storage.schema import initialize_database
+from storage.stories import (
     get_story,
-    initialize_database,
     update_story_phase,
     update_story_status,
 )
@@ -86,10 +86,12 @@ def run_preset(
 
     # Mark this story as using this preset
     try:
-        with __import__("sqlite3").connect(str(db_path)) as conn:
+        import sqlite3
+
+        with sqlite3.connect(str(db_path)) as conn:
             conn.execute("UPDATE stories SET preset_name = ? WHERE id = ?", (preset_name, story_id))
-    except Exception:
-        pass
+    except sqlite3.Error:
+        logger.warning("preset_name_update_failed story_id=%s preset=%s", story_id, preset_name, exc_info=True)
 
     # Load preset
     preset = load_preset(preset_name)

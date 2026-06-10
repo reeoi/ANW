@@ -13,36 +13,21 @@ from pathlib import Path
 from typing import Any
 
 from generator.api_client import DeepSeekClient
+from generator.long_novel.prompt_kit import (
+    PROMPTS_DIR as _PROMPTS_DIR,
+)
+from generator.long_novel.prompt_kit import (
+    load_prompt_template as _load_prompt_template,
+)
+from generator.long_novel.prompt_kit import (
+    render_prompt_template as _render_prompt_template,
+)
 
 logger = logging.getLogger(__name__)
 
-_PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
 _DEAI_SKILL_ENV = "LONG_NOVEL_DEAI_SKILL_DIR"
 _DEAI_SKILL_DEFAULT_DIR = _PROMPTS_DIR / "deai_skills"
 _DEAI_SKILL_FILES = ("anti-ai-writing.md", "banned-words.md", "story-deslop.md")
-
-
-def _load_prompt(name: str) -> str:
-    p = _PROMPTS_DIR / name
-    return p.read_text(encoding="utf-8") if p.exists() else ""
-
-
-def _load_prompt_template(name: str, fallback: str) -> str:
-    text = _load_prompt(name).strip()
-    return text or fallback
-
-
-class _PromptValues(dict):
-    def __missing__(self, key: str) -> str:
-        return "{" + key + "}"
-
-
-def _render_prompt_template(template: str, values: dict[str, Any]) -> str:
-    try:
-        return template.format_map(_PromptValues({k: "" if v is None else v for k, v in values.items()}))
-    except Exception as exc:
-        logger.warning("prompt template render failed: %s", exc)
-        return template
 
 
 _TRACKING_MEMORY_SYSTEM_FALLBACK = (
@@ -275,15 +260,15 @@ def _upsert_section(path: Path, heading: str, body: str) -> None:
 def _parse_json_object(text: str) -> dict[str, Any]:
     try:
         return json.loads(text.strip())
-    except Exception:
+    except ValueError:
         pass
     start = text.find("{")
     end = text.rfind("}") + 1
     if start >= 0 and end > start:
         try:
             return json.loads(text[start:end])
-        except Exception:
-            pass
+        except ValueError as exc:
+            logger.debug("parse_json_object_failed: %s", exc)
     return {}
 
 
@@ -428,7 +413,7 @@ def assemble_context(
             from generator.long_novel.l0_book_setup import ensure_volume_outlines_split
             ensure_volume_outlines_split(work_dir)
         except Exception:
-            pass
+            logger.warning("ensure_volume_outlines_split_failed work_dir=%s", work_dir, exc_info=True)
         for volume_path in sorted(outline_dir.glob("卷纲_*.md")):
             volume_outline_parts.append(f"--- 大纲/{volume_path.name} ---\n{_read_file(volume_path)[:1800]}")
     if volume_outline_parts:

@@ -6,9 +6,10 @@ import argparse
 import html
 import json
 import logging
-import os
 import re
 import sqlite3
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Any
@@ -24,7 +25,8 @@ from generator.long_novel.theme_api import router as theme_router
 from generator.long_novel.theme_db import initialize_theme_tables
 from review_queue import dashboard_assets as _assets  # hot-reload: _assets.DASHBOARD_* reads from disk each request
 from review_queue.ai_review import review_story_in_database, run_review_batch
-from review_queue.console_api import PHASE_PROMPT_MAP, router as console_router
+from review_queue.console_api import PHASE_PROMPT_MAP
+from review_queue.console_api import router as console_router
 from review_queue.control_api import router as control_router
 from review_queue.db import (
     get_database_path,
@@ -106,7 +108,16 @@ SHORT_PHASE_DETAILS: dict[str, dict[str, Any]] = {
 }
 
 
-app = FastAPI(title="ANW Auto Novel Writer")
+@asynccontextmanager
+async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Ensure long-novel + theme tables exist before serving requests."""
+    db_path = initialize_database(load_from_environment())
+    initialize_long_novel_tables(db_path)
+    initialize_theme_tables(db_path)
+    yield
+
+
+app = FastAPI(title="ANW Auto Novel Writer", lifespan=_lifespan)
 static_dir = Path(__file__).resolve().parent / "static"
 if static_dir.is_dir():
     app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
@@ -117,15 +128,6 @@ app.include_router(scan_plan_router)
 app.include_router(console_router)
 app.include_router(long_novel_router)
 app.include_router(theme_router)
-
-# Ensure long-novel + theme tables exist on startup
-
-
-@app.on_event("startup")
-async def _ensure_long_novel_tables() -> None:
-    db_path = initialize_database(load_from_environment())
-    initialize_long_novel_tables(db_path)
-    initialize_theme_tables(db_path)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -804,8 +806,8 @@ def api_repair_orphans() -> dict[str, Any]:
         with sqlite3.connect(db_path) as conn:
             rows = conn.execute("SELECT id FROM stories").fetchall()
             existing_ids = {r[0] for r in rows}
-    except Exception:
-        pass
+    except sqlite3.Error:
+        logger.warning("import_works_existing_ids_query_failed", exc_info=True)
 
     added = 0
     for child in sorted(works_dir.iterdir()):
@@ -832,8 +834,8 @@ def api_repair_orphans() -> dict[str, Any]:
                     if line.startswith("标题") or line.startswith("title"):
                         title = line.split("：", 1)[-1].split(":", 1)[-1].strip()[:100] or title
                         break
-        except Exception:
-            pass
+        except (OSError, UnicodeDecodeError) as exc:
+            logger.debug("import_works_title_read_failed dir=%s: %s", child.name, exc)
         # Count phases completed
         try:
             artifacts = sorted(child.glob("*_*.md")) + sorted(child.glob("*_*.json"))
@@ -851,8 +853,8 @@ def api_repair_orphans() -> dict[str, Any]:
                 elif max_phase >= 5:
                     status = "needs_human"
                 current_phase = f"phase_{min(max_phase, 6)}_done"
-        except Exception:
-            pass
+        except OSError as exc:
+            logger.debug("import_works_phase_scan_failed dir=%s: %s", child.name, exc)
 
         try:
             with sqlite3.connect(db_path) as conn:

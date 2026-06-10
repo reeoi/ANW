@@ -14,9 +14,9 @@ deterministic; both are synchronous.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
-import asyncio
 import sys
 import time
 from pathlib import Path
@@ -31,8 +31,9 @@ if str(ROOT) not in sys.path:
 
 from fastapi import HTTPException
 
-from generator.long_novel import db as ln_db
 from generator.long_novel import api as ln_api
+from generator.long_novel import db as ln_db
+from generator.long_novel import deps as ln_deps
 from generator.long_novel import l2_chapter_write as l2_write
 from generator.long_novel.api import (
     _autopilot_chapters_to_write,
@@ -220,7 +221,7 @@ def test_draft_step_can_rerun_after_chapter_is_draft(
       calls["n"] += 1
       return f"第{calls['n']}次初稿正文"
 
-    monkeypatch.setattr(ln_api, "_deepseek_client", lambda _book: object())
+    monkeypatch.setattr(ln_deps, "_deepseek_client", lambda _book: object())
     monkeypatch.setattr(l2_write, "run_draft", fake_run_draft)
 
     first = ln_api._api_write_chapter_step_blocking(book_id, 1, "draft")
@@ -288,7 +289,7 @@ def test_rerunning_draft_invalidates_downstream_outputs(
         ai_review_json="{}",
     )
 
-    monkeypatch.setattr(ln_api, "_deepseek_client", lambda _book: object())
+    monkeypatch.setattr(ln_deps, "_deepseek_client", lambda _book: object())
     monkeypatch.setattr(l2_write, "run_draft", lambda *_args, **_kwargs: "fresh draft")
 
     result = ln_api._api_write_chapter_step_blocking(book_id, 1, "draft")
@@ -470,7 +471,7 @@ def test_review_revise_start_persists_progress_until_done(
     book_id, book, work_dir = _make_book(env, tmp_path, target_chapters=2)
     _finalize_book_setup(book_id, book, work_dir)
     client = _ReviewFakeClient(["CONCERNS", "APPROVE"])
-    monkeypatch.setattr(ln_api, "_deepseek_client", lambda _book: client)
+    monkeypatch.setattr(ln_deps, "_deepseek_client", lambda _book: client)
 
     for step_name in ("draft", "expand", "polish", "deslop", "review"):
         ln_api._api_write_chapter_step_blocking(book_id, 1, step_name, client=client)
@@ -808,7 +809,7 @@ def test_rewrite_chapter_uses_existing_source_and_preserves_latest_progress(
         )
 
     captured: dict[str, object] = {}
-    monkeypatch.setattr(ln_api, "_deepseek_client", lambda _book: object())
+    monkeypatch.setattr(ln_deps, "_deepseek_client", lambda _book: object())
     monkeypatch.setattr(
         l2_write,
         "rewrite_chapter_from_source",
@@ -1053,7 +1054,7 @@ def test_rewrite_chapter_range_runs_in_background_and_reports_progress(
             draft_path=str(path),
         )
 
-    monkeypatch.setattr(ln_api, "_deepseek_client", lambda _book: object())
+    monkeypatch.setattr(ln_deps, "_deepseek_client", lambda _book: object())
     monkeypatch.setattr(
         l2_write,
         "rewrite_chapter_from_source",

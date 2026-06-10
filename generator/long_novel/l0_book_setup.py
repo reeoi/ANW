@@ -23,35 +23,17 @@ from pathlib import Path
 from typing import Any
 
 from generator.api_client import DeepSeekClient
+from generator.long_novel.prompt_kit import (
+    load_prompt_template as _load_prompt_template,
+)
+from generator.long_novel.prompt_kit import (
+    prompt_file_text as _load_prompt,
+)
+from generator.long_novel.prompt_kit import (
+    render_prompt_template as _render_prompt_template,
+)
 
 logger = logging.getLogger(__name__)
-
-_PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
-
-
-def _load_prompt(name: str) -> str:
-    p = _PROMPTS_DIR / name
-    if p.exists():
-        return p.read_text(encoding="utf-8")
-    return ""
-
-
-def _load_prompt_template(name: str, fallback: str) -> str:
-    text = _load_prompt(name).strip()
-    return text or fallback
-
-
-class _PromptValues(dict):
-    def __missing__(self, key: str) -> str:
-        return "{" + key + "}"
-
-
-def _render_prompt_template(template: str, values: dict[str, Any]) -> str:
-    try:
-        return template.format_map(_PromptValues({k: "" if v is None else v for k, v in values.items()}))
-    except Exception as exc:
-        logger.warning("setup prompt template render failed: %s", exc)
-        return template
 
 
 def _save_file(path: Path, content: str) -> None:
@@ -403,14 +385,14 @@ def _parse_json_list(text: str) -> list[dict[str, Any]]:
     # find first [...] block
     try:
         return json.loads(cleaned)
-    except Exception:
+    except ValueError:
         pass
     m = re.search(r"\[\s*\{.*?\}\s*\]", cleaned, re.DOTALL)
     if m:
         try:
             return json.loads(m.group(0))
-        except Exception:
-            pass
+        except ValueError as exc:
+            logger.debug("parse_json_array_failed: %s", exc)
     return []
 
 
@@ -1502,7 +1484,7 @@ def run_l0_volume_outline(
             try:
                 progress_cb(idx + 1, len(plan), item)
             except Exception:
-                pass
+                logger.warning("volume_outline_progress_cb_failed vol=%s", item.get("vol_num"), exc_info=True)
         body = _run_l0_single_volume(
             client, work_dir, item,
             title=title, genre=genre,

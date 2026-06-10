@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from io import BytesIO
 from typing import Literal
 
 from PIL import Image, ImageDraw
+
+logger = logging.getLogger(__name__)
 
 ColorName = Literal["green", "yellow", "red", "gray"]
 
@@ -70,7 +73,8 @@ def make_icon(color: ColorName | str = "gray", badge: int = 0, size: int = 64) -
                 font=font,
             )
         except Exception:
-            pass
+            # 角标数字纯属锦上添花；PIL 字体/绘制失败不影响图标本体。
+            logger.debug("tray_icon_badge_draw_failed", exc_info=True)
     return img
 
 
