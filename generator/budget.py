@@ -15,8 +15,8 @@
 查询失败（如表尚未建立）按花费 0 处理并告警——闸门失效宁可放行也不能
 阻塞创作（fail-open）。
 
-依赖方向说明：与 ``api_client._record_usage`` 一样依赖 ``review_queue.db``
-的路径计算；待 storage 层抽取（改进清单 #11）后一并归位。
+依赖方向说明：经由顶层 ``storage`` 层读库（改进清单 #11 已归位），
+不再反向依赖 review_queue。
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from config_loader import LoadedConfig
-from review_queue.db import get_database_path
+from storage.connection import get_database_path
 
 logger = logging.getLogger(__name__)
 

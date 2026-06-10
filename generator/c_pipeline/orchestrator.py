@@ -49,16 +49,16 @@ from generator.c_pipeline import (
 )
 from generator.c_pipeline.concurrency import PipelineSemaphore, make_semaphore_from_config
 from generator.c_pipeline.cost_tracker import CostTracker
-from review_queue.db import (
+from storage.models import Story
+from storage.schema import initialize_database
+from storage.stories import (
     get_story,
-    initialize_database,
     insert_story,
     is_cancel_requested,
     update_story_metadata,
     update_story_phase,
     update_story_status,
 )
-from review_queue.models import Story
 
 logger = logging.getLogger(__name__)
 

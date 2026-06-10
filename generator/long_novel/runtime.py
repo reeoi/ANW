@@ -21,7 +21,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from config_loader import DEFAULT_CONFIG_PATH, DEFAULT_DOTENV_PATH, load_from_environment
-from review_queue.db import initialize_database
+from storage.schema import initialize_database
 
 _ENV_KEYS = ("ANW_CONFIG", "ANW_DOTENV", "ANW_SQLITE_PATH")
 

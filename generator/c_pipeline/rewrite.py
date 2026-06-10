@@ -23,7 +23,8 @@ from config_loader import LoadedConfig
 from generator.api_client import DeepSeekClient
 from generator.c_pipeline import phase4_polish, phase5_deslop
 from generator.c_pipeline.cost_tracker import CostTracker
-from review_queue.db import get_story, initialize_database, update_story_phase
+from storage.schema import initialize_database
+from storage.stories import get_story, update_story_phase
 
 logger = logging.getLogger(__name__)
 

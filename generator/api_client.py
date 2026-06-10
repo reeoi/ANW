@@ -404,8 +404,8 @@ class DeepSeekClient:
         first_sentence_seconds: float | None = None,
     ) -> None:
         try:
-            from review_queue.db import get_database_path
-            from review_queue.metrics import estimate_cost_cny, record_api_usage
+            from storage.connection import get_database_path
+            from storage.usage import estimate_cost_cny, record_api_usage
 
             cost = estimate_cost_cny(usage.input_tokens, usage.output_tokens)
             record_api_usage(
@@ -435,8 +435,8 @@ class DeepSeekClient:
         duration_seconds: float | None = None,
     ) -> None:
         try:
-            from review_queue.db import get_database_path
-            from review_queue.metrics import record_api_usage
+            from storage.connection import get_database_path
+            from storage.usage import record_api_usage
 
             record_api_usage(
                 get_database_path(self.config),
