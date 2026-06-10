@@ -1,8 +1,15 @@
 """Python snippet action — escape hatch for custom logic in presets.
 
-Sandboxed: only whitelisted imports allowed. No file system write, no network,
-no subprocess. Snippet receives ``input_text``, ``ctx`` (dict), and must
-return a dict that gets merged into the variable pool.
+The builtins whitelist and import allowlist below are a *convenience guard*
+against preset-author mistakes, NOT a security boundary: CPython ``exec``
+sandboxes are escapable via introspection, and the whitelisted ``pathlib``
+already grants full file-system access. Presets are trusted local files —
+**review any ``python_snippet`` block manually before running a preset that
+came from somewhere else.**
+
+Snippet receives ``input_text`` and ``ctx`` (dict), and must return a dict
+that gets merged into the variable pool (via a ``run()`` function or an
+``output`` variable).
 """
 
 from __future__ import annotations
