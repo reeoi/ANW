@@ -21,9 +21,8 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
-from config_loader import get_env
 
-from config_loader import load_from_environment
+from config_loader import get_env, load_from_environment
 from review_queue.atomic_runner import kick_off_async
 from review_queue.atomic_runner import state as atomic_state
 from review_queue.db import (

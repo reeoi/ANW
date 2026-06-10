@@ -24,6 +24,7 @@ from typing import Any
 
 from config_loader import LoadedConfig
 
+
 def monitor_cards(config: LoadedConfig, db_path: str | Path) -> dict[str, Any]:
     """聚合 4 张状态卡片所需数据。
 

@@ -14,9 +14,9 @@ deterministic; both are synchronous.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
-import asyncio
 import sys
 import time
 from pathlib import Path
@@ -31,8 +31,8 @@ if str(ROOT) not in sys.path:
 
 from fastapi import HTTPException
 
-from generator.long_novel import db as ln_db
 from generator.long_novel import api as ln_api
+from generator.long_novel import db as ln_db
 from generator.long_novel import l2_chapter_write as l2_write
 from generator.long_novel.api import (
     _autopilot_chapters_to_write,

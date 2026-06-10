@@ -6,7 +6,6 @@ import argparse
 import html
 import json
 import logging
-import os
 import re
 import sqlite3
 from datetime import datetime, timezone
@@ -24,7 +23,8 @@ from generator.long_novel.theme_api import router as theme_router
 from generator.long_novel.theme_db import initialize_theme_tables
 from review_queue import dashboard_assets as _assets  # hot-reload: _assets.DASHBOARD_* reads from disk each request
 from review_queue.ai_review import review_story_in_database, run_review_batch
-from review_queue.console_api import PHASE_PROMPT_MAP, router as console_router
+from review_queue.console_api import PHASE_PROMPT_MAP
+from review_queue.console_api import router as console_router
 from review_queue.control_api import router as control_router
 from review_queue.db import (
     get_database_path,

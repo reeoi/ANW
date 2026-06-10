@@ -22,11 +22,9 @@ from typing import Any
 
 from config_loader import LoadedConfig
 from review_queue.db import (
-    get_story,
     initialize_database,
     update_story_status,
 )
-from review_queue.models import Story
 from review_queue.notification_bus import Severity, bus
 
 logger = logging.getLogger(__name__)
