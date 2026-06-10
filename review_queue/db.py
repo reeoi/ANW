@@ -90,6 +90,9 @@ def initialize_database(config: LoadedConfig) -> Path:
     db_path = get_database_path(config)
     db_path.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(db_path) as connection:
+        # WAL 持久化在库文件里：读不再阻塞写。本应用是「多 daemon 写线程 +
+        # 线程池」并发写同一个库，默认 rollback journal 会让读写互相卡锁。
+        connection.execute("PRAGMA journal_mode=WAL")
         connection.executescript(SCHEMA)
         _migrate_add_cancel_requested(connection)
     try:
