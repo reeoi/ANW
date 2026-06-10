@@ -16,7 +16,7 @@ from fastapi import APIRouter, Body, HTTPException, Request
 from starlette.concurrency import run_in_threadpool
 
 from config_loader import load_from_environment
-from generator.long_novel import runtime
+from generator.long_novel import prompt_kit, runtime
 from generator.long_novel.db import (
     create_book,
     delete_book,
@@ -2612,7 +2612,7 @@ def api_resume_book_operation(book_id: int) -> dict[str, Any]:
 # ── Prompt viewing ─────────────────────────────────────────────────────
 
 
-_PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
+_PROMPTS_DIR = prompt_kit.PROMPTS_DIR
 
 _PHASE_PROMPT_INFO = {
     "premise": {
@@ -2906,31 +2906,10 @@ _CHAPTER_PROMPT_INFO = {
 }
 
 
-def _prompt_file_text(filename: str | None) -> str:
-    if not filename:
-        return ""
-    path = _PROMPTS_DIR / filename
-    if not path.exists():
-        return ""
-    return path.read_text(encoding="utf-8")
-
-
-class _PromptValues(dict):
-    def __missing__(self, key: str) -> str:
-        return "{" + key + "}"
-
-
-def _render_prompt_template(template: str, values: dict[str, Any]) -> str:
-    try:
-        return template.format_map(_PromptValues({k: "" if v is None else v for k, v in values.items()}))
-    except Exception as exc:
-        logger.warning("api prompt template render failed: %s", exc)
-        return template
-
-
-def _load_prompt_template(filename: str, fallback: str) -> str:
-    text = _prompt_file_text(filename).strip()
-    return text or fallback
+# 共享实现见 prompt_kit；保留旧私有名，调用点零改动。
+_prompt_file_text = prompt_kit.prompt_file_text
+_render_prompt_template = prompt_kit.render_prompt_template
+_load_prompt_template = prompt_kit.load_prompt_template
 
 
 def _missing_prompt_placeholders(content: str, placeholders: list[str]) -> list[str]:

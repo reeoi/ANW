@@ -13,36 +13,21 @@ from pathlib import Path
 from typing import Any
 
 from generator.api_client import DeepSeekClient
+from generator.long_novel.prompt_kit import (
+    PROMPTS_DIR as _PROMPTS_DIR,
+)
+from generator.long_novel.prompt_kit import (
+    load_prompt_template as _load_prompt_template,
+)
+from generator.long_novel.prompt_kit import (
+    render_prompt_template as _render_prompt_template,
+)
 
 logger = logging.getLogger(__name__)
 
-_PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
 _DEAI_SKILL_ENV = "LONG_NOVEL_DEAI_SKILL_DIR"
 _DEAI_SKILL_DEFAULT_DIR = _PROMPTS_DIR / "deai_skills"
 _DEAI_SKILL_FILES = ("anti-ai-writing.md", "banned-words.md", "story-deslop.md")
-
-
-def _load_prompt(name: str) -> str:
-    p = _PROMPTS_DIR / name
-    return p.read_text(encoding="utf-8") if p.exists() else ""
-
-
-def _load_prompt_template(name: str, fallback: str) -> str:
-    text = _load_prompt(name).strip()
-    return text or fallback
-
-
-class _PromptValues(dict):
-    def __missing__(self, key: str) -> str:
-        return "{" + key + "}"
-
-
-def _render_prompt_template(template: str, values: dict[str, Any]) -> str:
-    try:
-        return template.format_map(_PromptValues({k: "" if v is None else v for k, v in values.items()}))
-    except Exception as exc:
-        logger.warning("prompt template render failed: %s", exc)
-        return template
 
 
 _TRACKING_MEMORY_SYSTEM_FALLBACK = (

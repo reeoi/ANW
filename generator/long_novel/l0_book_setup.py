@@ -23,35 +23,17 @@ from pathlib import Path
 from typing import Any
 
 from generator.api_client import DeepSeekClient
+from generator.long_novel.prompt_kit import (
+    load_prompt_template as _load_prompt_template,
+)
+from generator.long_novel.prompt_kit import (
+    prompt_file_text as _load_prompt,
+)
+from generator.long_novel.prompt_kit import (
+    render_prompt_template as _render_prompt_template,
+)
 
 logger = logging.getLogger(__name__)
-
-_PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
-
-
-def _load_prompt(name: str) -> str:
-    p = _PROMPTS_DIR / name
-    if p.exists():
-        return p.read_text(encoding="utf-8")
-    return ""
-
-
-def _load_prompt_template(name: str, fallback: str) -> str:
-    text = _load_prompt(name).strip()
-    return text or fallback
-
-
-class _PromptValues(dict):
-    def __missing__(self, key: str) -> str:
-        return "{" + key + "}"
-
-
-def _render_prompt_template(template: str, values: dict[str, Any]) -> str:
-    try:
-        return template.format_map(_PromptValues({k: "" if v is None else v for k, v in values.items()}))
-    except Exception as exc:
-        logger.warning("setup prompt template render failed: %s", exc)
-        return template
 
 
 def _save_file(path: Path, content: str) -> None:
