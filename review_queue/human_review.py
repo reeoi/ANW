@@ -8,6 +8,8 @@ import json
 import logging
 import re
 import sqlite3
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Any
@@ -106,7 +108,16 @@ SHORT_PHASE_DETAILS: dict[str, dict[str, Any]] = {
 }
 
 
-app = FastAPI(title="ANW Auto Novel Writer")
+@asynccontextmanager
+async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Ensure long-novel + theme tables exist before serving requests."""
+    db_path = initialize_database(load_from_environment())
+    initialize_long_novel_tables(db_path)
+    initialize_theme_tables(db_path)
+    yield
+
+
+app = FastAPI(title="ANW Auto Novel Writer", lifespan=_lifespan)
 static_dir = Path(__file__).resolve().parent / "static"
 if static_dir.is_dir():
     app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
@@ -117,15 +128,6 @@ app.include_router(scan_plan_router)
 app.include_router(console_router)
 app.include_router(long_novel_router)
 app.include_router(theme_router)
-
-# Ensure long-novel + theme tables exist on startup
-
-
-@app.on_event("startup")
-async def _ensure_long_novel_tables() -> None:
-    db_path = initialize_database(load_from_environment())
-    initialize_long_novel_tables(db_path)
-    initialize_theme_tables(db_path)
 
 
 @app.get("/", response_class=HTMLResponse)
