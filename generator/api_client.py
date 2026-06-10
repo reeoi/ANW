@@ -34,6 +34,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import ProxyHandler, Request, build_opener
 
 from config_loader import LoadedConfig
+from generator.budget import enforce_monthly_budget
 
 logger = logging.getLogger(__name__)
 
@@ -180,6 +181,14 @@ class DeepSeekClient:
         chosen_model = model or self.settings.model
         if self.is_mock():
             return self._mock_completion(messages, chosen_model, thinking_mode)
+        # 月度预算闸门：mock/dry-run 不花钱不拦；显式传 model 的调用方
+        # （c_pipeline 各 phase，自带 CostTracker 决策）不降级，详见 generator/budget.py。
+        chosen_model = enforce_monthly_budget(
+            self.config,
+            requested_model=model,
+            chosen_model=chosen_model,
+            flash_model=self.settings.flash_model,
+        )
         return self._live_completion(
             messages,
             model=chosen_model,
