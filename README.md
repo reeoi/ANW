@@ -76,6 +76,14 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
+需要可复现的精确环境（CI / 排查版本差异）时，改用锁文件安装：
+
+```bash
+pip install -r requirements.lock
+```
+
+`requirements.lock` 由干净 venv 对 `requirements.txt` 解析后 `pip freeze` 生成；升级依赖后请重新生成（命令见锁文件头部注释）。
+
 没有真实模型 API key 时，ANW 会走 mock / dry-run 路径，方便在本地验证流程、界面和数据库写入。
 
 ## 配置
