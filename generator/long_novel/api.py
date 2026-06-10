@@ -16,6 +16,7 @@ from fastapi import APIRouter, Body, HTTPException, Request
 from starlette.concurrency import run_in_threadpool
 
 from config_loader import load_from_environment
+from generator.long_novel import runtime
 from generator.long_novel.db import (
     create_book,
     delete_book,
@@ -49,7 +50,6 @@ from generator.long_novel.theme_manager import (
     import_fanqie_trends,
     suggest_books,
 )
-from review_queue.db import initialize_database
 
 logger = logging.getLogger(__name__)
 
@@ -92,13 +92,11 @@ def _autopilot_job_mark(book_id: int, active: bool) -> None:
 
 
 def _db_path() -> Path:
-    config = load_from_environment()
-    return initialize_database(config) or Path("data/anw.sqlite3")
+    return runtime.db_path()
 
 
 def _project_root() -> Path:
-    config = load_from_environment()
-    return Path(str(config.data.get("runtime", {}).get("project_root") or ".")).resolve()
+    return runtime.project_root()
 
 
 def _deepseek_client(book: dict[str, Any] | None = None) -> Any:
@@ -1733,7 +1731,7 @@ def _autopilot_write_one_chapter(
     rewrites. If the gate still does not pass, the saved chapter is marked for
     human review and the multi-chapter autopilot can continue.
     """
-    from generator.long_novel.l2_chapter_write import count_chinese_chars, strip_chapter_heading
+    from generator.long_novel.l2_chapter_write import count_chinese_chars
 
     ch = get_chapter(db, book_id, chapter_number) or {}
     chapter_title = str(ch.get("title") or "")
@@ -3773,7 +3771,7 @@ def api_write_chapter_step_status(book_id: int, chapter_number: int) -> dict[str
     if not ch:
         raise HTTPException(status_code=404, detail="章节不存在")
 
-    from generator.long_novel.l2_chapter_write import count_chinese_chars, strip_chapter_heading
+    from generator.long_novel.l2_chapter_write import count_chinese_chars
 
     work_dir = Path(book["work_dir"])
     chapter_title = str(ch.get("title") or "")

@@ -9,6 +9,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from config_loader import load_from_environment
+from generator.long_novel import runtime
 from generator.long_novel.theme_db import (
     count_themes,
     get_theme,
@@ -26,7 +27,6 @@ from generator.long_novel.theme_manager import (
     suggest_books,
     suggest_hot_opening,
 )
-from review_queue.db import initialize_database
 
 logger = logging.getLogger(__name__)
 
@@ -34,8 +34,7 @@ router = APIRouter(prefix="/api/themes", tags=["themes"])
 
 
 def _db_path() -> Path:
-    config = load_from_environment()
-    return initialize_database(config) or Path("data/anw.sqlite3")
+    return runtime.db_path()
 
 
 async def _json_payload(request: Request) -> dict[str, Any]:
