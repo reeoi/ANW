@@ -4,6 +4,32 @@ ANW 是 Auto Novel Writer 的缩写，是一个本地优先的小说创作、审
 
 当前范围：本地生成、本地审核、本地管理。项目不托管平台账号，不处理第三方网页登录态，也不内置外部检测服务。
 
+## 界面预览
+
+### 监控数据中心
+
+<a href="docs/images/readme-dashboard.png">
+  <img src="docs/images/readme-dashboard.png" alt="ANW 监控数据中心" width="48%">
+</a>
+
+### 长篇小说工作区
+
+<a href="docs/images/readme-long-novel-books.png">
+  <img src="docs/images/readme-long-novel-books.png" alt="ANW 长篇小说项目书架" width="32%">
+</a>
+<a href="docs/images/readme-long-novel-generating.png">
+  <img src="docs/images/readme-long-novel-generating.png" alt="ANW 长篇小说全自动生成" width="32%">
+</a>
+<a href="docs/images/readme-long-novel-worldview.png">
+  <img src="docs/images/readme-long-novel-worldview.png" alt="ANW 长篇小说世界观文件" width="32%">
+</a>
+
+### 题材库
+
+<a href="docs/images/readme-theme-pool.png">
+  <img src="docs/images/readme-theme-pool.png" alt="ANW 题材库" width="48%">
+</a>
+
 ## 快速启动
 
 Windows 双击或在命令行运行：
@@ -143,6 +169,12 @@ ANW 本地管理界面包含：
 - API key 和私有路径请通过环境变量或本地私有配置注入。
 - 不要提交 `.env`、本地数据库、日志、截图、浏览器状态或真实稿件数据。
 - 项目不尝试绕过验证码、滑块、人机验证或任何平台安全机制。
+
+## 开源说明
+
+本项目以 MIT License 开源，详见 [LICENSE](LICENSE)。你可以自由使用、复制、修改、合并、发布和分发本项目代码，但需要保留原始版权与许可声明。
+
+欢迎基于本仓库提交 issue 或 pull request。提交前请确保不包含 API key、账号凭据、本地数据库、日志、真实稿件或其他隐私数据；涉及模型供应商、内容平台或外部服务的能力应以可关闭、可配置的方式实现，并在 README 或相关文档中说明安全边界。
 
 ## 测试
 
