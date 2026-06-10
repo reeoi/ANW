@@ -86,10 +86,12 @@ def run_preset(
 
     # Mark this story as using this preset
     try:
-        with __import__("sqlite3").connect(str(db_path)) as conn:
+        import sqlite3
+
+        with sqlite3.connect(str(db_path)) as conn:
             conn.execute("UPDATE stories SET preset_name = ? WHERE id = ?", (preset_name, story_id))
-    except Exception:
-        pass
+    except sqlite3.Error:
+        logger.warning("preset_name_update_failed story_id=%s preset=%s", story_id, preset_name, exc_info=True)
 
     # Load preset
     preset = load_preset(preset_name)

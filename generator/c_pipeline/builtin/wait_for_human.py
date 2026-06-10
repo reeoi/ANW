@@ -74,8 +74,8 @@ def run(config: Any = None, work_dir: str | Path | None = None,
                 if row and row[0]:
                     payload = json.loads(row[0])
                     content = payload.get("content", payload.get("text", str(payload)))
-        except Exception:
-            pass
+        except (sqlite3.Error, ValueError):
+            logger.warning("wait_for_human_payload_read_failed story_id=%s", story_id, exc_info=True)
 
     return {"content": content, "status": "received"}
 
@@ -108,8 +108,8 @@ def _get_db_path(config: Any, work_dir: str | Path | None) -> str | None:
         if config and hasattr(config, "data"):
             db = config.data.get("database", {})
             return str(db.get("sqlite_path", "data/anw.sqlite3"))
-    except Exception:
-        pass
+    except (AttributeError, TypeError) as exc:
+        logger.debug("wait_for_human_config_db_path_failed: %s", exc)
     if work_dir:
         p = Path(work_dir)
         return str(p.parents[2] / "data" / "anw.sqlite3")

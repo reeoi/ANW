@@ -156,8 +156,8 @@ def stop_proc(proc: subprocess.Popen | None, label: str = "process", timeout: fl
                 )
                 proc.wait(timeout=timeout)
                 return
-            except Exception:
-                pass  # fall through to terminate/kill
+            except (OSError, subprocess.SubprocessError) as exc:
+                logger.debug("taskkill failed for %s, falling back to terminate/kill: %s", label, exc)
         proc.terminate()
         try:
             proc.wait(timeout=timeout)
@@ -422,7 +422,7 @@ class TrayApp:
                 try:
                     self.icon.notify("端口无法释放，重启失败", "ANW")
                 except Exception:
-                    pass
+                    logger.debug("tray notify failed", exc_info=True)
                 return
 
             for attempt in range(1, 4):
@@ -434,7 +434,7 @@ class TrayApp:
                         try:
                             self.icon.notify("服务已重启", "ANW")
                         except Exception:
-                            pass
+                            logger.debug("tray notify failed", exc_info=True)
                         return
                     logger.warning("Uvicorn launch returned no process (attempt %d)", attempt)
                 except Exception as exc:
@@ -445,7 +445,7 @@ class TrayApp:
             try:
                 self.icon.notify("重启失败", "请手动启动服务")
             except Exception:
-                pass
+                logger.debug("tray notify failed", exc_info=True)
 
     @staticmethod
     def _ensure_chrome_background() -> None:
@@ -477,7 +477,7 @@ class TrayApp:
             try:
                 logging.shutdown()
             except Exception:
-                pass
+                pass  # 马上 os._exit；logging 已不可靠，无处可记。
             os._exit(0)
 
         threading.Thread(target=_shutdown, daemon=True, name="anw-shutdown").start()
@@ -486,7 +486,7 @@ class TrayApp:
             try:
                 self.icon.visible = False
             except Exception:
-                pass
+                logger.debug("icon hide failed", exc_info=True)
             try:
                 self.icon.stop()
             except Exception:

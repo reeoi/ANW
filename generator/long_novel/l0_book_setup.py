@@ -385,14 +385,14 @@ def _parse_json_list(text: str) -> list[dict[str, Any]]:
     # find first [...] block
     try:
         return json.loads(cleaned)
-    except Exception:
+    except ValueError:
         pass
     m = re.search(r"\[\s*\{.*?\}\s*\]", cleaned, re.DOTALL)
     if m:
         try:
             return json.loads(m.group(0))
-        except Exception:
-            pass
+        except ValueError as exc:
+            logger.debug("parse_json_array_failed: %s", exc)
     return []
 
 
@@ -1484,7 +1484,7 @@ def run_l0_volume_outline(
             try:
                 progress_cb(idx + 1, len(plan), item)
             except Exception:
-                pass
+                logger.warning("volume_outline_progress_cb_failed vol=%s", item.get("vol_num"), exc_info=True)
         body = _run_l0_single_volume(
             client, work_dir, item,
             title=title, genre=genre,

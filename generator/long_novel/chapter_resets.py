@@ -41,14 +41,14 @@ def _cleanup_stale_step_outputs(work_dir: Path, chapter_number: int, steps: list
         if path and path.exists():
             try:
                 path.unlink()
-            except Exception:
-                pass
+            except OSError as exc:
+                logger.debug("cleanup_stale_step_output_failed step=%s path=%s: %s", step, path, exc)
         for marker in (_step_gate_read(work_dir, chapter_number, step), _step_force_read(work_dir, chapter_number, step)):
             if marker and marker.exists():
                 try:
                     marker.unlink()
-                except Exception:
-                    pass
+                except OSError as exc:
+                    logger.debug("cleanup_stale_step_marker_failed step=%s path=%s: %s", step, marker, exc)
         for marker in (
             _step_skip_read(work_dir, chapter_number, step),
             _step_progress_read(work_dir, chapter_number, step),
@@ -56,8 +56,8 @@ def _cleanup_stale_step_outputs(work_dir: Path, chapter_number: int, steps: list
             if marker and marker.exists():
                 try:
                     marker.unlink()
-                except Exception:
-                    pass
+                except OSError as exc:
+                    logger.debug("cleanup_stale_step_marker_failed step=%s path=%s: %s", step, marker, exc)
 
 
 _WRITING_STEP_ORDER = ["draft", "expand", "polish", "deslop", "review", "finalize"]

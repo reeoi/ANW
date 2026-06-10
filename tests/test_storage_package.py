@@ -88,6 +88,28 @@ def test_review_queue_modules_are_shims() -> None:
     assert rq_metrics.ensure_metrics_schema is storage_schema.ensure_metrics_schema
 
 
+def test_insert_pipeline_cost_log_honors_occurred_at(tmp_path: Path) -> None:
+    """dataclass 的 occurred_at 字段必须真正写入（清单 #13 顺手修）。"""
+    from storage.models import PipelineCostLogEntry
+
+    db = storage_schema.initialize_database(_config(tmp_path))
+    entry = PipelineCostLogEntry(story_id=None, phase="phase_1", model="m", occurred_at="2026-01-02 03:04:05")
+    row_id = storage_usage.insert_pipeline_cost_log(db, entry)
+    with sqlite3.connect(db) as conn:
+        stored = conn.execute("SELECT occurred_at FROM pipeline_cost_log WHERE id = ?", (row_id,)).fetchone()[0]
+    assert stored == "2026-01-02 03:04:05"
+
+
+def test_insert_pipeline_cost_log_defaults_occurred_at(tmp_path: Path) -> None:
+    from storage.models import PipelineCostLogEntry
+
+    db = storage_schema.initialize_database(_config(tmp_path))
+    row_id = storage_usage.insert_pipeline_cost_log(db, PipelineCostLogEntry(story_id=None, phase="phase_1", model="m"))
+    with sqlite3.connect(db) as conn:
+        stored = conn.execute("SELECT occurred_at FROM pipeline_cost_log WHERE id = ?", (row_id,)).fetchone()[0]
+    assert stored  # CURRENT_TIMESTAMP default still applies when occurred_at is None
+
+
 def test_generator_tree_does_not_import_review_queue() -> None:
     """循环耦合守卫：导入 generator 全子树后，sys.modules 不得含 review_queue。"""
 

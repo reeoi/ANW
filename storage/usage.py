@@ -31,25 +31,32 @@ DEFAULT_COMPLETION_PRICE_CNY_PER_1K = 0.002
 
 
 def insert_pipeline_cost_log(db_path: str | Path, entry: PipelineCostLogEntry) -> int:
-    """Append a row to ``pipeline_cost_log`` and return its id."""
+    """Append a row to ``pipeline_cost_log`` and return its id.
+
+    ``entry.occurred_at`` 非空时写入该值；为 None 时交给表默认值
+    CURRENT_TIMESTAMP（修复 dataclass 字段被 INSERT 忽略的不一致）。
+    """
+
+    columns = "story_id, phase, model, input_tokens, cached_tokens, output_tokens, cost_cny"
+    values: tuple[object, ...] = (
+        entry.story_id,
+        entry.phase,
+        entry.model,
+        int(entry.input_tokens or 0),
+        int(entry.cached_tokens or 0),
+        int(entry.output_tokens or 0),
+        float(entry.cost_cny or 0.0),
+    )
+    placeholders = "?, ?, ?, ?, ?, ?, ?"
+    if entry.occurred_at is not None:
+        columns += ", occurred_at"
+        values += (str(entry.occurred_at),)
+        placeholders += ", ?"
 
     with connect(db_path) as connection:
         cursor = connection.execute(
-            """
-            INSERT INTO pipeline_cost_log (
-                story_id, phase, model,
-                input_tokens, cached_tokens, output_tokens, cost_cny
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                entry.story_id,
-                entry.phase,
-                entry.model,
-                int(entry.input_tokens or 0),
-                int(entry.cached_tokens or 0),
-                int(entry.output_tokens or 0),
-                float(entry.cost_cny or 0.0),
-            ),
+            f"INSERT INTO pipeline_cost_log ({columns}) VALUES ({placeholders})",
+            values,
         )
         return int(cursor.lastrowid)
 

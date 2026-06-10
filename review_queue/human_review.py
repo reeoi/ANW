@@ -806,8 +806,8 @@ def api_repair_orphans() -> dict[str, Any]:
         with sqlite3.connect(db_path) as conn:
             rows = conn.execute("SELECT id FROM stories").fetchall()
             existing_ids = {r[0] for r in rows}
-    except Exception:
-        pass
+    except sqlite3.Error:
+        logger.warning("import_works_existing_ids_query_failed", exc_info=True)
 
     added = 0
     for child in sorted(works_dir.iterdir()):
@@ -834,8 +834,8 @@ def api_repair_orphans() -> dict[str, Any]:
                     if line.startswith("标题") or line.startswith("title"):
                         title = line.split("：", 1)[-1].split(":", 1)[-1].strip()[:100] or title
                         break
-        except Exception:
-            pass
+        except (OSError, UnicodeDecodeError) as exc:
+            logger.debug("import_works_title_read_failed dir=%s: %s", child.name, exc)
         # Count phases completed
         try:
             artifacts = sorted(child.glob("*_*.md")) + sorted(child.glob("*_*.json"))
@@ -853,8 +853,8 @@ def api_repair_orphans() -> dict[str, Any]:
                 elif max_phase >= 5:
                     status = "needs_human"
                 current_phase = f"phase_{min(max_phase, 6)}_done"
-        except Exception:
-            pass
+        except OSError as exc:
+            logger.debug("import_works_phase_scan_failed dir=%s: %s", child.name, exc)
 
         try:
             with sqlite3.connect(db_path) as conn:

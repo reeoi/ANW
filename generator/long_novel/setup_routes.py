@@ -313,8 +313,8 @@ async def api_extend_chapters(book_id: int, request: Request) -> dict[str, Any]:
         try:
             progress_file.write_text(legacy_extend.read_text(encoding="utf-8"), encoding="utf-8")
             legacy_extend.unlink()
-        except Exception:
-            pass
+        except (OSError, UnicodeDecodeError) as exc:
+            logger.debug("extend_progress_migrate_failed path=%s: %s", legacy_extend, exc)
 
     import json as _json_lib
     import time as _time
@@ -328,8 +328,8 @@ async def api_extend_chapters(book_id: int, request: Request) -> dict[str, Any]:
                     raise HTTPException(status_code=409, detail="已有追加章节任务正在运行")
         except HTTPException:
             raise
-        except Exception:
-            pass
+        except (OSError, ValueError) as exc:
+            logger.debug("extend_progress_read_failed path=%s: %s", progress_file, exc)
 
     def _write(s: str, d: str = "", extra: dict[str, Any] | None = None) -> None:
         progress_file.write_text(_json_lib.dumps({
@@ -474,8 +474,8 @@ def api_setup_phase_trace(book_id: int, phase: str) -> dict[str, Any]:
                     "suffix": p.stem.replace(f"_setup_{phase}", "").replace("_trace", ""),
                     "data": _json_lib.loads(p.read_text(encoding="utf-8")),
                 })
-            except Exception:
-                pass
+            except (OSError, ValueError) as exc:
+                logger.debug("setup_trace_read_failed path=%s: %s", p, exc)
 
     if not main_path.exists() and not sub_traces:
         return {"ok": True, "has_trace": False, "phase": phase}
@@ -529,8 +529,8 @@ def api_setup_pipeline(book_id: int) -> dict[str, Any]:
                 status = pdata.get("status", "pending")
                 detail = (pdata.get("detail") or "")[:160]
                 updated_at = pdata.get("updated_at", "")
-            except Exception:
-                pass
+            except (OSError, ValueError) as exc:
+                logger.debug("setup_phase_progress_read_failed phase=%s: %s", ph_id, exc)
         trace_path = setup_file_read(work_dir, f"_setup_{ph_id}_trace.json")
         sub_trace_count = 0
         if work_dir.exists():
@@ -615,8 +615,8 @@ def api_setup_phase_files(book_id: int, phase: str) -> dict[str, Any]:
                 "mtime": st.st_mtime,
                 "is_index": p.name.startswith("_"),
             })
-        except Exception:
-            pass
+        except OSError as exc:
+            logger.debug("setup_file_stat_failed path=%s: %s", p, exc)
 
     for rel in explicit_files:
         _add(rel)
@@ -628,7 +628,7 @@ def api_setup_phase_files(book_id: int, phase: str) -> dict[str, Any]:
                     from generator.long_novel.l0_book_setup import ensure_volume_outlines_split
                     ensure_volume_outlines_split(work_dir)
                 except Exception:
-                    pass
+                    logger.warning("ensure_volume_outlines_split_failed work_dir=%s", work_dir, exc_info=True)
                 patterns = ["卷纲_*.md"]
             elif phase == "chapter_outlines":
                 patterns = ["细纲_*.md", "续写规划_*.md"]

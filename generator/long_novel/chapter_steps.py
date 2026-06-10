@@ -470,12 +470,12 @@ def _run_finalize_step(
             if not target.exists():
                 try:
                     target.write_text(legacy.read_text(encoding="utf-8"), encoding="utf-8")
-                except Exception:
-                    pass
+                except (OSError, UnicodeDecodeError) as exc:
+                    logger.debug("legacy_step_migrate_failed step=%s path=%s: %s", step, legacy, exc)
             try:
                 legacy.unlink()
-            except Exception:
-                pass
+            except OSError as exc:
+                logger.debug("legacy_step_cleanup_failed step=%s path=%s: %s", step, legacy, exc)
 
     return {
         "ok": True, "step": "finalize",
